@@ -1,7 +1,7 @@
 [project]
 name = "cosmoss"
 version = "0.1.0"
-description = "Turn recordings into organized notes with transcription and speaker diarization"
+description = "Local-first transcription and speaker diarization for Mac"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

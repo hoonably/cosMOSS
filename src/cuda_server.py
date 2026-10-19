@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import secrets
 import tempfile
@@ -16,9 +17,11 @@ from fastapi.responses import JSONResponse
 
 
 MODEL_ID = os.environ.get("MOSS_MODEL_NAME", "OpenMOSS-Team/MOSS-Transcribe-Diarize")
+MODEL_PATH = os.environ.get("MOSS_MODEL_PATH", "")
 DEVICE_ID = os.environ.get("COSMOSS_DEVICE_ID", "")
 GPU_UUID = os.environ.get("CUDA_VISIBLE_DEVICES", "")
 API_TOKEN = os.environ.get("COSMOSS_WORKER_TOKEN", "")
+OPTIONS = json.loads(os.environ.get("COSMOSS_MODEL_OPTIONS", "{}"))
 MODEL: Any = None
 PROCESSOR: Any = None
 DTYPE: Any = None
@@ -46,11 +49,28 @@ def load_model() -> None:
         fcntl.flock(GPU_LOCK, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as error:
         raise RuntimeError("Another cosMOSS worker under this user already owns this GPU") from error
-    DTYPE = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    MODEL = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, trust_remote_code=True, dtype="auto", attn_implementation="sdpa",
-    ).to(dtype=DTYPE).to("cuda:0").eval()
-    PROCESSOR = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+    precision = OPTIONS.get("precision", "auto")
+    if precision == "bf16" and not torch.cuda.is_bf16_supported():
+        raise RuntimeError("선택한 GPU는 BF16을 지원하지 않습니다. 자동 또는 FP16을 선택해 주세요.")
+    DTYPE = torch.float16 if precision == "fp16" else (torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
+    if not MODEL_PATH or not Path(MODEL_PATH).is_dir():
+        raise RuntimeError("A prepared model path is required; prepare the device model first")
+    kwargs = dict(trust_remote_code=True, dtype=DTYPE,
+                  attn_implementation=OPTIONS.get("attention", "sdpa"), local_files_only=True)
+    if precision in {"int8", "int4"}:
+        from transformers import BitsAndBytesConfig
+        capability = torch.cuda.get_device_capability()
+        if capability < ((7, 5) if precision == "int8" else (6, 0)):
+            raise RuntimeError("선택한 GPU는 이 양자화 방식을 지원하지 않습니다. 원본 모델을 선택해 주세요.")
+        kwargs.update(device_map={"": "cuda:0"}, quantization_config=BitsAndBytesConfig(
+            load_in_8bit=precision == "int8", load_in_4bit=precision == "int4",
+            llm_int8_skip_modules=["whisper_encoder", "vq_adaptor", "lm_head"],
+            bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=DTYPE, bnb_4bit_use_double_quant=True))
+        MODEL = AutoModelForCausalLM.from_pretrained(MODEL_PATH, **kwargs).eval()
+    else:
+        MODEL = AutoModelForCausalLM.from_pretrained(MODEL_PATH, **kwargs).to(dtype=DTYPE).to("cuda:0").eval()
+    MODEL.generation_config.use_cache = OPTIONS.get("use_cache", True)
+    PROCESSOR = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
 
 
 @asynccontextmanager
@@ -74,7 +94,7 @@ async def authorize(request: Request, call_next):
 @app.get("/healthz")
 def health() -> dict[str, Any]:
     return {"ok": MODEL is not None, "app": "cosMOSS CUDA worker", "device_id": DEVICE_ID,
-            "gpu_uuid": GPU_UUID, "model": MODEL_ID}
+            "gpu_uuid": GPU_UUID, "model": MODEL_ID, "model_path": MODEL_PATH, "options": OPTIONS}
 
 
 @app.get("/v1/models")

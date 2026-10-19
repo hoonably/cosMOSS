@@ -57,16 +57,17 @@ if [[ -f "$MOSS_ENV_FILE" ]]; then
   set +a
 fi
 
-# Keep both runtimes, downloaded models, and package/download caches in this
-# checkout. Relative overrides are always resolved from the repo root.
+# Keep runtimes and package caches in this checkout. Hugging Face follows the
+# user's normal cache unless explicitly configured. Relative overrides remain
+# relative to the repo root.
 export MLX_VENV="$(resolve_project_path "${MLX_VENV:-.venv-mlx}" .venv-mlx)"
 export MLX_MODEL_PATH="$(resolve_project_path "${MLX_MODEL_PATH:-models/moss-mlx-8bit}" models/moss-mlx-8bit)"
 export MOSS_MLX_PORT="${MOSS_MLX_PORT:-8001}"
 export MOSS_MLX_URL="${MOSS_MLX_URL:-http://127.0.0.1:$MOSS_MLX_PORT/v1}"
 export MOSS_MLX_URL="${MOSS_MLX_URL%/}"
-export HF_HOME="$(resolve_project_path "${HF_HOME:-.cache/huggingface}" .cache/huggingface)"
-export HF_HUB_CACHE="$(resolve_project_path "${HF_HUB_CACHE:-$HF_HOME/hub}" .cache/huggingface/hub)"
-export HF_XET_CACHE="$(resolve_project_path "${HF_XET_CACHE:-$HF_HOME/xet}" .cache/huggingface/xet)"
+export HF_HOME="$(resolve_project_path "${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}")"
+export HF_HUB_CACHE="$(resolve_project_path "${HF_HUB_CACHE:-$HF_HOME/hub}")"
+export HF_XET_CACHE="$(resolve_project_path "${HF_XET_CACHE:-$HF_HOME/xet}")"
 export UV_CACHE_DIR="$(resolve_project_path "${UV_CACHE_DIR:-.cache/uv}" .cache/uv)"
 export UV_PYTHON_INSTALL_DIR="$(resolve_project_path "${UV_PYTHON_INSTALL_DIR:-.cache/uv/python}" .cache/uv/python)"
 
@@ -176,7 +177,7 @@ PY
 
 require_apple_silicon() {
   if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
-    echo "로컬 MLX 추론 서버는 Apple Silicon(macOS arm64) 전용입니다." >&2
+    echo "로컬 MLX 전사는 Apple Silicon(macOS arm64) 전용입니다." >&2
     return 1
   fi
 }

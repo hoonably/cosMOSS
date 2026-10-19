@@ -56,7 +56,7 @@ def load_once() -> Any:
     global MODEL
     if MODEL is None:
         if platform.system() != "Darwin" or platform.machine() != "arm64":
-            raise RuntimeError("cosMOSS 전사 서버는 Apple Silicon(macOS arm64) 전용입니다.")
+            raise RuntimeError("이 Mac에서 전사하려면 Apple Silicon(macOS arm64)이 필요합니다.")
         from mlx_audio.stt.utils import load_model
         from src.mlx_kv_cache import configure_kv_cache
 
@@ -98,8 +98,9 @@ def list_models() -> dict[str, Any]:
 
 
 @app.get("/healthz", include_in_schema=False)
-def liveness() -> dict[str, bool]:
-    return {"ok": True}
+def liveness() -> dict[str, Any]:
+    return {"ok": MODEL is not None, "app": "cosMOSS MLX", "model": SERVED_MODEL_NAME,
+            "model_path": str(MODEL_PATH), "configuration_id": os.getenv("COSMOSS_CONFIG_ID", ""), "instance_id": os.getenv("COSMOSS_LOCAL_MODEL_INSTANCE", "")}
 
 
 def split_hotwords(hotwords: str) -> list[str] | None:

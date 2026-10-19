@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import re
 from typing import Any
 
@@ -75,7 +76,7 @@ def srt_text(segments: list[dict[str, Any]], names: dict[str, str]) -> str:
         speaker = names.get(segment["speaker"], segment["speaker"])
         blocks.append(
             f"{index}\n{format_srt_time(segment['start'])} --> {format_srt_time(segment['end'])}\n"
-            f"{speaker}: {segment['text']}"
+            f"{html.escape(speaker, quote=False)}: {html.escape(segment['text'], quote=False)}"
         )
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
@@ -86,7 +87,7 @@ def vtt_text(segments: list[dict[str, Any]], names: dict[str, str]) -> str:
         speaker = names.get(segment["speaker"], segment["speaker"])
         blocks.append(
             f"{format_vtt_time(segment['start'])} --> {format_vtt_time(segment['end'])}\n"
-            f"<v {speaker}>{segment['text']}"
+            f"<v {html.escape(speaker, quote=False)}>{html.escape(segment['text'], quote=False)}"
         )
     return "\n\n".join(blocks) + "\n"
 

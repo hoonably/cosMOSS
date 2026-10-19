@@ -28,13 +28,19 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import TranscriptionConfig
 from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
+from src.local_models import LocalModels
+from src.model_catalog import catalog, model_selection, DEFAULT_OPTIONS
 from src.remote_workers import RemoteWorkers
 from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host
 from src.store import NoteStore
+from src.summaries import Summaries, provider_status, DEFAULT_QUERY
+from src.text_files import save_text, speaker_changes, write_text
+from src.text_library import TextLibrary
 from src.transcript import json_text, parse_transcript, plain_text, srt_text, vtt_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_DIR = Path(os.getenv("MOSS_RUNTIME_DIR", ROOT)).expanduser().resolve()
 DATA_DIR = Path(os.getenv("MOSS_DATA_DIR", ROOT / "data")).resolve()
 UPLOAD_DIR = DATA_DIR / "uploads"
 STATIC_DIR = ROOT / "static"
@@ -55,7 +61,10 @@ BRIDGE_AUDIO_SECONDS = max(
     2, min(int(os.getenv("MOSS_BRIDGE_SECONDS", "30")), MAX_SUPPORTED_CHUNK_SECONDS)
 )
 STORE = NoteStore(DATA_DIR / "moss-note.sqlite3")
+TEXT_LIBRARY = TextLibrary(DATA_DIR / "text-library.sqlite3")
+SUMMARIES = Summaries(DATA_DIR / "summaries")
 DEVICES = DeviceStore(DATA_DIR / "devices.sqlite3")
+LOCAL_MODELS = LocalModels(RUNTIME_DIR, DATA_DIR, DEVICES.get("local")["remote_port"], DEVICES.get("local")["model"])
 TUNNELS = SSHTunnels()
 REMOTE_WORKERS = RemoteWorkers()
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
@@ -77,6 +86,24 @@ class NotePatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     segments: list[dict[str, Any]] | None = None
     speaker_names: dict[str, str] | None = None
+    text_body: str | None = Field(default=None, max_length=32 * 1024 * 1024)
+    text_hash: str | None = Field(default=None, max_length=64)
+
+
+class TextFileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    directory: str = Field(default="", max_length=4096)
+    text_hash: str | None = Field(default=None, max_length=64)
+
+
+class SpeakersRequest(TextFileRequest):
+    speaker_names: dict[str, str]
+    speaker_merges: dict[str, str] = Field(default_factory=dict)
+
+
+class SummaryRequest(TextFileRequest):
+    provider: Literal["codex", "claude"]
+    prompt: str = Field(default=DEFAULT_QUERY, min_length=1, max_length=20000)
 
 
 class SSHHostRequest(BaseModel):
@@ -89,8 +116,37 @@ class SSHDeviceRequest(SSHHostRequest):
     remote_port: int = Field(default=18400, ge=1024, le=65535)
     model: str = Field(default="OpenMOSS-Team/MOSS-Transcribe-Diarize", min_length=1, max_length=200)
     backend: Literal["cuda", "mlx", "remote"] = "cuda"
-    gpu_uuid: str | None = Field(default=None, pattern=r"^GPU-[0-9a-fA-F-]{8,64}$")
-    gpu_index: int | None = Field(default=None, ge=0, le=1024)
+    model_cache: str = Field(default="", max_length=500)
+
+
+class DeviceOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chunk_minutes: int = Field(default=30, ge=1, le=90)
+    bridge_seconds: int = Field(default=30, ge=0, le=120)
+    max_tokens: int = Field(default=32768, ge=512, le=32768)
+    kv_bits: Literal[0, 8] = 8
+    prefill_step_size: Literal[128, 256, 512, 1024, 2048] = 512
+    precision: Literal["auto", "bf16", "fp16", "int8", "int4"] = "auto"
+    attention: Literal["sdpa", "eager"] = "sdpa"
+    use_cache: bool = True
+
+
+class LocalModelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: Literal["cache", "folder"] = "cache"
+    path: str = Field(default="", max_length=4096)
+    model_key: str = Field(default="", max_length=100)
+    model_id: str = Field(default="", max_length=200)
+    options: DeviceOptions | None = None
+
+
+def selected_configuration(request, backend, existing):
+    key = request.model_key or existing.get("model_key", "")
+    selected = model_selection(backend, key, request.model_id or existing.get("model_id", existing.get("model", "")))
+    options = request.options.model_dump() if request.options else {**DEFAULT_OPTIONS, **existing.get("options", {})}
+    if selected['key'] != 'custom':
+        options['precision'] = selected['precision'] if selected['precision'] != 'auto' else (options['precision'] if options['precision'] in {'auto','bf16','fp16'} else 'auto')
+    return selected, options
 
 
 def public_note(note: dict[str, Any]) -> dict[str, Any]:
@@ -343,12 +399,13 @@ def make_bridge_chunks(
     duration: float | None,
     chunks: list[tuple[Path, float]],
     chunk_seconds: int = MAX_AUDIO_CHUNK_SECONDS,
+    bridge_seconds: int = BRIDGE_AUDIO_SECONDS,
 ) -> list[tuple[Path, float]]:
     """Create short clips spanning both sides of every main-chunk boundary."""
-    if duration is None or len(chunks) <= 1:
+    if duration is None or len(chunks) <= 1 or bridge_seconds <= 0:
         return []
     chunk_dir = normalized.parent / "chunks"
-    bridge_seconds = min(BRIDGE_AUDIO_SECONDS, chunk_seconds)
+    bridge_seconds = min(bridge_seconds, chunk_seconds)
     half = bridge_seconds / 2
     bridges: list[tuple[Path, float]] = []
     for index, (_, boundary) in enumerate(chunks[1:]):
@@ -382,12 +439,14 @@ def transcription_form(note: dict[str, Any], model_name: str | None = None) -> d
     prompt = DEFAULT_PROMPT
     if note.get("hotwords"):
         prompt += f"热词提示：{note['hotwords']}"
+    snapshot = json.loads(note.get("device_snapshot_json") or "{}")
+    max_tokens = snapshot.get("options", {}).get("max_tokens", MAX_COMPLETION_TOKENS)
     form = {
         "model": model_name or MODEL_NAME,
         "response_format": "json",
         "temperature": "0",
         "prompt": prompt,
-        "max_completion_tokens": str(MAX_COMPLETION_TOKENS),
+        "max_completion_tokens": str(max_tokens),
     }
     if note.get("hotwords"):
         form["hotwords"] = note["hotwords"]
@@ -433,7 +492,7 @@ async def transcribe_chunk(
                         elif event.get("type") == "result":
                             payload = event
                         elif event.get("type") == "error":
-                            raise RuntimeError(event.get("message", "전사 서버 오류"))
+                            raise RuntimeError(event.get("message", "전사 처리 오류"))
                 else:
                     # An older/custom OpenAI-compatible server may only return JSON.
                     await response.aread()
@@ -450,7 +509,7 @@ async def transcribe_chunk(
                 )
         raise
     if payload is None:
-        raise RuntimeError("전사 서버 연결이 결과를 받기 전에 종료되었습니다.")
+        raise RuntimeError("전사 결과를 받기 전에 처리가 중단되었습니다.")
     raw = payload.get("text", "")
     segments = parse_transcript(raw)
     if not segments and payload.get("segments"):
@@ -609,6 +668,7 @@ async def transcribe(note_id: str) -> None:
         processing_seconds=None,
     )
     chunk_dir: Path | None = None
+    managed_device = None
     preprocessing_seconds = note.get("preprocessing_seconds") or 0
     try:
         target = None
@@ -616,7 +676,13 @@ async def transcribe(note_id: str) -> None:
             # The snapshot fixes this job's destination. Removal must never cause
             # an implicit fallback to this Mac or a different remote endpoint.
             DEVICES.get(note["device_id"])
-            target = await resolve_device(json.loads(snapshot), TUNNELS)
+            device = json.loads(snapshot)
+            if device["backend"] == "cuda":
+                managed_device = device
+                STORE.update(note_id, progress_phase="preparing_model")
+                await REMOTE_WORKERS.perform(device, "prepare")
+                STORE.update(note_id, progress_phase="normalizing")
+            target = await resolve_device(device, TUNNELS)
             if target.gpu_uuid:
                 availability = await model_health(target)
                 if not availability["moss"]["ok"]:
@@ -637,7 +703,8 @@ async def transcribe(note_id: str) -> None:
             duration = await run_audio_work(probe_duration, normalized)
         chunks = await run_audio_work(split_audio, normalized, duration, chunk_seconds)
         bridges = await run_audio_work(
-            make_bridge_chunks, normalized, duration, chunks, chunk_seconds
+            make_bridge_chunks, normalized, duration, chunks, chunk_seconds,
+            device.get("options", {}).get("bridge_seconds", BRIDGE_AUDIO_SECONDS) if snapshot else BRIDGE_AUDIO_SECONDS
         )
         STORE.update(
             note_id,
@@ -732,13 +799,18 @@ async def transcribe(note_id: str) -> None:
     except Exception as error:
         detail = str(error)
         if isinstance(error, httpx.HTTPStatusError):
-            detail = f"전사 서버 {error.response.status_code}: {error.response.text[:1000]}"
+            detail = f"전사 처리 오류 ({error.response.status_code}): {error.response.text[:1000]}"
         STORE.update(
             note_id, status="error", progress_phase="error", error=detail,
             processing_finished_at=datetime.now(UTC).isoformat(),
             processing_seconds=round(preprocessing_seconds + time.monotonic() - started, 3),
         )
     finally:
+        if managed_device is not None and REMOTE_WORKERS.states.get(managed_device["id"], {}).get("action") != "install":
+            # Release this job's GPU on success, failure, or cancellation.
+            # An installation still in progress has not acquired a GPU.
+            with suppress(Exception):
+                await REMOTE_WORKERS.perform(managed_device, "stop")
         if chunk_dir is not None:
             shutil.rmtree(chunk_dir, ignore_errors=True)
 
@@ -786,6 +858,7 @@ async def lifespan(_: FastAPI):
     for note_id in STORE.pending_ids():
         QUEUE.put_nowait(note_id)
     worker = asyncio.create_task(queue_worker())
+    await LOCAL_MODELS.restore()
     try:
         yield
     finally:
@@ -798,6 +871,8 @@ async def lifespan(_: FastAPI):
             await worker
         await TUNNELS.close_all()
         await REMOTE_WORKERS.close()
+        await LOCAL_MODELS.close()
+        await SUMMARIES.close()
 
 
 app = FastAPI(
@@ -826,15 +901,18 @@ def valid_basic_auth(header: str | None) -> bool:
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    if request.url.path.startswith(("/api/devices", "/api/ssh")):
+    local_action = request.url.path.startswith(("/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/")) or (
+        request.url.path.startswith("/api/notes/") and any(part in {"text-file", "speakers", "summary"} for part in request.url.path.split("/")[4:])
+    )
+    if local_action:
         try:
             local_client = request.client is not None and ipaddress.ip_address(request.client.host).is_loopback
         except ValueError:
             local_client = False
         if not local_client or request.url.hostname not in {"localhost", "127.0.0.1", "::1"}:
-            return JSONResponse({"detail": "장치 관리는 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
+            return JSONResponse({"detail": "이 작업은 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
-            return JSONResponse({"detail": "외부 웹사이트에서는 장치를 관리할 수 없습니다."}, status_code=403)
+            return JSONResponse({"detail": "외부 웹사이트에서는 이 작업을 실행할 수 없습니다."}, status_code=403)
     if request.url.path not in {"/healthz", "/readyz"} and not valid_basic_auth(
         request.headers.get("Authorization")
     ):
@@ -897,9 +975,9 @@ async def model_health(target: ResolvedDevice | None = None) -> dict[str, Any]:
                 ]
                 moss["ok"] = model_name in moss["models"]
                 if not moss["ok"]:
-                    moss["error"] = "설정한 전사 모델을 서버에서 찾을 수 없습니다."
+                    moss["error"] = "설정한 전사 모델을 찾을 수 없습니다."
             except ValueError:
-                moss["error"] = "전사 서버가 올바른 모델 목록을 반환하지 않았습니다."
+                moss["error"] = "전사 모델 정보를 확인할 수 없습니다."
         else:
             moss["error"] = f"HTTP {result.status_code}"
     else:
@@ -940,7 +1018,33 @@ async def health() -> dict[str, Any]:
 
 @app.get("/api/devices")
 def list_devices() -> list[dict[str, Any]]:
-    return [public_device(device) for device in DEVICES.list()]
+    return [{**public_device(device), "setup": LOCAL_MODELS.status() if device["id"] == "local" else REMOTE_WORKERS.states.get(device["id"], {"phase": "idle" if device.get("model_prepared") is False else "unknown"})}
+            for device in DEVICES.list()]
+
+
+@app.get("/api/model-catalog")
+def model_catalog() -> dict[str, Any]:
+    return catalog("mlx")
+
+
+@app.get("/api/local-model")
+def local_model_state() -> dict[str, Any]:
+    return {**LOCAL_MODELS.status(), **catalog("mlx")}
+
+
+@app.post("/api/local-model/prepare", status_code=202)
+async def prepare_local_model(request: LocalModelRequest) -> dict[str, Any]:
+    if LOCAL_MODELS.task and not LOCAL_MODELS.task.done():
+        raise HTTPException(409, "현재 모델 준비가 끝난 뒤 다시 시도해 주세요.")
+    if any(note.get("device_id", "local") == "local" and note["status"] in {"queued", "processing"} for note in STORE.list()):
+        raise HTTPException(409, "이 Mac에서 진행 중인 전사가 끝난 뒤 모델을 준비해 주세요.")
+    try:
+        selected, options = selected_configuration(request, "mlx", LOCAL_MODELS.status())
+        result = LOCAL_MODELS.start(request.source, request.path, model_id=selected["repo"], model_key=selected["key"], options=options)
+        DEVICES.configure("local", model_key=selected["key"], model_id=selected["repo"], options=options)
+        return result
+    except (ValueError, OSError) as error:
+        raise HTTPException(400, str(error)) from None
 
 
 @app.get("/api/ssh/hosts")
@@ -958,20 +1062,36 @@ async def inspect_ssh_host(request: SSHHostRequest) -> dict[str, Any]:
 
 
 @app.post("/api/devices", status_code=201)
-def add_device(request: SSHDeviceRequest) -> dict[str, Any]:
+async def add_device(request: SSHDeviceRequest) -> dict[str, Any]:
     if request.host not in discover_hosts():
         raise HTTPException(400, "SSH config에 등록된 별칭을 선택해 주세요.")
     name, model = request.name.strip(), request.model.strip()
     if not name or not model:
         raise HTTPException(400, "장치 이름과 모델 ID를 입력해 주세요.")
-    if request.backend == "cuda" and (not request.gpu_uuid or request.gpu_index is None):
-        raise HTTPException(400, "실행할 GPU 번호를 선택해 주세요.")
+    cache = request.model_cache.strip()
+    if cache and (not cache.startswith(("/", "~/")) or "\x00" in cache or ".." in Path(cache).parts):
+        raise HTTPException(400, "캐시 경로는 절대 경로 또는 ~/로 시작해야 합니다.")
     try:
-        return public_device(DEVICES.add_ssh(name=name, host=request.host, remote_port=request.remote_port,
-                               model=model, backend=request.backend, gpu_uuid=request.gpu_uuid,
-                               gpu_index=request.gpu_index))
+        device = DEVICES.add_ssh(name=name, host=request.host, remote_port=request.remote_port,
+                                 model=model, backend=request.backend, model_cache=cache)
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
+    if device["backend"] == "cuda":
+        device = DEVICES.set_model(device["id"], "cache", "")
+        setup = REMOTE_WORKERS.start(device, "install")
+        return {**public_device(device), "setup": setup}
+    return public_device(device)
+
+
+@app.post("/api/devices/{device_id}/gpus")
+async def device_gpus(device_id: str) -> dict[str, Any]:
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    if device["kind"] != "ssh" or device["backend"] != "cuda":
+        raise HTTPException(400, "관리형 CUDA 장치를 선택해 주세요.")
+    return await inspect_ssh_host(SSHHostRequest(host=device["host"]))
 
 
 @app.delete("/api/devices/{device_id}", status_code=204)
@@ -984,8 +1104,11 @@ async def remove_device(device_id: str) -> Response:
         device = DEVICES.get(device_id)
     except KeyError:
         raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
-    if device["backend"] == "cuda" and REMOTE_WORKERS.states.get(device_id, {}).get("phase") != "stopped":
-        raise HTTPException(409, "원격 GPU가 계속 점유되지 않도록 먼저 ‘워커 종료’를 눌러 주세요.")
+    if device["backend"] == "cuda":
+        try:
+            await REMOTE_WORKERS.perform(device, "stop")
+        except (SSHError, RuntimeError, OSError) as error:
+            raise HTTPException(409, str(error)) from None
     try:
         DEVICES.delete(device_id)
     except KeyError:
@@ -1003,38 +1126,125 @@ async def device_status(device_id: str) -> dict[str, Any]:
     except KeyError:
         raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
     try:
+        if device["backend"] == "cuda":
+            setup = REMOTE_WORKERS.states.get(device_id, {"phase": "unknown"})
+            task = REMOTE_WORKERS.tasks.get(device_id)
+            if not task or task.done():
+                setup = await REMOTE_WORKERS.perform(device, "inspect")
+            ready = setup["phase"] in {"installed", "ready", "stopped"}
+            return {"device_id": device_id, "ok": ready, "label": "준비 완료" if ready else "준비 필요",
+                    "setup": setup, "error": setup.get("error", "모델을 준비하는 중입니다.") if not ready else None}
         target = await resolve_device(device, TUNNELS)
         result = await model_health(target)
         return {"device_id": device_id, **result["moss"]}
-    except (SSHError, OSError) as error:
+    except (SSHError, OSError, RuntimeError) as error:
         return {"device_id": device_id, "ok": False, "error": str(error)}
+
+
+@app.get("/api/devices/{device_id}/model")
+async def remote_model_options(device_id: str) -> dict[str, Any]:
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    if device["kind"] != "ssh" or device["backend"] != "cuda":
+        raise HTTPException(400, "모델을 준비할 장치를 선택해 주세요.")
+    try:
+        result = await REMOTE_WORKERS.options(device)
+        return {**result, "model_key": device.get("model_key", "cuda-original"), "options": {**DEFAULT_OPTIONS, **device.get("options", {})},
+                **catalog("cuda", result.get("hardware"))}
+    except (SSHError, OSError, TimeoutError) as error:
+        raise HTTPException(400, str(error) or "장치에 연결하지 못했습니다.") from None
+
+
+@app.get("/api/devices/{device_id}/environment")
+async def environment_status(device_id: str) -> dict[str, Any]:
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    try:
+        if device_id == "local":
+            return await LOCAL_MODELS.environment()
+        if device["backend"] != "cuda":
+            raise HTTPException(400, "직접 실행한 장치의 환경은 해당 장치에서 관리합니다.")
+        return await REMOTE_WORKERS.environment(device)
+    except (SSHError, OSError, TimeoutError) as error:
+        raise HTTPException(400, str(error) or "실행 환경을 확인하지 못했습니다.") from None
+
+
+@app.post("/api/devices/{device_id}/environment", status_code=202)
+async def prepare_environment(device_id: str) -> dict[str, Any]:
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    if any(note["device_id"] == device_id and note["status"] in {"queued", "processing"} for note in STORE.list()):
+        raise HTTPException(409, "이 장치의 전사가 끝난 뒤 실행 환경을 설치해 주세요.")
+    if device_id == "local":
+        if LOCAL_MODELS.task and not LOCAL_MODELS.task.done():
+            raise HTTPException(409, "현재 준비가 끝난 뒤 다시 시도해 주세요.")
+        try:
+            return LOCAL_MODELS.start_environment()
+        except (ValueError, OSError) as error:
+            raise HTTPException(400, str(error)) from None
+    if device["backend"] != "cuda":
+        raise HTTPException(400, "관리형 CUDA 장치의 환경만 설치할 수 있습니다.")
+    task = REMOTE_WORKERS.tasks.get(device_id)
+    if task and not task.done():
+        raise HTTPException(409, "현재 준비가 끝난 뒤 다시 시도해 주세요.")
+    return REMOTE_WORKERS.start(device, "runtime")
+
+
+@app.post("/api/devices/{device_id}/model/prepare", status_code=202)
+async def prepare_remote_model(device_id: str, request: LocalModelRequest) -> dict[str, Any]:
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    if device["kind"] != "ssh" or device["backend"] != "cuda":
+        raise HTTPException(400, "모델을 준비할 장치를 선택해 주세요.")
+    if any(note["device_id"] == device_id and note["status"] in {"queued", "processing"} for note in STORE.list()):
+        raise HTTPException(409, "이 장치의 전사가 끝난 뒤 모델을 준비해 주세요.")
+    if device_id in REMOTE_WORKERS.tasks and not REMOTE_WORKERS.tasks[device_id].done():
+        raise HTTPException(409, "현재 모델 준비가 끝난 뒤 다시 시도해 주세요.")
+    selected = request.path.strip() if request.source == "folder" else ""
+    if request.source == "folder" and (not selected.startswith(("/", "~/")) or "\x00" in selected or ".." in Path(selected).parts):
+        raise HTTPException(400, "선택한 장치의 모델 폴더를 절대 경로 또는 ~/로 입력해 주세요.")
+    try:
+        model, options = selected_configuration(request, "cuda", device)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+    device = DEVICES.set_model(device_id, request.source, selected)
+    device = DEVICES.configure(device_id, model=model["repo"], model_id=model["repo"], model_key=model["key"], options=options)
+    return REMOTE_WORKERS.start(device, "install")
 
 
 @app.get("/api/devices/{device_id}/worker")
 def worker_state(device_id: str) -> dict[str, Any]:
     try:
-        DEVICES.get(device_id)
+        device = DEVICES.get(device_id)
     except KeyError:
         raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
-    return REMOTE_WORKERS.states.get(device_id, {"phase": "unknown"})
+    return REMOTE_WORKERS.states.get(device_id, {"phase": "idle" if device.get("model_prepared") is False else "unknown"})
 
 
 @app.post("/api/devices/{device_id}/worker/{action}", status_code=202)
-async def control_worker(device_id: str, action: Literal["prepare", "stop"]) -> dict[str, Any]:
+async def control_worker(device_id: str, action: Literal["install", "prepare", "stop"]) -> dict[str, Any]:
     try:
         device = DEVICES.get(device_id)
     except KeyError:
         raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
     if device["backend"] != "cuda":
-        raise HTTPException(400, "GPU를 선택해 등록한 CUDA 장치만 자동 준비할 수 있습니다.")
-    if action == "stop" and any(note["device_id"] == device_id and note["status"] in {"queued", "processing"} for note in STORE.list()):
+        raise HTTPException(400, "관리형 CUDA 장치만 모델을 자동 준비할 수 있습니다.")
+    if any(note["device_id"] == device_id and note["status"] in {"queued", "processing"} for note in STORE.list()):
         raise HTTPException(409, "이 장치의 대기·실행 중 작업을 먼저 취소해 주세요.")
     if action == "stop":
         preparation = REMOTE_WORKERS.tasks.get(device_id)
         if preparation and not preparation.done():
             preparation.cancel()
             await asyncio.gather(preparation, return_exceptions=True)
-    return REMOTE_WORKERS.start(device, action)
+    return REMOTE_WORKERS.start(device, "install" if action == "prepare" else action)
 
 
 @app.post("/api/uploads", status_code=202)
@@ -1080,6 +1290,8 @@ async def create_note(
     chunk_minutes: int | None = Form(None, ge=1, le=MAX_SUPPORTED_CHUNK_SECONDS // 60),
     upload_id: str | None = Form(None),
     device_id: str = Form("local"),
+    gpu_uuid: str | None = Form(None, pattern=r"^GPU-[0-9a-fA-F-]{8,64}$"),
+    output_format: Literal["txt", "srt", "vtt"] = Form("txt"),
 ) -> dict[str, Any]:
     if bool(file) == bool(upload_id):
         raise HTTPException(400, "전사할 음성 파일을 하나 선택해 주세요.")
@@ -1087,11 +1299,26 @@ async def create_note(
         device = DEVICES.get(device_id)
     except KeyError:
         raise HTTPException(400, "전사할 장치를 선택해 주세요.") from None
+    device = {key: value for key, value in device.items() if key not in {"gpu_uuid", "gpu_index"}}
+    if device["backend"] == "cuda":
+        if not gpu_uuid:
+            raise HTTPException(400, "이번 전사에 사용할 GPU를 선택해 주세요.")
+        try:
+            inventory = await probe_host(device["host"])
+        except (SSHError, OSError) as error:
+            raise HTTPException(400, str(error)) from None
+        gpu = next((item for item in inventory["gpus"] if item["uuid"] == gpu_uuid), None)
+        if not gpu or not gpu["idle_candidate"]:
+            raise HTTPException(409, "선택한 GPU가 없거나 사용 중입니다. 상태를 새로고침한 뒤 다시 선택해 주세요.")
+        device.update(gpu_uuid=gpu["uuid"], gpu_index=gpu["index"])
+    elif gpu_uuid:
+        raise HTTPException(400, "이 장치는 별도의 GPU 선택을 지원하지 않습니다.")
     settings = {
-        "device_id": device["id"], "device_name": device["name"],
+        "device_id": device["id"], "device_name": device["name"] + (f" · GPU #{device['gpu_index']}" if device.get("gpu_uuid") else ""),
         "device_snapshot_json": json.dumps(device, ensure_ascii=False),
         "language": language.strip() or None, "hotwords": hotwords.strip() or None,
-        "chunk_seconds": chunk_minutes * 60 if chunk_minutes is not None else MAX_AUDIO_CHUNK_SECONDS,
+        "chunk_seconds": chunk_minutes * 60 if chunk_minutes is not None else device.get("options", {}).get("chunk_minutes", MAX_AUDIO_CHUNK_SECONDS // 60) * 60,
+        "output_format": output_format,
     }
     if upload_id:
         try:
@@ -1117,17 +1344,41 @@ def list_notes() -> list[dict[str, Any]]:
     return [public_note(note) for note in STORE.list()]
 
 
+@app.get("/api/text-library")
+def list_text_files(directory: str = Query(default="", max_length=4096)) -> list[dict[str, Any]]:
+    try:
+        return TEXT_LIBRARY.scan(directory, [note.get("text_path") for note in STORE.list()])
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+def review_note(note_id: str) -> dict:
+    return TEXT_LIBRARY.get(note_id) if TEXT_LIBRARY.is_document(note_id) else STORE.get(note_id)
+
+
 @app.get("/api/notes/{note_id}")
 def get_note(note_id: str) -> dict[str, Any]:
     try:
-        return public_note(STORE.get(note_id))
+        return public_note(review_note(note_id))
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
 
 
 @app.patch("/api/notes/{note_id}")
 def patch_note(note_id: str, patch: NotePatch) -> dict[str, Any]:
     changes = patch.model_dump(exclude_none=True)
+    if TEXT_LIBRARY.is_document(note_id):
+        expected_hash = changes.pop("text_hash", None)
+        try:
+            return public_note(TEXT_LIBRARY.update(note_id, changes, expected_hash))
+        except KeyError:
+            raise HTTPException(404, "TXT 파일을 찾을 수 없습니다.") from None
+        except (ValueError, OSError) as error:
+            raise HTTPException(409, str(error)) from None
+    if {"text_body", "text_hash"} & changes.keys():
+        raise HTTPException(400, "TXT 파일 편집에만 사용할 수 있는 필드입니다.")
     if "title" in changes:
         changes["title"] = changes["title"].strip()
         if not changes["title"]:
@@ -1149,9 +1400,89 @@ def patch_note(note_id: str, patch: NotePatch) -> dict[str, Any]:
                 }
                 for item in base
             ]
-        return public_note(STORE.update(note_id, **changes))
+        with STORE.lock:
+            note = STORE.get(note_id)
+            if "speaker_names" in changes:
+                changes.update(speaker_changes({**note, "segments": changes.get("segments", note["segments"])}, changes["speaker_names"]))
+            if note.get("text_path") and note["status"] == "done":
+                changes.update(write_text({**note, **changes}))
+            return public_note(STORE.update(note_id, **changes))
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.post("/api/notes/{note_id}/text-file")
+def save_note_text(note_id: str, request: TextFileRequest) -> dict:
+    try:
+        if TEXT_LIBRARY.is_document(note_id):
+            return public_note(TEXT_LIBRARY.get(note_id))
+        return public_note(save_text(STORE, note_id, request.directory))
+    except KeyError:
+        raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.post("/api/notes/{note_id}/speakers")
+def save_note_speakers(note_id: str, request: SpeakersRequest) -> dict:
+    try:
+        changes = {"speaker_names": request.speaker_names, "speaker_merges": request.speaker_merges}
+        if TEXT_LIBRARY.is_document(note_id):
+            return public_note(TEXT_LIBRARY.update(note_id, changes, request.text_hash))
+        return public_note(save_text(STORE, note_id, request.directory, changes))
+    except KeyError:
+        raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.get("/api/summary/providers")
+async def summary_providers() -> list[dict]:
+    return list(await asyncio.gather(provider_status("codex"), provider_status("claude")))
+
+
+@app.get("/api/notes/{note_id}/summary")
+async def summary_status(note_id: str) -> dict:
+    try:
+        return SUMMARIES.status(review_note(note_id))
+    except KeyError:
+        raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.post("/api/notes/{note_id}/summary", status_code=202)
+async def start_summary(note_id: str, request: SummaryRequest) -> dict:
+    if SUMMARIES.busy(note_id):
+        raise HTTPException(409, "이 노트의 요약이 이미 실행 중입니다.")
+    try:
+        note = review_note(note_id)
+        if note["status"] != "done":
+            raise ValueError("전사가 완료된 노트를 선택해 주세요.")
+        status = await provider_status(request.provider)
+        if not status["ready"]:
+            raise ValueError(f"{status['name']}: {status['message']} {status['login'] if status['installed'] else status['install']}")
+        if not TEXT_LIBRARY.is_document(note_id):
+            note = save_text(STORE, note_id, request.directory)
+        return SUMMARIES.start(note, request.provider, request.prompt.strip() or DEFAULT_QUERY, request.directory)
+    except KeyError:
+        raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.post("/api/notes/{note_id}/summary/cancel")
+async def cancel_summary(note_id: str) -> dict:
+    try:
+        note = review_note(note_id)
+    except KeyError:
+        raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+    await SUMMARIES.cancel(note_id)
+    return SUMMARIES.status(note)
 
 
 @app.post("/api/notes/{note_id}/cancel")
@@ -1205,6 +1536,8 @@ def requeue_note(note_id: str) -> None:
 
 @app.post("/api/notes/{note_id}/restart", status_code=202)
 async def restart_note(note_id: str) -> dict[str, Any]:
+    if SUMMARIES.busy(note_id):
+        raise HTTPException(409, "요약을 취소하거나 완료한 후 전사를 다시 시작해 주세요.")
     async with NOTE_ACTION_LOCKS.setdefault(note_id, asyncio.Lock()):
         try:
             note = STORE.get(note_id)
@@ -1240,14 +1573,18 @@ async def restart_note(note_id: str) -> dict[str, Any]:
             progress_phase="queued", progress_completed_steps=0, progress_total_steps=0,
             processed_audio_seconds=0, model_progress={}, processing_started_at=None,
             processing_finished_at=None, processing_seconds=None, preprocessing_seconds=0,
-            raw_transcript=None, raw_segments=[], segments=[], speaker_names={},
+            raw_transcript=None, raw_segments=[], segments=[], speaker_names={}, speaker_merges={},
         )
         requeue_note(note_id)
         return public_note(note)
 
 
 @app.delete("/api/notes/{note_id}", status_code=204)
-def delete_note(note_id: str) -> Response:
+async def delete_note(note_id: str) -> Response:
+    if TEXT_LIBRARY.is_document(note_id):
+        raise HTTPException(409, "외부 TXT 파일은 Finder에서 관리해 주세요.")
+    if SUMMARIES.busy(note_id):
+        raise HTTPException(409, "요약을 취소하거나 완료한 후 노트를 삭제해 주세요.")
     try:
         note = STORE.get(note_id)
     except KeyError:
@@ -1262,6 +1599,7 @@ def delete_note(note_id: str) -> Response:
     if source.parent != note_dir:
         raise HTTPException(409, "노트의 녹음 파일이 전용 저장 폴더에 없습니다.")
     STORE.delete(note_id)
+    SUMMARIES.forget(note_id)
     shutil.rmtree(note_dir, ignore_errors=True)
     return Response(status_code=204)
 
@@ -1288,10 +1626,14 @@ def export_note(
     version: str = Query(default="edited", pattern="^(edited|raw)$"),
 ) -> Response:
     try:
-        note = STORE.get(note_id)
+        note = review_note(note_id)
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
     selected_segments = note["segments"]
+    if note.get("source_type") == "text_file" and format_name in {"srt", "vtt"} and format_name != note.get("output_format", "txt") and (not note["segments"] or note.get("output_format", "txt") == "txt"):
+        raise HTTPException(400, "자막으로 내보내려면 발화의 시작·종료 시간이 필요합니다.")
     if version == "raw":
         selected_segments = note["raw_segments"] or note["segments"]
     export_note_data = {**note, "segments": selected_segments}
@@ -1304,7 +1646,8 @@ def export_note(
         content, media_type = json_text(export_note_data), "application/json; charset=utf-8"
     elif format_name in exporters:
         exporter, media_type = exporters[format_name]
-        content = exporter(selected_segments, note["speaker_names"])
+        original_file = note.get("source_type") == "text_file" and (format_name == note.get("output_format", "txt") or (format_name == "txt" and not selected_segments))
+        content = note["text_body"] if original_file else exporter(selected_segments, note["speaker_names"])
     else:
         raise HTTPException(400, "지원하지 않는 내보내기 형식입니다.")
     safe_title = "".join(char for char in note["title"] if char.isalnum() or char in "-_ ").strip()

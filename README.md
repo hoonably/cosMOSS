@@ -1,193 +1,166 @@
 # cosMOSS
 
-**흩어진 목소리를, 정돈된 기록으로.**
+**녹음을 기록으로, 기록을 다음 할 일로.**
 
-Turn recordings into organized notes with transcription, speaker diarization, and AI summaries.
+Local-first transcription and speaker diarization for Mac.
 
-녹음·영상에서 누가 무슨 말을 했는지 구분하고, 핵심을 정리하는 앱을 만들고 있습니다.
-전사·화자 구분·수동 편집이 가능한 macOS 개발용 앱입니다.
-기본 장치는 이 Mac이며, SSH로 연결할 서버와 GPU를 여러 개 등록할 수 있습니다.
-**AI 요약은 아직 구현하지 않았습니다. CUDA 워커는 구현했으며 실제 모델 추론 검증은 별도로 필요합니다.**
+cosMOSS는 회의, 인터뷰, 강의 녹음을 텍스트로 옮기는 Mac 앱입니다.
+이 Mac에서 음성을 처리하고, 누가 언제 말했는지 구분한 기록을 읽고 편집할 수 있습니다.
 
-## 현재 기능
+![cosMOSS 앱 화면](docs/images/cosmoss.png)
 
-- 음성·영상 파일 업로드, FFmpeg 음성 정규화, 긴 녹음 분할
-- MOSS 기반 전사, 화자 구분, 타임스탬프, 청크 경계 화자 연결
-- 음성 재생, 본문·화자 이름 편집, 노트 검색과 자동 저장
-- TXT, SRT, WebVTT, JSON 내보내기
-- Apple Silicon MLX 추론 서버, SSH로 연결한 GPU별 CUDA 워커, 호환 전사 서버 연결
-- SSH config 호스트 선택, nvidia-smi GPU 상태 자동 갱신, GPU 번호 선택
-- 녹음마다 처리 장치 지정, 선택한 GPU UUID를 작업에 고정
-- SwiftUI + WebKit macOS 앱: 로컬 앱 서버 자동 시작, 파일 선택·저장 대화상자
+## 주요 기능
 
-현재 ‘녹음’은 녹음된 파일 업로드를 뜻합니다. 앱 내 마이크 녹음과 실시간 전사는 아직 지원하지 않습니다.
+- **Mac에서 전사** — Apple Silicon과 MLX로 로컬 음성 처리
+- **화자 구분과 타임스탬프** — 발언자별로 읽고, 해당 구간의 음성 재생
+- **긴 녹음 지원** — 자동 분할과 구간 경계의 화자 연결
+- **노트 편집** — 본문 수정과 검색, 화자별 발언 강조와 이름 지정
+- **형식 선택** — TXT·SRT·VTT로 저장하고 편집·화자 병합·요약에 사용
+- **기존 전사 파일 열기** — 기본 경로의 TXT·SRT·VTT 자동 표시, 원문 편집과 요약
+- **AI 요약** — 로그인한 Codex·Claude CLI로 전사 파일을 정리하고 Markdown 저장
+- **내보내기** — TXT, SRT, WebVTT, JSON
+- **다른 장치 연결** — 필요할 때 다른 Mac이나 NVIDIA GPU 기기로 전사
 
-## 빠른 시작
+MP3, WAV, M4A, MP4 등 음성·영상 파일을 사용할 수 있습니다.
+파일 기반 전사를 지원하며, 마이크 녹음은 지원하지 않습니다.
 
-Python 3.12, `uv`, `ffmpeg`가 필요합니다. macOS에서는 다음과 같이 준비합니다.
+## 시작하기
+
+Apple Silicon Mac, macOS 13 이상이 필요합니다.
+
+### Mac 앱 다운로드
+
+[Releases](https://github.com/hoonably/cosMOSS/releases)에서 `cosMOSS-v0.1.0-macos-arm64.zip`을 내려받고,
+압축을 푼 `cosMOSS.app`을 **응용 프로그램** 폴더에 옮겨 실행하세요.
+Python과 uv, 앱 소스가 포함되어 있어 저장소를 복제할 필요가 없습니다.
+음성 파일 변환에 사용하는 FFmpeg는 별도로 설치합니다.
+
+```bash
+brew install ffmpeg
+```
+
+첫 실행 후 앱에서 모델과 MLX 실행 환경을 준비합니다. 이때 인터넷 연결이 필요합니다.
+현재 프리릴리스는 Developer ID 서명·공증 없이 배포됩니다.
+macOS가 실행을 차단하면 **시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기**에서 허용하세요.
+Codex·Claude 요약 기능은 해당 CLI 설치와 로그인이 필요합니다.
+
+### 소스에서 실행
+
+소스 빌드에는 Xcode Command Line Tools가 추가로 필요합니다.
 
 ```bash
 brew install uv ffmpeg
+git clone https://github.com/hoonably/cosMOSS.git
+cd cosMOSS
 cp .env.example .env
 ./scripts/setup-app.sh
+./scripts/build-mac-app.sh
 ```
 
-### Mac 앱 실행
+모델은 앱을 연 뒤 준비할 수 있습니다.
 
-macOS 13 이상과 Xcode Command Line Tools가 필요합니다. 빌드한 CPU 아키텍처에서 실행됩니다.
+### 실행
+
+앱을 엽니다.
 
 ```bash
-./scripts/build-mac-app.sh
 open dist/cosMOSS.app
 ```
 
-앱은 `127.0.0.1:18760`에서 Python 앱 서버를 시작하고, 마지막 창을 닫으면 자신이 시작한 서버를 종료합니다.
-이미 실행 중인 cosMOSS 서버에 연결한 경우 그 서버는 종료하지 않습니다.
+화면은 왼쪽부터 세 단계로 구성됩니다.
+기본 너비는 **1:1:1**이며, 영역 사이 경계선을 드래그해 조절할 수 있습니다.
+조절한 비율은 다음 실행에도 유지됩니다. 경계선을 두 번 클릭하면 균등한 너비로 돌아갑니다.
 
-**현재 `.app`은 이 체크아웃의 코드와 `.venv`를 사용하는 개발용 빌드입니다.**
-폴더를 옮기면 다시 빌드해야 합니다. 독립 실행 배포본, 서명·공증, 자동 업데이트는 이후 작업입니다.
+1. **처리 장치** — 이 Mac의 **모델·설정**에서 모델을 준비한 뒤 **노트 만들기**로 녹음을 선택합니다.
+2. **노트 정리** — 기본 경로의 TXT·SRT·VTT를 열어 본문을 다듬습니다. **화자 설정**에서 화자를 누르면 해당 발언 전체가 빨간색으로 표시됩니다. 이름을 지정하거나 다른 화자 위로 드래그해 병합할 수 있습니다. 병합 확인 후 **저장**하면 노트와 선택한 형식의 파일이 함께 갱신됩니다. **Finder에서 보기**로 실제 파일을 찾을 수 있습니다.
+3. **AI 요약** — Codex 또는 Claude와 요약 요청을 선택하고 **Markdown으로 요약하기**를 누릅니다. 결과는 기본 경로에 `.md`로 저장되며, 본문이 바뀌면 다시 요약할 수 있습니다.
 
-앱 창을 열기 위해 전사 모델을 다운로드할 필요는 없습니다. 실제 전사에는 아래의 추론 서버가 필요합니다.
+기본 캐시에 모델이 있으면 재사용하고, 없으면 다운로드합니다. 직접 선택한 폴더는 복사하지 않습니다.
+노트 만들기 창에서는 TXT·SRT·VTT 저장 형식을 선택합니다. 처리 장치와 청크 길이는 1단계에서 고른 설정을 사용하며, NVIDIA 장치의 GPU는 실행할 때 선택합니다.
 
-### Apple Silicon에서 로컬 전사
+실행 환경과 모델은 앱에서 준비하며, 다음 실행부터 저장한 모델을 자동으로 불러옵니다.
 
-```bash
-./scripts/setup-mlx.sh  # MLX 런타임과 모델 다운로드
-./scripts/run-mlx.sh   # 앱과 별도 터미널에서 실행
-```
+언어와 중요 단어는 새 노트 창에서, 녹음 분할 길이는 장치별 고급 처리 설정에서 조정할 수 있습니다.
 
-이후 Mac 앱에서 파일을 올립니다. MLX 추론은 Apple Silicon 전용입니다.
+## 모델과 처리 설정
 
-브라우저에서 사용하려면:
+메인 화면에서 장치별로 전사 모델을 선택할 수 있습니다.
 
-```bash
-./scripts/run-app.sh   # http://127.0.0.1:8000
-```
+| 장치 | 선택 가능한 MOSS 모델 |
+| --- | --- |
+| Apple Silicon Mac | MLX 4bit, 8bit, 원본 16bit |
+| NVIDIA GPU | 원본 BF16/FP16, 텍스트 디코더 8bit/4bit 양자화(실험적) |
 
-Apple Silicon에서 웹 앱과 MLX 서버를 함께 실행하는 기존 방식도 유지합니다.
+Mac은 메모리 용량, NVIDIA 장치는 GPU별 VRAM을 읽어 시작 설정을 추천합니다.
+추천은 녹음 길이와 실제 메모리 사용량을 보장하는 값이 아니며, **권장값 적용**을 눌러 선택할 수 있습니다.
+GPU 메모리가 큰 경우에도 같은 0.9B 모델을 사용하며, 더 긴 청크를 처리할 여유가 생깁니다.
+NVIDIA 양자화는 원본 Hugging Face 캐시를 재사용하고 로딩할 때 적용합니다.
 
-```bash
-./scripts/start-mac.sh
-```
+**모델·설정 → 고급 처리 설정**에서 청크 길이, 화자 연결 구간, 최대 출력 토큰을 조절합니다.
+Mac은 KV 캐시와 prefill 묶음 크기, NVIDIA는 정밀도·Attention·KV 캐시 사용을 추가로 설정합니다.
+설정은 장치별로 저장되고, 시작한 노트에는 당시 설정이 고정됩니다.
+2단계에서는 TXT·SRT·VTT를 세로 목록으로 탐색합니다. 노트를 누르면 넓은 편집 창이 열리고, 닫아도 선택이 유지되어 3단계에서 바로 요약할 수 있습니다.
 
-### SSH 서버와 GPU 선택
+호환되는 MOSS 저장소 ID도 직접 지정할 수 있습니다. 별도 엔진이 필요한 GGUF/CoreML/ONNX 변환본과
+영어 ASR 전용 2B preview는 현재 실행하지 않으며 선택 목록에 사유를 표시합니다.
 
-1. 앱의 **처리 장치 관리**를 엽니다. 처음에는 **이 Mac**만 등록돼 있습니다.
-2. `~/.ssh/config`의 호스트를 선택합니다. `Include` 파일의 별칭도 표시합니다.
-3. GPU별 사용률, 여유/전체 VRAM, 프로세스를 약 3초 간격으로 확인합니다.
-4. GPU 번호를 하나 고르고 **선택 GPU 추가**를 누릅니다. 내부적으로 GPU UUID를 저장합니다.
-5. 등록된 장치에서 **전사 준비**를 누릅니다. 최초에는 원격 사용자 폴더에 실행 환경·모델을 설치합니다.
-6. 준비가 끝나면 새 녹음의 **처리 장치**에서 해당 서버/GPU를 선택합니다.
-7. 사용을 마치면 **워커 종료**를 누릅니다. 원격 워커는 앱을 닫아도 유지됩니다.
+## 다른 장치 사용하기
 
-장치 이름은 예를 들어 `연구실 · GPU 2`로 붙일 수 있습니다. 포트는 기본적으로 `18400 + GPU 번호`이며
-모델 ID·서버 종류와 함께 고급 연결 설정에서 바꿀 수 있습니다.
+기본은 이 Mac입니다. 필요하면 장치 화면의 **다른 장치 연결**을 펼쳐
+SSH로 다른 기기를 추가하면 실행 환경과 모델을 자동으로 준비합니다. 이미 설치된 항목은 재사용하고, 모델은 기본 Hugging Face 캐시에 저장합니다. 장치의 실행 환경 버튼에서 uv·Python venv·패키지 상태를 확인하거나 수동으로 설치할 수 있습니다. 모델 설정에서는 기존 모델 폴더도 지정할 수 있습니다.
+다운로드 진행률과 용량은 1초마다 갱신됩니다. NVIDIA GPU는 전사를 시작할 때 선택합니다.
 
-**원격 CUDA 워커 요구사항:** Linux, Python 3.10 이상, `venv` 또는 `uv`, 호환 NVIDIA 드라이버,
-PyPI·PyTorch·GitHub·Hugging Face에 접근할 인터넷 연결과 모델 저장 공간.
-워커는 PyTorch 2.8.0 / CUDA 12.8 빌드와 고정한 OpenMOSS 추론 코드를 사용합니다.
-지원 여부는 해당 서버의 드라이버·운영체제에서 확인해야 합니다.
+연결과 모델 준비에 관한 자세한 내용은 [장치 연결 안내](docs/DEVICES.md)를 참고하세요.
 
-SSH 키·ProxyJump 등은 기존 SSH 설정을 사용합니다. 암호 입력과 새 호스트 키 승인은 앱에서 처리하지 않으므로,
-필요하면 터미널에서 해당 별칭으로 먼저 접속하고 키를 SSH agent에 추가합니다.
-앱은 선택한 호스트에만 접속하며 GPU 상태 조회 단계에서 모델을 설치하지 않습니다.
+## Codex·Claude 연결
 
-‘여유로 보임’은 현재 사용률 5% 이하, VRAM 80% 이상 여유, 확인 가능한 연산 프로세스 없음이라는
-관측 기준입니다. **GPU 예약이나 작업 실행 가능 보장은 아닙니다.**
-워커 준비 직전에도 GPU UUID와 연산 프로세스를 다시 확인하며, 다른 작업을 종료하지 않습니다.
-같은 사용자의 cosMOSS 워커끼리는 GPU별 파일 잠금을 사용합니다.
+이 Mac에 설치되고 로그인된 최신 CLI를 사용합니다. 둘 중 원하는 것을 준비한 뒤
+앱의 **AI 요약 → 연결 확인**을 누르세요. 미설치·미로그인 상태는 화면에 안내합니다.
 
-이미 실행 중인 서버를 쓰려면 고급 설정의 **직접 실행한 호환 JSON 서버** 또는 **cosMOSS MLX 서버**를 선택합니다.
-이 경우 실행 GPU는 기존 서버 설정을 따릅니다. 서버는 `/v1/models`와 `/v1/audio/transcriptions`를 지원하고,
-화자·시간이 포함된 `text` 또는 `segments`를 반환해야 합니다.
+| CLI | 설치 | 로그인 |
+| --- | --- | --- |
+| [Codex](https://developers.openai.com/codex/cli/) | `npm install -g @openai/codex` | `codex login` |
+| [Claude Code](https://code.claude.com/docs/en/quickstart) | `brew install --cask claude-code` | `claude auth login` |
 
-원격 전사 시 음성이 해당 서버로 전송됩니다. 원격 워커는 loopback에만 바인딩하고,
-앱이 소유하는 SSH 터널과 장치별 토큰을 통해 통신합니다.
+실행할 때 선택한 형식으로 편집본을 저장하고 그 내용을 CLI에 전달합니다. 기존 TXT·SRT·VTT는 원본 파일을 읽습니다. 요약 요청을 직접 수정할 수 있고,
+실행 중 취소할 수도 있습니다. 결과는 실행할 때 선택된 기본 경로에 `원본파일명-요약.md`로 저장하며, 같은 이름의 파일이 있으면 번호를 붙여 보존합니다. 앱에서 다시 볼 수 있도록 `data/summaries/`에도 노트별로 보관합니다.
+실행 후 노트가 수정되면 이전 내용으로 만든 요약이라는 안내가 표시됩니다.
 
-## 설정
+## 데이터와 설정
 
-전체 설정 예시는 [.env.example](.env.example)에 있습니다.
-스크립트는 `.env`를 읽으며, 파일에 지정된 값이 셸의 같은 변수보다 우선합니다.
-상대 모델·캐시 경로는 저장소 루트를 기준으로 합니다.
+기본 설정에서는 음성과 노트를 이 Mac에서 처리하고 보관합니다.
+다른 장치를 직접 선택한 경우에만 해당 기기로 음성을 전송합니다.
+앱이 관리하는 NVIDIA 장치에서는 전사 결과를 이 Mac에 저장한 뒤 임시 음성·로그·작업 파일·설치 캐시를 정리합니다.
+모델과 전용 Python venv 실행 환경은 다음 작업에서 재사용합니다. Conda 환경은 만들지 않습니다.
+AI 요약을 실행하면 전사 파일 내용이 선택한 AI 서비스로 전송되며 해당 CLI 계정의 이용 조건과 사용량이 적용됩니다.
 
-| 변수 | 기본값 | 설명 |
-|---|---|---|
-| `MOSS_TRANSCRIPTION_BACKEND` | `mlx` | 장치 설정 도입 전 노트의 호환용 기본값 |
-| `MOSS_TRANSCRIPTION_URL` | `http://127.0.0.1:8001/v1` | 이전 노트의 호환용 전사 서버 주소 |
-| `MOSS_TRANSCRIPTION_API_KEY` | 빈 값 | 추론 서버 Bearer 토큰 |
-| `MOSS_TRANSCRIPTION_STREAM` | MLX: `true`, remote: `false` | 포함된 서버의 NDJSON 진행·취소 프로토콜 사용 |
-| `MOSS_MODEL_NAME` | `moss-mtd` | 서버가 제공하는 모델 ID |
-| `MOSS_APP_HOST` / `MOSS_APP_PORT` | `127.0.0.1` / `8000` | 웹 모드 앱 주소 |
-| `COSMOSS_DESKTOP_PORT` | `18760` | Mac 앱 전용 포트; 앱 실행 환경에서 지정 |
-| `MOSS_CHUNK_SECONDS` | `1800` | 기본 전사 청크 길이; 업로드 시 변경 가능 |
-| `MOSS_BRIDGE_SECONDS` | `30` | 청크 경계 화자 연결 길이 |
-| `MOSS_MAX_UPLOAD_GB` | `5` | 파일당 업로드 제한 |
-| `MLX_KV_BITS` | `8` | MLX KV 캐시 양자화; `0`으로 비활성화 |
-| `MLX_PREFILL_STEP_SIZE` | `512` | MLX 음성 입력 처리 배치 크기 |
+파일을 저장하고 불러오는 기본 경로는 이 Mac의 Downloads 폴더입니다. 상단 오른쪽 **기본 경로**를 눌러 변경할 수 있으며, 다음 앱 실행에도 유지됩니다. 이 폴더의 TXT·SRT·VTT를 불러오고, 선택한 형식의 전사 파일과 AI 요약 Markdown을 저장합니다.
+선택한 폴더의 기존 `.txt`·`.srt`·`.vtt` 파일도 2단계에 표시됩니다. 목록은 5초마다 갱신하며, 원본 파일을 복사하거나 열기만으로 변경하지 않습니다. 기존 파일은 바로 편집·요약할 수 있고, `[시:분:초] 화자: 내용` 형식이면 화자 이름도 지정할 수 있습니다. UTF-8·BOM이 있는 UTF-16·CP949를 지원하며, 편집할 때 원래 인코딩을 유지합니다. 자막의 화자 이름 지정·병합은 cue ID, 시간, 자막 설정과 본문을 보존합니다.
+**TXT/SRT/VTT 저장**, **화자 설정 → 저장**, **Finder에서 보기**, **요약 실행**에서 선택한 형식의 파일이 처음 생성됩니다.
+그 뒤 본문과 화자 이름을 편집하면 같은 파일이 갱신됩니다. 폴더 변경은 새 전사 파일에 적용됩니다.
+다른 앱에서 수정한 파일은 덮어쓰지 않고 알립니다. 앱에서 노트를 삭제해도 외부에 저장한 전사 파일과 Markdown은 남습니다.
 
-새 작업은 앱에서 선택한 장치 설정을 사용합니다. 로컬 MLX 서버와 ‘이 Mac’ 장치는 `MOSS_MLX_PORT`를 사용합니다.
-장치 정보가 없는 이전 노트만 기존 전역 URL 설정을 사용하며, 새 URL 변수가 없으면 `MOSS_MLX_URL`을 사용합니다.
+배포용 앱의 녹음·노트·장치 설정과 실행 환경은 `~/Library/Application Support/cosMOSS/`에 저장됩니다.
+소스에서 실행하면 녹음·노트·장치 설정은 저장소의 `data/`에 저장됩니다. 앱을 종료한 뒤 해당 폴더를 백업할 수 있습니다.
+로컬 모델은 Hugging Face 기본 캐시(`~/.cache/huggingface/hub`) 또는 직접 선택한 폴더에서 불러옵니다.
+`HF_HUB_CACHE` / `HF_HOME` 설정도 따릅니다. 녹음과 모델은 Git에 포함하지 않습니다.
+추가 설정은 [.env.example](.env.example)을 참고하세요.
 
-## 구조와 데이터
-
-```text
-SwiftUI / WebKit Mac 앱 또는 브라우저
-                    ↓
-             FastAPI 앱 서버
-               ↙         ↘
-  SQLite + 녹음 파일      작업별 장치 선택
-                       ↙          ↘
-               로컬 MLX        SSH 터널
-                                  ↓
-                          서버별 GPU 워커
-```
-
-- `src/`: 앱 API, 노트·장치 저장소, SSH/GPU 조회, 터널, MLX·CUDA 서버
-- `static/`: 노트·전사 편집 UI
-- `macos/`: SwiftUI / WebKit 앱
-- `scripts/`: 설치, 실행, Mac 앱 빌드
-- `data/`: 녹음·노트·장치 설정과 워커 토큰, `models/`: 로컬 모델, `logs/`: 실행 로그
-- 원격 `~/.local/share/cosmoss/`: GPU별 워커 환경, 로그, 모델 캐시
-
-녹음, 모델, 인증 정보, 런타임, 빌드 산출물은 Git에서 제외합니다.
-앱을 종료한 뒤 `data/` 전체를 백업하면 녹음과 노트를 보관할 수 있습니다.
-화자 연결은 인접 청크의 경계 발화를 사용하므로, 경계에서 말하지 않은 사람은 다른 화자로 남을 수 있습니다.
-화자 구분은 발언을 묶는 기능이며 실제 인물의 신원을 식별하는 기능은 아닙니다.
-
-## 다음 개발
-
-- [x] SSH config 선택, GPU 상태 갱신, GPU별 장치 등록과 작업 라우팅
-- [x] GPU UUID에 고정된 CUDA 워커의 준비·종료 구현
-- [ ] CUDA 모델 설치와 실제 녹음 전사의 장치별 검증
-- [ ] 장치별 동시 작업과 자동 배정; 현재 전사 큐는 한 작업씩 처리
-- [ ] 요약·주요 논의·결정·할 일 생성과 편집
-- [x] 앱에서 SSH 추론 서버·GPU·모델 설정
-- [ ] 앱에서 요약 제공자 설정
-- [ ] Mac 앱에서 MLX 서버 시작·종료와 모델 설치 관리
-- [ ] 독립 실행 Mac 앱 패키징과 배포
-
-현재 앱 창은 기존 웹 편집기를 재사용합니다. 요약 모델은 MOSS 전사 모델과 별도로 연결할 예정입니다.
-
-## 개발과 확인
+## 개발
 
 ```bash
-./scripts/setup-app.sh
 .venv/bin/python -m unittest discover -s tests -v
 node --check static/app.js
-./scripts/build-mac-app.sh
 ```
 
-## 출처와 라이선스
+앱 구조, 실행 방식과 검증 방법은 [개발 안내](docs/DEVELOPMENT.md)에 정리되어 있습니다.
 
-이 프로젝트는 친구의 [ginjae/mac-moss](https://github.com/ginjae/mac-moss)를 기반으로 시작했습니다.
-가져온 스냅샷은 `d69b3dbc227e9cee5c9beb8523e5b26b311b2b40`입니다.
+## Credits
 
-| 단계 | 프로젝트 | 기반 |
-|---|---|---|
-| 원본 앱 | [JoNebula/moss-note](https://github.com/JoNebula/moss-note) | 전사·화자 구분·노트 편집 |
-| 기반 포크 | [jiseungjeong/moss-note](https://github.com/jiseungjeong/moss-note) | Apple Silicon / MLX 적용 |
-| 직접 기반 | [ginjae/mac-moss](https://github.com/ginjae/mac-moss) | 로컬 실행, 진행 표시, 작업 제어, UI 개선 |
-| 이 프로젝트 | [hoonably/cosMOSS](https://github.com/hoonably/cosMOSS) | Mac 앱, 추론 연결 분리, 기록·정리 워크플로 개발 |
+[ginjae/mac-moss](https://github.com/ginjae/mac-moss)를 바탕으로 시작했으며,
+[JoNebula/moss-note](https://github.com/JoNebula/moss-note)와
+[jiseungjeong/moss-note](https://github.com/jiseungjeong/moss-note)의 작업을 이어갑니다.
+전사와 화자 구분에는 OpenMOSS의 MOSS 모델을 사용합니다.
 
-원본 [MIT License](LICENSE)와 저작권 표기를 보존합니다.
-모델 및 외부 구성 요소 출처는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 참고하세요.
+소스 코드는 [MIT License](LICENSE)로 배포합니다.
+모델과 외부 구성 요소의 출처·라이선스는 [Third-party notices](THIRD_PARTY_NOTICES.md)를 참고하세요.

@@ -6,22 +6,54 @@
     <meta name="theme-color" content="#f5f7f2" />
     <title>cosMOSS</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=cosmoss-20261019" />
+    <link rel="stylesheet" href="/styles.css?v=transcript-formats-20261019" />
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" id="go-home" href="/" aria-label="cosMOSS 홈으로 이동">
+    <header class="app-topbar">        <a class="brand" id="go-home" href="/" aria-label="cosMOSS 홈으로 이동">
           <span class="brand-mark" aria-hidden="true">
             <i></i><i></i><i></i><i></i><i></i>
           </span>
           <span>cos<b>MOSS</b></span>
         </a>
 
-        <button class="new-note" id="open-upload">
-          <span>＋</span> 새 노트 만들기
+<div class="workflow-trail"><span>음성에서 기록으로</span><i>→</i><span>기록에서 정리로</span></div>
+      <div class="topbar-actions">
+        <button class="save-location-button" id="save-location" type="button" aria-label="기본 경로 설정" title="파일을 저장하고, 불러올 기본 경로를 지정하세요.">
+          <svg class="save-location-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 10h18"/></svg>
+          <strong>기본 경로</strong><span id="save-location-name">Downloads</span>
+          <svg class="save-location-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
         </button>
+        <button class="developer-info-button" id="open-developer-info" type="button" aria-label="개발자 정보" aria-haspopup="dialog" aria-controls="developer-dialog" title="개발자 정보"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5m0-8h.01"/></svg></button>
+      </div>
+    </header>
+    <div class="app-shell workflow-shell">
+      <aside class="sidebar workflow-device-column" id="stage-device">
+      <section class="device-panel workflow-device" id="welcome" aria-labelledby="device-panel-title">
+        <div class="device-panel-head">
+          <p class="eyebrow">STEP 01 · TRANSCRIBE</p>
+          <div class="device-title-row">
+            <h2 id="device-panel-title">처리 장치 <span id="device-count">0</span></h2>
+            <button class="device-refresh-button" id="refresh-devices" type="button" aria-label="장치 상태 새로고침" title="장치 상태 새로고침"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8M21 3v5h-5" /></svg></button>
+          </div>
+        </div>
+        <p class="device-panel-summary hidden" id="device-panel-summary" role="status"></p>
+        <div class="device-panel-scroll" id="device-panel-scroll" tabindex="0" aria-label="처리 장치 목록">
+          <div class="registered-devices" id="registered-devices"></div>
+        </div>
+      </section>
 
+        <div class="sidebar-settings">
+          <button class="panel-footer-button connect-device-button" id="manage-devices" type="button" aria-haspopup="dialog" aria-controls="device-dialog">
+            <span class="connect-device-icon" aria-hidden="true">＋</span>
+            <span>새로운 장치 연결</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+          </button>
+        </div>
+      </aside>
+      <div class="stage-splitter" data-splitter="0" role="separator" tabindex="0" aria-label="1단계와 2단계 너비 조절" aria-orientation="vertical" aria-controls="stage-device stage-review" aria-describedby="splitter-help" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="드래그하여 너비 조절 · 두 번 클릭하면 세 영역을 같게"><span aria-hidden="true"></span></div>
+      <main class="main review-panel" id="stage-review" aria-labelledby="review-title">
+        <header class="stage-heading"><div><p class="eyebrow">STEP 02 · REVIEW</p><h2 id="review-title">노트 정리</h2></div><button class="icon-button" id="show-devices" type="button" aria-label="노트 선택 해제" title="노트 선택 해제">×</button><p class="stage-path-note" id="review-path-note">기본 경로에 있는 전사 파일을 불러옵니다.</p></header>
+        <section class="note-library" aria-label="내 노트">
         <label class="search-box">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" /></svg>
           <input id="note-search" type="search" placeholder="노트 검색" aria-label="노트 검색" />
@@ -29,26 +61,28 @@
 
         <div class="side-label"><span>내 노트</span><span id="note-count">0</span></div>
         <div class="note-list" id="note-list"></div>
+        <p class="text-library-status hidden" id="text-library-status" role="status"></p>
 
-        <button class="device-manager-button" id="manage-devices" type="button">처리 장치 관리 <span>＋</span></button>
-        <div class="server-state" id="server-state">
-          <span class="state-dot"></span>
-          <div><b>모델 확인 중</b><small>전사 서버 연결 확인 중</small></div>
+        </section>
+      </main>
+      <div class="stage-splitter" data-splitter="1" role="separator" tabindex="0" aria-label="2단계와 3단계 너비 조절" aria-orientation="vertical" aria-controls="stage-review stage-summary" aria-describedby="splitter-help" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="드래그하여 너비 조절 · 두 번 클릭하면 세 영역을 같게"><span aria-hidden="true"></span></div>
+      <aside class="summary-panel" id="stage-summary" aria-labelledby="summary-title">
+        <header class="stage-heading"><div><p class="eyebrow">STEP 03 · SUMMARIZE</p><h2 id="summary-title">AI 요약</h2></div><span class="stage-sparkle" aria-hidden="true">✳</span><p class="stage-path-note" id="summary-path-note">기본 경로에 AI 요약 md파일을 저장합니다.</p></header>
+        <div class="summary-scroll">
+          <label class="field"><span>함께 정리할 AI <button class="inline-link" id="refresh-summary-providers" type="button">연결 확인</button></span><select id="summary-provider" aria-describedby="summary-provider-status"><option value="codex">Codex</option><option value="claude">Claude</option></select></label>
+          <p class="summary-provider-status" id="summary-provider-status" role="status">CLI 연결을 확인하고 있습니다…</p>
+          <div class="cli-setup hidden" id="cli-setup"><p id="cli-setup-copy"></p><code id="cli-setup-command"></code><a id="cli-docs" href="https://developers.openai.com/codex/cli/" target="_blank" rel="noopener">설정 방법 보기 ↗</a></div>
+          <label class="field summary-prompt-field"><span>어떻게 정리할까요?</span><textarea id="summary-prompt" rows="6" maxlength="20000" placeholder="핵심 내용과 결정 사항, 담당자별 할 일을 정리해 줘."></textarea></label>
+          <div class="summary-source" id="summary-source">먼저 2단계에서 노트를 선택하세요.</div>
+          <button class="primary-action summary-run" id="run-summary" type="button" disabled><span>Markdown으로 요약하기</span><span aria-hidden="true">→</span></button>
+          <button class="ghost-button summary-cancel hidden" id="cancel-summary" type="button">요약 취소</button>
+          <p class="summary-data-note">실행하면 전사 파일을 선택한 AI 서비스에 전달합니다.<br>이 Mac에 로그인된 CLI 계정을 사용합니다.</p>
+          <div class="summary-status hidden" id="summary-status" role="status" aria-live="polite"></div>
+          <div class="summary-result-wrap hidden" id="summary-result-wrap"><div class="summary-result-head"><span id="summary-result-label">요약</span><button class="inline-link" id="copy-summary" type="button">복사</button></div><button class="summary-saved-file hidden" id="reveal-summary" type="button" title="파인더에서 보기"><span></span><span aria-hidden="true">↗</span></button><p class="summary-stale hidden" id="summary-stale">노트가 수정되었습니다. 최신 파일로 다시 요약해 주세요.</p><div class="summary-result" id="summary-result"></div></div>
         </div>
       </aside>
-
-      <main class="main">
-        <section class="welcome" id="welcome">
-          <div class="welcome-orbit"><span></span><i></i><i></i><i></i></div>
-          <p class="eyebrow">흩어진 목소리를, 정돈된 기록으로</p>
-          <h1>말하는 순간을<br /><em>기록으로.</em></h1>
-          <p>회의, 인터뷰, 강의를 올리면 화자와 시간을 구분해<br />검색하고 다듬을 수 있는 노트로 바꿉니다.</p>
-          <button class="primary-action" id="welcome-upload">첫 녹음 올리기 <span>→</span></button>
-          <div class="feature-row">
-            <span>다국어 전사</span><i></i><span>화자 분리</span><i></i><span>긴 녹음 자동 분할</span><i></i><span>직접 편집</span>
-          </div>
-        </section>
-
+    </div>
+    <dialog class="note-dialog review-panel" id="note-dialog" aria-label="노트 보기" tabindex="-1">
         <section class="workspace hidden" id="workspace">
           <header class="workspace-header">
             <div>
@@ -72,9 +106,13 @@
               <button class="icon-button danger" id="delete-note" aria-label="노트 삭제" title="노트 삭제">
                 <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" /></svg>
               </button>
+              <button class="note-window-close" id="close-note" type="button" aria-label="노트 창 닫기" title="닫기 · Esc"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
             </div>
           </header>
 
+          <div class="note-file-actions"><button class="ghost-button" id="edit-speakers" type="button"><span aria-hidden="true">◎</span> 화자 설정</button><button class="ghost-button" id="reveal-txt" type="button">Finder에서 보기 ↗</button><button class="ghost-button" id="save-txt" type="button">TXT 저장</button></div>
+          <p class="text-file-location" id="text-file-location">파일을 저장하면 선택한 기본 폴더에 보관됩니다.</p>
+          <p class="note-close-error hidden" id="note-close-error" role="alert"></p>
           <div class="processing-card hidden" id="processing-card" role="status" aria-live="polite">
             <div class="processing-heading">
               <div class="processing-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
@@ -103,6 +141,10 @@
           </div>
 
           <div class="editor hidden" id="editor">
+            <div class="text-document-editor hidden" id="text-document-editor">
+              <div class="text-document-toolbar"><span id="text-document-format">TXT</span><span class="save-state" id="text-document-save-state" role="status">저장됨</span><button class="retry-save hidden" id="retry-text-save" type="button">저장 재시도</button></div>
+              <textarea id="text-document-body" aria-label="전사 파일 내용 편집" spellcheck="false"></textarea>
+            </div>
             <div class="player-card">
               <audio id="media-player" controls preload="metadata"></audio>
               <div class="player-info">
@@ -134,13 +176,29 @@
             <p class="transcript-empty hidden" id="transcript-empty" role="status"></p>
           </div>
         </section>
-      </main>
-    </div>
+    </dialog>
+    <p class="sr-only" id="splitter-help">좌우 방향키로 너비를 조절합니다. Shift를 누르면 크게 조절합니다. Home과 End는 조절 한계로 이동하고, Enter 또는 경계선 두 번 클릭은 세 영역을 같은 너비로 되돌립니다.</p>
+
+    <dialog class="speaker-dialog" id="speaker-dialog" aria-labelledby="speaker-dialog-title">
+      <div class="dialog-head"><div><p class="eyebrow">목소리에 이름 붙이기</p><h2 id="speaker-dialog-title">화자 설정</h2></div><button class="dialog-close" id="close-speakers" type="button" aria-label="화자 설정 닫기">×</button></div>
+      <p class="speaker-dialog-help">화자를 선택하면 그 사람이 말한 내용만 빨간색으로 표시됩니다.</p>
+      <div class="speaker-dialog-body"><aside class="speaker-picker"><div id="speaker-choices" aria-label="화자 선택" aria-describedby="speaker-merge-help"></div><p class="speaker-merge-help" id="speaker-merge-help">드래그로 화자를 병합할 수 있습니다.</p><label class="field"><span id="speaker-name-label">화자 이름</span><input id="speaker-name" maxlength="60" placeholder="이름 입력" autocomplete="off"></label></aside><div class="speaker-preview" id="speaker-preview" tabindex="0" aria-label="화자별 발화 확인"></div></div>
+      <p class="speaker-save-error hidden" id="speaker-save-error" role="alert"></p>
+      <div class="speaker-dialog-footer"><span>저장하면 노트와 파일에 반영됩니다.</span><button class="ghost-button" id="cancel-speakers" type="button">취소</button><button class="primary-action" id="save-speakers" type="button">저장</button></div>
+    </dialog>
+
+    <dialog class="confirmation-dialog speaker-merge-dialog" id="speaker-merge-dialog" aria-labelledby="speaker-merge-title" aria-describedby="speaker-merge-question speaker-merge-detail">
+      <button class="dialog-close" id="close-speaker-merge" type="button" aria-label="화자 병합 확인 닫기">×</button>
+      <h2 id="speaker-merge-title" tabindex="-1">화자 병합</h2>
+      <p id="speaker-merge-question"></p>
+      <p class="speaker-merge-detail" id="speaker-merge-detail"></p>
+      <div class="confirmation-dialog-actions"><button class="ghost-button" id="cancel-speaker-merge" type="button">취소</button><button class="primary-action" id="confirm-speaker-merge" type="button">병합</button></div>
+    </dialog>
 
     <dialog id="upload-dialog" aria-labelledby="upload-title">
       <form id="upload-form">
         <div class="dialog-head">
-          <div><p class="eyebrow">새로운 음성 기록</p><h2 id="upload-title">새 노트 만들기</h2></div>
+          <div><p class="eyebrow">새로운 음성 기록</p><h2 id="upload-title">노트 만들기</h2></div>
           <button type="button" class="dialog-close" id="close-upload" aria-label="업로드 창 닫기">×</button>
         </div>
         <label class="drop-zone" id="drop-zone">
@@ -155,50 +213,105 @@
           <button type="button" class="hidden" id="retry-preparation">다시 시도</button>
         </div>
         <label class="field"><span>노트 제목 <small>선택</small></span><input name="title" placeholder="파일명으로 자동 생성" maxlength="200" /></label>
-        <label class="field">
-          <span>처리 장치 <button class="inline-link" id="manage-upload-devices" type="button">장치 관리</button></span>
-          <select id="device-select" name="device_id"><option value="local">이 Mac</option></select>
-          <small class="field-help" id="device-privacy">선택한 장치에 음성을 보내 전사합니다. 녹음과 노트는 이 Mac에 보관합니다.</small>
-        </label>
-        <label class="field">
-          <span>청크 길이 <small>분</small></span>
-          <input id="chunk-minutes" name="chunk_minutes" type="number" min="1" max="90" step="1" value="30" aria-describedby="chunk-length-help" required />
-          <small class="field-help" id="chunk-length-help">1~90분 · 이 길이를 넘는 녹음은 나누어 전사합니다.</small>
-        </label>
+        <label class="field"><span>저장 형식</span><select id="output-format" name="output_format"><option value="txt">TXT · 텍스트</option><option value="srt">SRT · 자막</option><option value="vtt">VTT · 웹 자막</option></select></label>
+        <section class="execution-gpu hidden" id="execution-gpu" aria-labelledby="execution-gpu-title">
+          <div class="execution-gpu-head"><span id="execution-gpu-title">이번 전사에 사용할 GPU</span><button class="ghost-button" id="probe-ssh-host" type="button">새로고침</button></div>
+          <div class="gpu-probe-result" id="gpu-probe-result" role="status" aria-live="polite"></div>
+          <small class="field-help">현재 상태를 보고 GPU 하나를 선택하세요. 전사가 끝나면 GPU 메모리를 해제합니다.</small>
+        </section>
         <div class="field-row">
           <label class="field"><span>주 언어</span><select name="language"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh">中文</option><option value="">자동 감지</option></select></label>
           <label class="field"><span>중요 단어 <small>선택</small></span><input name="hotwords" placeholder="프로젝트명, 이름" /></label>
         </div>
-        <p class="privacy-note"><span>◆</span> 녹음과 노트는 앱에 저장되며, 음성은 연결한 전사 서버에서 처리합니다.</p>
         <button class="submit-upload" type="submit" disabled>전사 시작하기 <span>→</span></button>
       </form>
     </dialog>
 
-    <dialog class="device-dialog" id="device-dialog" aria-labelledby="device-dialog-title">
+    <dialog class="device-dialog connect-device-dialog" id="device-dialog" aria-labelledby="device-dialog-title">
       <div class="dialog-head">
-        <div><p class="eyebrow">실행 위치 선택</p><h2 id="device-dialog-title">처리 장치</h2></div>
-        <button class="dialog-close" id="close-device-dialog" type="button" aria-label="장치 관리 닫기">×</button>
+        <div class="connection-title"><span class="connection-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><path d="M14 6h4v4M10 18H6v-4M18 6l-6 6M6 18l6-6"/></svg></span><div><p class="eyebrow">DEVICES · SSH</p><h2 id="device-dialog-title">새로운 장치 연결</h2></div></div>
+        <button class="dialog-close" id="close-device-dialog" type="button" aria-label="장치 연결 닫기">×</button>
       </div>
-      <p class="device-description">기본 장치는 이 Mac입니다. SSH로 연결할 장치와 GPU를 추가하고, 녹음마다 처리할 곳을 고를 수 있어요. 준비한 원격 워커는 앱을 닫아도 유지됩니다. 사용을 마치면 ‘워커 종료’를 눌러 GPU를 비워 주세요.</p>
-      <div class="registered-devices" id="registered-devices"></div>
+      <div class="connection-layout">
+      <section class="discovered-devices" id="discovered-devices" aria-labelledby="discovered-title">
+        <div class="connection-list-heading"><h3 id="discovered-title">연결할 수 있는 장치</h3><code>~/.ssh/config</code></div>
+        <div id="ssh-host-candidates"></div>
+        <p class="connection-empty" id="ssh-host-empty" role="status">SSH 설정을 불러오는 중…</p>
+      </section>
       <section class="ssh-device-section">
-        <h3>SSH 장치 추가</h3>
-        <label class="field"><span>SSH config의 호스트</span>
+        <label class="field"><span>SSH 설정에 등록된 기기</span>
           <select id="ssh-host"><option value="">불러오는 중…</option></select>
         </label>
-        <button class="ghost-button" id="probe-ssh-host" type="button" disabled>GPU 상태 새로고침</button>
-        <div class="gpu-probe-result" id="gpu-probe-result" role="status" aria-live="polite"></div>
+        <p class="field-help" id="ssh-host-help"></p>
         <form id="add-device-form">
           <label class="field"><span>장치 이름</span><input id="device-name" name="name" maxlength="80" required placeholder="예: 연구실 3090" /></label>
-          <details class="device-advanced"><summary>고급 연결 설정</summary>
-            <label class="field"><span>전사 서버 포트</span><input id="device-port" name="remote_port" type="number" min="1024" max="65535" value="18400" required /></label>
-          <label class="field"><span>서버의 모델 ID</span><input id="device-model" name="model" value="OpenMOSS-Team/MOSS-Transcribe-Diarize" maxlength="200" required /></label>
-          <label class="field"><span>전사 서버 종류</span><select id="device-backend" name="backend"><option value="cuda">CUDA 워커 · 선택 GPU 자동 준비</option><option value="remote">직접 실행한 호환 JSON 서버</option><option value="mlx">직접 실행한 cosMOSS MLX 서버</option></select></label>
+          <details class="device-advanced">
+            <summary>
+              <span class="advanced-toggle-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h5m4 0h7M4 17h9m4 0h3"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg></span>
+              <span>고급 연결 설정</span>
+              <svg class="advanced-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+            </summary>
+            <div class="advanced-fields">
+              <label class="field"><span>연결 포트</span><input id="device-port" name="remote_port" type="number" min="1024" max="65535" value="18400" required /></label>
+              <label class="field"><span>전사 모델</span><input id="device-model" name="model" value="OpenMOSS-Team/MOSS-Transcribe-Diarize" maxlength="200" required /></label>
+              <label class="field"><span>처리 방식</span><select id="device-backend" name="backend"><option value="cuda">NVIDIA GPU · 자동 준비</option><option value="remote">직접 실행한 호환 모델</option><option value="mlx">다른 Mac의 MLX 모델</option></select></label>
+              <label class="field" id="device-cache-field"><span>모델 캐시 경로 <small>선택</small></span><input id="device-cache" name="model_cache" maxlength="500" placeholder="자동 · 연결한 기기의 Hugging Face 설정" /><small class="field-help">비워두면 HF_HUB_CACHE / HF_HOME 또는 ~/.cache/huggingface/hub를 사용합니다.</small></label>
+            </div>
           </details>
-          <p class="field-help" id="worker-setup-help">GPU 번호를 선택해 추가한 뒤 ‘전사 준비’를 누르세요. 처음에는 해당 서버의 사용자 폴더에 Python 실행 환경과 모델을 설치합니다. Linux, Python 3.10 이상, NVIDIA 드라이버와 인터넷 연결이 필요합니다.</p>
-          <button class="primary-action" id="add-device" type="submit" disabled>선택 GPU 추가</button>
+          <p class="field-help" id="worker-setup-help">연결하면 실행 환경과 모델을 자동으로 준비합니다. 이미 설치된 항목은 재사용합니다.</p>
+          <button class="primary-action" id="add-device" type="submit" disabled>장치 추가</button>
         </form>
       </section>
+      </div>
+    </dialog>
+
+    <dialog class="device-dialog environment-dialog" id="environment-dialog" aria-labelledby="environment-title">
+      <div class="dialog-head"><div><p class="eyebrow" id="environment-device-name"></p><h2 id="environment-title">실행 환경</h2></div><button class="dialog-close" id="close-environment" type="button" aria-label="실행 환경 닫기">×</button></div>
+      <div id="environment-components"></div>
+      <p class="environment-status hidden" id="environment-status" role="status" aria-live="polite"></p>
+      <div class="environment-actions"><button class="ghost-button" id="check-environment" type="button">상태 확인</button><button class="primary-action" id="install-environment" type="button">실행 환경 설치</button></div>
+    </dialog>
+
+    <dialog class="device-dialog local-model-dialog" id="local-model-dialog" aria-labelledby="local-model-title">
+      <form id="local-model-form">
+        <div class="dialog-head">
+          <div><p class="eyebrow" id="model-device-name">이 Mac에서 시작하기</p><h2 id="local-model-title">모델과 처리 설정</h2></div>
+          <button class="dialog-close" id="close-local-model" type="button" aria-label="모델 준비 창 닫기">×</button>
+        </div>
+        <label class="field model-choice-field"><span>전사 모델</span><select id="model-choice" aria-describedby="model-choice-help"></select><small class="field-help" id="model-choice-help"></small></label>
+        <label class="field hidden" id="model-custom-field"><span>Hugging Face 모델 ID</span><input id="model-custom-id" placeholder="owner/moss-model" spellcheck="false"><small class="field-help">이 장치의 MLX 또는 Transformers용 MOSS-Transcribe-Diarize 형식이어야 합니다.</small></label>
+        <div class="model-recommendation" id="model-recommendation"></div>
+        <div class="model-profiles" id="model-profiles"></div>
+        <p class="model-intro">모델을 어디에서 불러올까요?</p>
+        <fieldset class="model-sources" id="model-sources">
+          <legend class="sr-only">모델 위치 선택</legend>
+          <label class="model-source"><input type="radio" name="source" value="cache" checked><span><strong>Hugging Face 기본 캐시</strong><small>이미 받은 모델을 재사용하고, 없으면 다운로드합니다.</small></span><span class="model-source-check" aria-hidden="true">✓</span></label>
+          <label class="model-source"><input type="radio" name="source" value="folder"><span><strong>이미 받은 모델 사용</strong><small id="model-folder-description">Mac용 MOSS MLX 모델 폴더를 직접 선택합니다.</small></span><span class="model-source-check" aria-hidden="true">✓</span></label>
+        </fieldset>
+        <div id="model-cache-info" class="model-location"><span>저장 위치</span><code id="model-cache-path"></code></div>
+        <div id="model-folder-fields" class="hidden">
+          <label class="field"><span>모델 폴더</span><input id="model-folder-path" name="path" placeholder="/Users/…/모델 폴더" autocomplete="off" spellcheck="false"><small class="field-help" id="model-folder-help">config.json과 safetensors가 있는 폴더를 선택하세요. 파일은 복사하지 않고 그대로 사용합니다.</small></label>
+          <button class="ghost-button" id="choose-model-folder" type="button">폴더 선택…</button>
+        </div>
+        <div class="model-preparation hidden" id="model-preparation" role="status" aria-live="polite"><i aria-hidden="true"></i><div><strong id="model-preparation-title"></strong><p id="model-preparation-detail"></p><div id="model-download-progress"></div></div></div>
+        <details class="device-advanced model-knobs" id="model-knobs">
+          <summary><span class="advanced-toggle-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></span><span>고급 처리 설정</span><svg class="advanced-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
+          <div class="advanced-fields" id="model-options">
+            <div class="knob-grid">
+              <label class="field"><span>기본 청크 길이 <small>분</small></span><input data-knob="chunk_minutes" type="number" min="1" max="90" value="30"><small class="field-help">짧게 나누면 메모리를 줄이고, 길게 나누면 대화 문맥을 더 유지합니다.</small></label>
+              <label class="field"><span>화자 연결 구간 <small>초</small></span><input data-knob="bridge_seconds" type="number" min="0" max="120" value="30"><small class="field-help">청크 경계를 다시 읽는 길이입니다. 0이면 추가 처리를 생략합니다.</small></label>
+              <label class="field"><span>최대 출력 토큰</span><input data-knob="max_tokens" type="number" min="512" max="32768" step="512" value="32768"><small class="field-help">너무 작으면 긴 전사가 중간에 끊길 수 있습니다.</small></label>
+              <label class="field mlx-knob"><span>KV 캐시</span><select data-knob="kv_bits"><option value="8">8bit · 메모리 절약</option><option value="0">원본 정밀도</option></select><small class="field-help">모델 가중치와 별도로 적용합니다.</small></label>
+              <label class="field mlx-knob"><span>Prefill 묶음 크기</span><select data-knob="prefill_step_size"><option>128</option><option>256</option><option selected>512</option><option>1024</option><option>2048</option></select><small class="field-help">작을수록 순간 메모리를 줄입니다.</small></label>
+              <label class="field cuda-knob"><span>가중치 정밀도</span><select data-knob="precision"><option value="auto">자동 · BF16 / FP16</option><option value="bf16">BF16</option><option value="fp16">FP16</option><option value="int8">8bit · 실험적</option><option value="int4">4bit NF4 · 실험적</option></select><small class="field-help">양자화는 텍스트 디코더에 적용합니다.</small></label>
+              <label class="field cuda-knob"><span>Attention 방식</span><select data-knob="attention"><option value="sdpa">SDPA · 기본</option><option value="eager">Eager · 호환성 우선</option></select><small class="field-help">Eager는 메모리 사용량이 크게 늘 수 있습니다.</small></label>
+              <label class="field cuda-knob"><span>KV 캐시 사용</span><select data-knob="use_cache"><option value="true">사용 · 속도 우선</option><option value="false">해제 · 느리게 처리</option></select><small class="field-help">해제하면 이전 토큰을 다시 계산합니다.</small></label>
+            </div>
+          </div>
+        </details>
+        <p class="field-help model-setup-help">처음에는 실행 환경도 함께 준비합니다. 준비 중 창을 닫아도 계속 진행됩니다.</p>
+        <button class="primary-action" id="prepare-local-model" type="submit">모델 준비</button>
+      </form>
     </dialog>
 
     <dialog class="confirmation-dialog" id="cancel-dialog" role="alertdialog" aria-modal="true" aria-labelledby="cancel-dialog-title" aria-describedby="cancel-dialog-description">
@@ -229,7 +342,34 @@
       </div>
     </dialog>
 
+    <dialog class="developer-dialog" id="developer-dialog" aria-labelledby="developer-dialog-title">
+      <button class="dialog-close" id="close-developer-info" type="button" aria-label="개발자 정보 닫기">×</button>
+      <div id="developer-info-view">
+        <div class="developer-dialog-heading"><p class="eyebrow">개발자 정보</p><h2 class="developer-wordmark" id="developer-dialog-title" tabindex="-1">cos<strong>MOSS</strong></h2></div>
+        <div class="developer-links">
+          <a class="developer-link developer-repo" id="developer-repo" href="https://github.com/hoonably/cosMOSS" target="_blank" rel="noopener noreferrer">
+            <svg class="developer-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-4.5 1.4-4.5-2.5-6.5-3M15 22v-3.9c0-1.1-.1-1.6-.6-2.1 3.1-.3 6.3-1.5 6.3-6.8 0-1.5-.5-2.7-1.4-3.7.2-.4.6-1.8-.1-3.5 0 0-1.2-.4-3.8 1.4a13.1 13.1 0 0 0-6.8 0C6 1.6 4.8 2 4.8 2c-.7 1.7-.3 3.1-.1 3.5C3.8 6.5 3.3 7.7 3.3 9.2c0 5.3 3.2 6.5 6.3 6.8-.4.4-.6 1.1-.6 2.1V22"/></svg>
+            <span>github.com/hoonably/<strong>cosMOSS</strong></span>
+            <svg class="developer-link-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>
+          </a>
+          <button class="developer-link developer-coffee" id="offer-developer-coffee" type="button">
+            <svg class="developer-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13v9a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8Zm13 1h1a4 4 0 0 1 0 8h-1M6 2v2m5-2v2m5-2v2"/></svg>
+            <span>개발자에게 커피 사주기</span>
+            <svg class="developer-link-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="developer-coffee-view hidden" id="developer-coffee-view">
+        <span class="coffee-gift-icon" aria-hidden="true">☕</span>
+        <h2 id="developer-coffee-title" tabindex="-1">마음만 받겠습니다</h2>
+        <p id="developer-coffee-message">지갑 지키세요.<br><a href="https://github.com/hoonably/cosMOSS/pulls" target="_blank" rel="noopener noreferrer">Pull request는 환영입니다.</a></p>
+        <button class="primary-action" id="confirm-developer-coffee" type="button">확인</button>
+      </div>
+    </dialog>
+
     <div class="toast" id="toast" role="status"></div>
-    <script src="/app.js?v=restart-20261014" defer></script>
+    <script src="/panes.js?v=split-panes-20261019" defer></script>
+    <script src="/selects.js?v=custom-selects-20261019" defer></script>
+    <script src="/app.js?v=model-status-cleanup-20261020" defer></script>
   </body>
 </html>

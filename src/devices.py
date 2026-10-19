@@ -28,6 +28,9 @@ class DeviceStore:
                 "model": os.getenv("MOSS_MODEL_NAME", "moss-mtd"),
                 "remote_port": int(os.getenv("MOSS_MLX_PORT", "8001")),
             }
+            previous = connection.execute("SELECT config FROM devices WHERE id = 'local'").fetchone()
+            if previous:
+                local = {**json.loads(previous[0]), **local}
             connection.execute("INSERT INTO devices VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET config=excluded.config", ("local", json.dumps(local)))
 
     def _connect(self):
@@ -46,20 +49,33 @@ class DeviceStore:
         return json.loads(row[0])
 
     def add_ssh(self, *, name: str, host: str, remote_port: int, model: str, backend: str,
-                gpu_uuid: str | None = None, gpu_index: int | None = None) -> dict[str, Any]:
+                model_cache: str = "") -> dict[str, Any]:
         device = {"id": uuid.uuid4().hex, "kind": "ssh", "name": name, "host": host,
                   "remote_port": remote_port, "model": model, "backend": backend,
-                  "gpu_uuid": gpu_uuid, "gpu_index": gpu_index}
+                  "model_cache": model_cache, "model_prepared": False}
         if backend == "cuda":
             device["api_key"] = secrets.token_urlsafe(32)
         with self.lock, self._connect() as connection:
             for row in connection.execute("SELECT config FROM devices"):
                 previous = json.loads(row[0])
-                if previous.get("host") == host and previous["remote_port"] == remote_port:
+                if previous.get("host") == host and (previous["remote_port"] == remote_port or
+                                                     backend == previous.get("backend") == "cuda"):
                     raise ValueError("이 SSH 호스트와 포트는 이미 등록돼 있습니다.")
-                if gpu_uuid and previous.get("host") == host and previous.get("gpu_uuid") == gpu_uuid:
-                    raise ValueError("이 호스트의 GPU는 이미 등록돼 있습니다.")
             connection.execute("INSERT INTO devices VALUES (?, ?)", (device["id"], json.dumps(device)))
+        return device
+
+    def set_model(self, device_id: str, source: str, path: str) -> dict[str, Any]:
+        with self.lock, self._connect() as connection:
+            device = self.get(device_id)
+            device.update(model_source=source, model_path=path if source == "folder" else "", model_prepared=True)
+            connection.execute("UPDATE devices SET config = ? WHERE id = ?", (json.dumps(device), device_id))
+        return device
+
+    def configure(self, device_id: str, **values) -> dict[str, Any]:
+        with self.lock, self._connect() as connection:
+            device = self.get(device_id)
+            device.update(values)
+            connection.execute("UPDATE devices SET config = ? WHERE id = ?", (json.dumps(device), device_id))
         return device
 
     def delete(self, device_id: str) -> None:
@@ -81,7 +97,7 @@ class ResolvedDevice:
 
 
 def public_device(device: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in device.items() if key != "api_key"}
+    return {key: value for key, value in device.items() if key not in {"api_key", "gpu_uuid", "gpu_index"}}
 
 
 async def resolve_device(device: dict[str, Any], tunnels: SSHTunnels) -> ResolvedDevice:

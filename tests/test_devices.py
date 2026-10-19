@@ -2,6 +2,8 @@ import asyncio
 import io
 import json
 import os
+import shutil
+import signal
 import tempfile
 import unittest
 import urllib.error
@@ -97,8 +99,9 @@ class DeviceStoreTests(unittest.TestCase):
             database = Path(temporary) / "devices.sqlite3"
             store = DeviceStore(database)
             self.assertEqual([device["id"] for device in store.list()], ["local"])
-            device = store.add_ssh(name="GPU 0", host="gpu-a", remote_port=18400,
-                                   model="moss", backend="cuda", gpu_uuid=GPU_UUID, gpu_index=0)
+            device = store.add_ssh(name="Lab", host="gpu-a", remote_port=18400,
+                                   model="moss", backend="cuda")
+            self.assertNotIn("gpu_uuid", device)
             self.assertTrue(device["api_key"])
             self.assertNotIn("api_key", public_device(device))
             self.assertEqual(DeviceStore(database).get(device["id"]), device)
@@ -106,7 +109,7 @@ class DeviceStoreTests(unittest.TestCase):
                 store.delete("local")
             with self.assertRaises(ValueError):
                 store.add_ssh(name="duplicate", host="gpu-a", remote_port=18401,
-                              model="moss", backend="cuda", gpu_uuid=GPU_UUID, gpu_index=0)
+                              model="moss", backend="cuda")
 
 
 class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
@@ -126,29 +129,119 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         from src.remote_workers import RemoteWorkers
         self.workers = RemoteWorkers()
         self.enterContext(patch.object(main, "REMOTE_WORKERS", self.workers))
+
+        async def emulate_worker(device, action):
+            self.workers.states[device["id"]] = {"phase": {"prepare": "ready", "stop": "stopped"}.get(action, "installed"), "action": action}
+
+        self.worker_run = self.enterContext(patch.object(self.workers, "run", new=AsyncMock(side_effect=emulate_worker)))
+        self.probe = self.enterContext(patch.object(main, "probe_host", new=AsyncMock(return_value={"reachable": True, "gpus": parse_gpu_xml(GPU_XML)})))
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://localhost")
         self.addAsyncCleanup(self.client.aclose)
-        self.spec = {"name": "Lab GPU 0", "host": "gpu-a", "remote_port": 18400,
-                     "model": "moss-model", "backend": "cuda", "gpu_uuid": GPU_UUID, "gpu_index": 0}
+        self.spec = {"name": "Lab", "host": "gpu-a", "remote_port": 18400,
+                     "model": "moss-model", "backend": "cuda"}
 
     async def add(self):
         response = await self.client.post("/api/devices", json=self.spec)
         self.assertEqual(response.status_code, 201, response.text)
+        await asyncio.sleep(0)
+        self.registration_calls = list(self.worker_run.await_args_list)
+        self.worker_run.reset_mock()
         return response.json()
 
-    async def test_default_is_local_and_adding_needs_no_connection(self):
+    async def test_registration_prepares_environment_and_model_without_selecting_a_gpu(self):
         self.assertEqual([device["id"] for device in (await self.client.get("/api/devices")).json()], ["local"])
         added = await self.add()
-        self.assertEqual(added["gpu_uuid"], GPU_UUID)
+        self.assertNotIn("gpu_uuid", added)
+        self.assertNotIn("gpu_uuid", self.devices.get(added["id"]))
+        self.worker_run.assert_not_awaited()
+        self.assertEqual([call.args[1] for call in self.registration_calls], ["install"])
+        self.assertEqual(self.devices.get(added["id"])["model_source"], "cache")
+        prepared = await self.client.post(f"/api/devices/{added['id']}/model/prepare", json={"source": "cache"})
+        self.assertEqual(prepared.status_code, 202, prepared.text)
+        await asyncio.sleep(0)
+        self.worker_run.assert_awaited_once()
+        self.assertEqual(self.worker_run.call_args.args[1], "install")
+        self.probe.assert_not_awaited()
         self.assertNotIn("api_key", added)
         devices = (await self.client.get("/api/devices")).json()
         self.assertEqual(len(devices), 2)
         self.assertNotIn("api_key", json.dumps(devices))
 
-    async def test_cuda_requires_gpu_selection_and_configured_alias(self):
-        for change in [{"gpu_uuid": None}, {"gpu_index": None}, {"host": "not-in-config"}]:
-            response = await self.client.post("/api/devices", json={**self.spec, **change})
-            self.assertEqual(response.status_code, 400, response.text)
+    async def test_model_variants_and_knobs_are_persisted_and_validated(self):
+        device=await self.add()
+        response=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'source':'cache','model_key':'cuda-4bit','options':{'chunk_minutes':10,'bridge_seconds':0,'max_tokens':4096,'attention':'eager','use_cache':False}})
+        self.assertEqual(response.status_code,202,response.text)
+        await asyncio.sleep(0)
+        saved=self.devices.get(device['id'])
+        self.assertEqual(saved['options']['precision'],'int4')
+        self.assertEqual(saved['options']['chunk_minutes'],10)
+        self.assertFalse(saved['options']['use_cache'])
+        self.assertEqual(saved['model'],'OpenMOSS-Team/MOSS-Transcribe-Diarize')
+        invalid=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'model_key':'mlx-8bit'})
+        self.assertEqual(invalid.status_code,400)
+        invalid=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'options':{'chunk_minutes':91}})
+        self.assertEqual(invalid.status_code,422)
+
+    async def test_environment_status_does_not_install_and_manual_install_preserves_model_settings(self):
+        device = await self.add()
+        runtime = {"ready": False, "uv": {"ready": True}, "venv": {"ready": False}, "packages": {"ready": False}}
+        with patch.object(self.workers, "environment", new=AsyncMock(return_value=runtime)):
+            response = await self.client.get(f"/api/devices/{device['id']}/environment")
+        self.assertEqual(response.json(), runtime)
+        self.worker_run.assert_not_awaited()
+        saved = self.devices.set_model(device['id'], 'folder', '/models/moss')
+        response = await self.client.post(f"/api/devices/{device['id']}/environment")
+        self.assertEqual(response.status_code, 202)
+        await asyncio.sleep(0)
+        self.assertEqual(self.worker_run.call_args.args[1], 'runtime')
+        self.assertEqual(self.devices.get(device['id'])['model_path'], saved['model_path'])
+        self.probe.assert_not_awaited()
+        self.store.list = lambda: [{'device_id': device['id'], 'status': 'processing'}]
+        blocked = await self.client.post(f"/api/devices/{device['id']}/environment")
+        self.assertEqual(blocked.status_code, 409)
+
+    async def test_local_environment_can_be_checked_without_model_preparation(self):
+        with patch.object(self.main.LOCAL_MODELS, 'environment', new=AsyncMock(return_value={'ready': True})), \
+             patch.object(self.main.LOCAL_MODELS, 'start_environment', return_value={'phase': 'installing_uv'}) as start:
+            checked = await self.client.get('/api/devices/local/environment')
+            self.assertTrue(checked.json()['ready'])
+            start.assert_not_called()
+            installed = await self.client.post('/api/devices/local/environment')
+            self.assertEqual(installed.status_code, 202)
+            start.assert_called_once()
+
+    async def test_opening_remote_model_options_does_not_install_or_probe_gpus(self):
+        device = await self.add()
+        with patch.object(self.workers, "options", new=AsyncMock(return_value={"phase": "idle", "cache_dir": "/home/tester/.cache/huggingface/hub", "source": "cache"})):
+            response = await self.client.get(f"/api/devices/{device['id']}/model")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['source'], 'cache')
+        self.worker_run.assert_not_awaited()
+        self.probe.assert_not_awaited()
+
+    async def test_model_folder_selection_persists_and_never_selects_a_gpu(self):
+        device = await self.add()
+        response = await self.client.post(f"/api/devices/{device['id']}/model/prepare", json={"source": "folder", "path": "~/models/moss"})
+        self.assertEqual(response.status_code, 202, response.text)
+        await asyncio.sleep(0)
+        saved = self.devices.get(device['id'])
+        self.assertEqual(saved['model_path'], '~/models/moss')
+        self.assertEqual(saved['model_source'], 'folder')
+        self.assertEqual(self.worker_run.call_args.args[0]['model_source'], 'folder')
+        self.probe.assert_not_awaited()
+        self.assertNotIn('gpu_uuid', saved)
+        invalid = await self.client.post(f"/api/devices/{device['id']}/model/prepare", json={"source": "folder", "path": "relative/path"})
+        self.assertEqual(invalid.status_code, 400)
+        self.store.list = lambda: [{'device_id': device['id'], 'status': 'processing'}]
+        blocked = await self.client.post(f"/api/devices/{device['id']}/model/prepare", json={"source": "cache"})
+        self.assertEqual(blocked.status_code, 409)
+
+    async def test_registration_requires_configured_alias_and_rejects_fixed_gpu(self):
+        response = await self.client.post("/api/devices", json={**self.spec, "host": "not-in-config"})
+        self.assertEqual(response.status_code, 400)
+        response = await self.client.post("/api/devices", json={**self.spec, "gpu_uuid": GPU_UUID})
+        self.assertEqual(response.status_code, 422)
+        self.worker_run.assert_not_awaited()
 
     async def test_remote_clients_and_dns_rebinding_hosts_cannot_manage_ssh(self):
         for client, hostname in [("10.0.0.2", "localhost"), ("127.0.0.1", "attacker.example")]:
@@ -158,11 +251,11 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
 
     async def test_note_pins_device_and_hides_worker_token(self):
         device = await self.add()
-        response = await self.client.post("/api/notes", data={"device_id": device["id"]}, files={"file": ("voice.wav", b"audio", "audio/wav")})
+        response = await self.client.post("/api/notes", data={"device_id": device["id"], "gpu_uuid": GPU_UUID}, files={"file": ("voice.wav", b"audio", "audio/wav")})
         self.assertEqual(response.status_code, 202, response.text)
         note = response.json()
         self.assertEqual(note["device_id"], device["id"])
-        self.assertEqual(note["device_name"], "Lab GPU 0")
+        self.assertEqual(note["device_name"], "Lab · GPU #0")
         self.assertNotIn("device_snapshot_json", note)
         snapshot = json.loads(self.store.get(note["id"])["device_snapshot_json"])
         self.assertEqual(snapshot["gpu_uuid"], GPU_UUID)
@@ -173,7 +266,7 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
 
     async def test_inference_receives_the_pinned_gpu_even_if_registry_changes(self):
         device = await self.add()
-        response = await self.client.post("/api/notes", data={"device_id": device["id"]}, files={"file": ("voice.wav", b"audio", "audio/wav")})
+        response = await self.client.post("/api/notes", data={"device_id": device["id"], "gpu_uuid": GPU_UUID}, files={"file": ("voice.wav", b"audio", "audio/wav")})
         note = response.json()
         source = self.store.resolve_path(note["id"], self.store.get(note["id"])["source_path"])
         config = TranscriptionConfig.from_env({"MOSS_TRANSCRIPTION_BACKEND": "remote", "MOSS_TRANSCRIPTION_URL": "http://127.0.0.1:23456/v1"})
@@ -191,17 +284,84 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get(note["id"])["status"], "done")
         self.assertEqual(resolver.call_args.args[0]["remote_port"], 18400)
         self.assertEqual(inference.call_args.kwargs["target"].gpu_uuid, GPU_UUID)
+        self.assertEqual([call.args[1] for call in self.worker_run.await_args_list], ["prepare", "stop"])
+        self.assertEqual(self.worker_run.await_args_list[-2].args[0]["gpu_uuid"], GPU_UUID)
 
-    async def test_preparation_receives_selected_gpu_and_stopping_is_explicit(self):
+    async def test_model_preparation_has_no_gpu_and_device_can_be_removed(self):
         device = await self.add()
         with patch.object(self.workers, "start", return_value={"phase": "connecting"}) as start:
-            response = await self.client.post(f"/api/devices/{device['id']}/worker/prepare")
+            response = await self.client.post(f"/api/devices/{device['id']}/worker/install")
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(start.call_args.args[0]["gpu_uuid"], GPU_UUID)
+        self.assertNotIn("gpu_uuid", start.call_args.args[0])
+        self.assertEqual(start.call_args.args[1], "install")
         self.assertIn("api_key", start.call_args.args[0])
-        self.assertEqual((await self.client.delete(f"/api/devices/{device['id']}")).status_code, 409)
-        self.workers.states[device["id"]] = {"phase": "stopped"}
         self.assertEqual((await self.client.delete(f"/api/devices/{device['id']}")).status_code, 204)
+
+    async def test_each_job_requires_its_own_available_gpu(self):
+        device = await self.add()
+        files = {"file": ("voice.wav", b"audio", "audio/wav")}
+        response = await self.client.post("/api/notes", data={"device_id": device["id"]}, files=files)
+        self.assertEqual(response.status_code, 400)
+        other_uuid = "GPU-aaaaaaaa-2222-3333-4444-555555555555"
+        self.probe.return_value["gpus"].append({**parse_gpu_xml(GPU_XML)[0], "uuid": other_uuid, "index": 2})
+        for gpu_uuid, index in [(GPU_UUID, 0), (other_uuid, 2)]:
+            response = await self.client.post("/api/notes", data={"device_id": device["id"], "gpu_uuid": gpu_uuid}, files=files)
+            self.assertEqual(response.status_code, 202, response.text)
+            snapshot = json.loads(self.store.get(response.json()["id"])["device_snapshot_json"])
+            self.assertEqual((snapshot["gpu_uuid"], snapshot["gpu_index"]), (gpu_uuid, index))
+        self.assertNotIn("gpu_uuid", self.devices.get(device["id"]))
+
+    async def test_busy_or_missing_gpu_is_rejected_without_consuming_audio(self):
+        device = await self.add()
+        for gpus in [[], [{**parse_gpu_xml(GPU_XML)[0], "idle_candidate": False}]]:
+            self.probe.return_value["gpus"] = gpus
+            response = await self.client.post("/api/notes", data={"device_id": device["id"], "gpu_uuid": GPU_UUID}, files={"file": ("voice.wav", b"audio")})
+            self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.store.list(), [])
+
+    async def test_gpu_inventory_is_scoped_to_registered_device(self):
+        device = await self.add()
+        response = await self.client.post(f"/api/devices/{device['id']}/gpus")
+        self.assertEqual(response.status_code, 200)
+        self.probe.assert_awaited_once_with("gpu-a")
+        self.assertEqual((await self.client.post("/api/devices/local/gpus")).status_code, 400)
+        self.assertEqual((await self.client.post("/api/devices/missing/gpus")).status_code, 404)
+
+    async def test_gpu_is_released_after_transcription_failure(self):
+        device = await self.add()
+        response = await self.client.post("/api/notes", data={"device_id": device["id"], "gpu_uuid": GPU_UUID}, files={"file": ("voice.wav", b"audio")})
+        with patch.object(self.main, "resolve_device", new=AsyncMock()), \
+             patch.object(self.main, "model_health", new=AsyncMock(return_value={"moss": {"ok": True}})), \
+             patch.object(self.main, "run_audio_work", new=AsyncMock(side_effect=RuntimeError("bad audio"))):
+            await self.main.transcribe(response.json()["id"])
+        self.assertEqual(self.store.get(response.json()["id"])["status"], "error")
+        self.assertEqual([call.args[1] for call in self.worker_run.await_args_list], ["prepare", "stop"])
+
+    async def test_cancel_during_gpu_loading_stops_that_job_worker(self):
+        device = await self.add()
+        response = await self.client.post("/api/notes", data={"device_id": device["id"], "gpu_uuid": GPU_UUID}, files={"file": ("voice.wav", b"audio")})
+        note_id = response.json()["id"]
+        loading = asyncio.Event()
+
+        async def block_loading(snapshot, action):
+            self.workers.states[snapshot["id"]] = {"phase": "loading" if action == "prepare" else "stopped", "action": action}
+            if action == "prepare":
+                loading.set()
+                await asyncio.Event().wait()
+
+        self.worker_run.side_effect = block_loading
+        task = asyncio.create_task(self.main.transcribe(note_id))
+        await asyncio.wait_for(loading.wait(), 2)
+        self.main.CANCEL_REQUESTED.add(note_id)
+        task.cancel()
+        try:
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+        finally:
+            self.main.CANCEL_REQUESTED.discard(note_id)
+        self.assertEqual(self.store.get(note_id)["status"], "cancelled")
+        self.assertEqual(self.worker_run.await_args_list[-1].args[1], "stop")
+        self.assertEqual(self.worker_run.await_args_list[-1].args[0]["gpu_uuid"], GPU_UUID)
 
     async def test_unknown_device_is_rejected_instead_of_falling_back_local(self):
         response = await self.client.post("/api/notes", data={"device_id": "missing"}, files={"file": ("voice.wav", b"audio", "audio/wav")})
@@ -255,6 +415,12 @@ class CUDAWorkerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BootstrapTests(unittest.TestCase):
+    def setUp(self):
+        from src import remote_bootstrap as bootstrap
+        self.enterContext(patch.object(bootstrap, "ensure_uv", return_value="/tools/uv"))
+        self.enterContext(patch.object(bootstrap, "inspect_environment", return_value={
+            "ready": True, "uv": {"ready": True}, "venv": {"ready": True}, "packages": {"ready": True}}))
+
     def spec(self):
         return {"id": "a" * 32, "gpu_uuid": GPU_UUID, "remote_port": 18400,
                 "model": "moss", "api_key": "private-test-token"}
@@ -280,10 +446,13 @@ class BootstrapTests(unittest.TestCase):
                  patch.object(bootstrap.socket, "socket", return_value=fake_socket), \
                  patch.object(bootstrap.subprocess, "check_output", return_value=GPU_XML.encode()), \
                  patch.object(bootstrap.subprocess, "run") as install, \
+                 patch.object(bootstrap, "prepare_model", return_value={"model_path": "/cache/model", "model_cache": "/cache"}), \
                  patch.object(bootstrap.subprocess, "Popen", return_value=worker) as launch:
                 bootstrap.main()
             self.assertEqual(launch.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"], GPU_UUID)
             self.assertEqual(launch.call_args.kwargs["env"]["COSMOSS_WORKER_TOKEN"], "private-test-token")
+            self.assertEqual(launch.call_args.kwargs["env"]["MOSS_MODEL_PATH"], "/cache/model")
+            self.assertEqual(launch.call_args.kwargs["env"]["HF_HUB_OFFLINE"], "1")
             command = launch.call_args.args[0]
             self.assertEqual(command[command.index("--port") + 1], "18400")
             self.assertIn("127.0.0.1", launch.call_args.args[0])
@@ -296,7 +465,7 @@ class BootstrapTests(unittest.TestCase):
         busy = GPU_XML.replace("<processes/>", "<processes><process_info><type>C</type><pid>42</pid></process_info></processes>")
         fake_socket = MagicMock()
         fake_socket.__enter__.return_value.connect_ex.return_value = 1
-        with patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "source": "# worker"}))), \
+        with patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "source": "# worker", "action": "prepare"}))), \
              patch.object(bootstrap.urllib.request, "urlopen", side_effect=urllib.error.URLError("not running")), \
              patch.object(bootstrap.socket, "socket", return_value=fake_socket), \
              patch.object(bootstrap.subprocess, "check_output", return_value=busy.encode()), \
@@ -304,6 +473,25 @@ class BootstrapTests(unittest.TestCase):
              self.assertRaisesRegex(RuntimeError, "active or unknown"):
             bootstrap.main()
         launch.assert_not_called()
+
+    def test_registration_install_does_not_probe_or_load_any_gpu(self):
+        from src import remote_bootstrap as bootstrap
+        device = self.spec()
+        del device["gpu_uuid"]
+        with tempfile.TemporaryDirectory() as temporary:
+            output = io.StringIO()
+            with patch.object(bootstrap.Path, "home", return_value=Path(temporary)), \
+                 patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "action": "install"}))), \
+                 patch.object(bootstrap.sys, "stdout", output), \
+                 patch.object(bootstrap, "prepare_runtime", return_value=Path(temporary) / "python"), \
+                 patch.object(bootstrap, "prepare_model", return_value={"model_path": "/cache/model", "model_cache": "/cache", "reused": True}), \
+                 patch.object(bootstrap.subprocess, "check_output") as gpu_probe, \
+                 patch.object(bootstrap.subprocess, "Popen") as launch:
+                bootstrap.main()
+            gpu_probe.assert_not_called()
+            launch.assert_not_called()
+            self.assertIn('"phase": "installed"', output.getvalue())
+            self.assertIn('"reused": true', output.getvalue())
 
     def test_stale_pid_does_not_stop_an_unrelated_process(self):
         from src import remote_bootstrap as bootstrap
@@ -324,6 +512,32 @@ class BootstrapTests(unittest.TestCase):
                  self.assertRaisesRegex(RuntimeError, "ownership"):
                 bootstrap.main()
             kill.assert_not_called()
+
+    def test_device_cleanup_recovers_gpu_identity_from_its_own_worker_record(self):
+        from src import remote_bootstrap as bootstrap
+        device = self.spec()
+        del device["gpu_uuid"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / ".local/share/cosmoss/workers" / device["id"]
+            root.mkdir(parents=True)
+            (root / "worker.pid").write_text("123456789")
+            (root / "worker.json").write_text(json.dumps({"gpu_uuid": GPU_UUID}))
+            processes = Path(temporary) / "proc"
+            process = processes / "123456789"
+            process.mkdir(parents=True)
+            (process / "cwd").symlink_to(root)
+            (process / "environ").write_bytes(b"\0".join([
+                b"CUDA_VISIBLE_DEVICES=" + GPU_UUID.encode(), b"COSMOSS_DEVICE_ID=" + device["id"].encode(),
+                b"COSMOSS_WORKER_TOKEN=" + device["api_key"].encode(),
+            ]))
+            with patch.object(bootstrap.Path, "home", return_value=Path(temporary)), \
+                 patch.object(bootstrap, "PROCESSES", processes), \
+                 patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "action": "stop"}))), \
+                 patch.object(bootstrap.sys, "stdout", io.StringIO()), \
+                 patch.object(bootstrap.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")), \
+                 patch.object(bootstrap.os, "kill", side_effect=lambda *_: shutil.rmtree(process)) as kill:
+                bootstrap.main()
+            kill.assert_called_once_with(123456789, signal.SIGTERM)
 
 
 if __name__ == "__main__":

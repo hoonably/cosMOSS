@@ -17,7 +17,8 @@ The application source is distributed under the [MIT License](LICENSE).
 Both referenced license files contain `Copyright (c) 2026 Jo Seongwoon` and
 the same MIT license text. That file is preserved verbatim in this repository's
 [LICENSE](LICENSE). The fork's contributions are credited here and in the
-[README](README.md). cosMOSS's changes and the full application lineage are described in the README.
+[README](README.md). The full application lineage and initial snapshot are recorded in
+[Development](docs/DEVELOPMENT.md).
 
 The pinned links identify the license revisions reviewed for this notice; they
 do not assert the exact commits from which all local code was derived.
@@ -70,6 +71,16 @@ licenses in the installed environments. These tables identify the main
 components used by this project; they are not a complete inventory of a
 redistributed binary bundle.
 
+## Mac release bundle
+
+The downloadable Mac app includes a standalone CPython 3.12.12 distribution
+provided through python-build-standalone, uv 0.9.25 (MIT or Apache-2.0), and the
+web dependencies pinned in `uv.lock`. CPython and its bundled libraries retain
+their license files under `Contents/Resources/python/`; uv and Python packages
+retain their installed distribution metadata and license files. The app's MIT
+license and this notice are also included in `Contents/Resources/`.
+Model weights, MLX/CUDA runtimes, and FFmpeg are not included in that ZIP.
+
 ## FFmpeg
 
 cosMOSS invokes `ffmpeg` and `ffprobe` as separate executables installed by the
@@ -77,3 +88,14 @@ user through Homebrew. FFmpeg binaries are not included in this repository.
 FFmpeg is LGPL-2.1-or-later by default; enabling GPL components changes the
 applicable license, as described in [FFmpeg's licensing information](https://ffmpeg.org/legal.html).
 If distributing an FFmpeg binary, follow the terms of that specific build.
+
+
+## Optional model variants and CUDA quantization
+
+Additional Mac weights use vanch007's
+[MLX 4-bit](https://huggingface.co/vanch007/mlx-MOSS-Transcribe-Diarize-4bit) and
+[original 16-bit](https://huggingface.co/vanch007/mlx-MOSS-Transcribe-Diarize)
+conversions of the same Apache-2.0 MOSS-Transcribe-Diarize model.
+Optional NVIDIA quantization installs [bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes)
+(MIT) and [Accelerate](https://github.com/huggingface/accelerate) (Apache-2.0)
+into the selected SSH user's runtime. Model weights are not redistributed in this repository.

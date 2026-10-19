@@ -13,7 +13,7 @@ if [[ ! -x "$PROJECT_DIR/.venv/bin/python" ]]; then
 fi
 swift build --package-path "$PROJECT_DIR/macos" -c release
 BIN_DIR="$(swift build --package-path "$PROJECT_DIR/macos" -c release --show-bin-path)"
-APP_DIR="$PROJECT_DIR/dist/cosMOSS.app"
+APP_DIR="${COSMOSS_APP_DIR:-$PROJECT_DIR/dist/cosMOSS.app}"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BIN_DIR/CosMOSS" "$APP_DIR/Contents/MacOS/CosMOSS"
 "$PROJECT_DIR/.venv/bin/python" - "$PROJECT_DIR" "$APP_DIR" <<'PY'

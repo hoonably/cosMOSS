@@ -30,10 +30,10 @@ struct CosMOSSApp: App {
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .frame(minWidth: 980, minHeight: 680)
+            .frame(minWidth: 1100, minHeight: 720)
             .task { await backend.start() }
         }
-        .defaultSize(width: 1280, height: 840)
+        .defaultSize(width: 1480, height: 900)
         .commands { CommandGroup(replacing: .newItem) {} }
     }
 }
@@ -80,14 +80,35 @@ final class BackendController: ObservableObject {
         defer { starting = false }
         stop()
 
-        guard let root = Bundle.main.object(forInfoDictionaryKey: "CosMOSSProjectRoot") as? String else {
-            error = "체크아웃에서 ./scripts/build-mac-app.sh 로 개발용 앱을 빌드해 주세요."
-            return
-        }
-        let projectURL = URL(fileURLWithPath: root, isDirectory: true)
-        let script = projectURL.appendingPathComponent("scripts/run-app.sh")
-        guard FileManager.default.fileExists(atPath: script.path) else {
-            error = "프로젝트 폴더를 옮겼다면 ./scripts/build-mac-app.sh 로 다시 빌드해 주세요."
+        let projectURL: URL
+        let workingURL: URL
+        let executable: URL
+        let arguments: [String]
+        let bundled: Bool
+        if let root = Bundle.main.object(forInfoDictionaryKey: "CosMOSSProjectRoot") as? String {
+            projectURL = URL(fileURLWithPath: root, isDirectory: true)
+            workingURL = projectURL
+            executable = URL(fileURLWithPath: "/bin/bash")
+            let script = projectURL.appendingPathComponent("scripts/run-app.sh")
+            guard FileManager.default.fileExists(atPath: script.path) else {
+                error = "프로젝트 폴더를 옮겼다면 ./scripts/build-mac-app.sh 로 다시 빌드해 주세요."
+                return
+            }
+            arguments = [script.path]
+            bundled = false
+        } else if let resources = Bundle.main.resourceURL {
+            projectURL = resources.appendingPathComponent("app", isDirectory: true)
+            workingURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("cosMOSS", isDirectory: true)
+            executable = resources.appendingPathComponent("python/bin/python3.12")
+            arguments = ["-m", "uvicorn", "src.main:app", "--host", "127.0.0.1", "--port"]
+            bundled = true
+            guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+                error = "앱 실행 환경을 찾지 못했습니다. ZIP을 다시 풀어 앱 전체를 복사해 주세요."
+                return
+            }
+        } else {
+            error = "앱 파일을 확인해 주세요."
             return
         }
 
@@ -108,7 +129,7 @@ final class BackendController: ObservableObject {
         }
 
         do {
-            let logs = projectURL.appendingPathComponent("logs", isDirectory: true)
+            let logs = workingURL.appendingPathComponent("logs", isDirectory: true)
             try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
             let logURL = logs.appendingPathComponent("desktop.log")
             self.logURL = logURL
@@ -119,14 +140,26 @@ final class BackendController: ObservableObject {
             try log.seekToEnd()
             self.log = log
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = [script.path]
-            process.currentDirectoryURL = projectURL
+            process.executableURL = executable
+            process.arguments = bundled ? arguments + [String(port), "--workers", "1"] : arguments
+            process.currentDirectoryURL = workingURL
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
                 + ":/opt/homebrew/bin:/usr/local/bin"
             environment["COSMOSS_DESKTOP_HOST"] = "127.0.0.1"
             environment["COSMOSS_DESKTOP_PORT"] = String(port)
+            if bundled, let resources = Bundle.main.resourceURL {
+                environment.removeValue(forKey: "PYTHONHOME")
+                environment["PYTHONPATH"] = projectURL.path
+                environment["PYTHONNOUSERSITE"] = "1"
+                environment["PYTHONDONTWRITEBYTECODE"] = "1"
+                environment["MOSS_DATA_DIR"] = workingURL.appendingPathComponent("data").path
+                environment["MOSS_RUNTIME_DIR"] = workingURL.path
+                environment["MLX_VENV"] = workingURL.appendingPathComponent(".venv-mlx").path
+                environment["UV_BIN"] = resources.appendingPathComponent("tools/bin/uv").path
+                environment["UV_CACHE_DIR"] = workingURL.appendingPathComponent(".cache/uv").path
+                environment["UV_PYTHON_INSTALL_DIR"] = workingURL.appendingPathComponent(".cache/uv/python").path
+            }
             process.environment = environment
             process.standardOutput = log
             process.standardError = log
@@ -135,7 +168,7 @@ final class BackendController: ObservableObject {
 
             for _ in 0..<60 {
                 guard process.isRunning else {
-                    throw StartupError.failed("앱 서버가 종료되었습니다. ./scripts/setup-app.sh 실행 여부와 logs/desktop.log를 확인해 주세요.")
+                    throw StartupError.failed("앱 실행 환경이 종료되었습니다. 로그 보기를 눌러 확인해 주세요.")
                 }
                 if await health(at: address) == .ready {
                     url = address
@@ -143,7 +176,7 @@ final class BackendController: ObservableObject {
                 }
                 try await Task.sleep(nanoseconds: 500_000_000)
             }
-            throw StartupError.failed("앱 서버가 준비되지 않았습니다. logs/desktop.log를 확인해 주세요.")
+            throw StartupError.failed("앱을 시작하지 못했습니다. 로그 보기를 눌러 확인해 주세요.")
         } catch {
             self.error = error.localizedDescription
             stop()
@@ -171,7 +204,11 @@ struct WorkspaceView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(origin: url) }
 
     func makeNSView(context: Context) -> WKWebView {
-        let webView = WKWebView()
+        let configuration = WKWebViewConfiguration()
+        for name in ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile"] {
+            configuration.userContentController.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: name)
+        }
+        let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
@@ -182,9 +219,79 @@ struct WorkspaceView: NSViewRepresentable {
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply {
         let origin: URL
         init(origin: URL) { self.origin = origin }
+
+        private let saveDirectoryKey = "cosmoss.defaultTextSaveDirectory"
+        private var textSaveDirectory: URL {
+            if let path = UserDefaults.standard.string(forKey: saveDirectoryKey), !path.isEmpty {
+                return URL(fileURLWithPath: path, isDirectory: true)
+            }
+            return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+        }
+        private func locationInfo(_ url: URL) -> [String: String] {
+            ["path": url.path, "name": url.lastPathComponent]
+        }
+
+        func userContentController(_ userContentController: WKUserContentController,
+                                   didReceive message: WKScriptMessage,
+                                   replyHandler: @escaping (Any?, String?) -> Void) {
+            guard ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile"].contains(message.name), message.frameInfo.isMainFrame,
+                  let url = message.frameInfo.request.url,
+                  url.scheme == origin.scheme, url.host == origin.host, url.port == origin.port else {
+                replyHandler(nil, "이 앱에서만 폴더 설정을 사용할 수 있습니다.")
+                return
+            }
+            if message.name == "getSaveLocation" {
+                replyHandler(locationInfo(textSaveDirectory), nil)
+                return
+            }
+            if message.name == "revealTextFile" {
+                guard let body = message.body as? [String: Any], let path = body["path"] as? String,
+                      path.hasPrefix("/"), ["txt", "srt", "vtt", "md"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) else {
+                    replyHandler(nil, "파일 경로를 확인해 주세요.")
+                    return
+                }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+                    replyHandler(nil, "파일을 찾을 수 없습니다.")
+                    return
+                }
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                replyHandler(true, nil)
+                return
+            }
+            let selectingSaveLocation = message.name == "chooseSaveLocation"
+            let panel = NSOpenPanel()
+            panel.title = selectingSaveLocation ? "기본 경로 선택" : "다운로드한 모델 폴더 선택"
+            panel.message = selectingSaveLocation ? "파일을 저장하고, 불러올 기본 경로를 지정하세요." : "config.json과 모델 가중치가 있는 MOSS MLX 폴더를 선택하세요."
+            panel.prompt = "이 폴더 사용"
+            if selectingSaveLocation {
+                panel.directoryURL = textSaveDirectory
+                panel.canCreateDirectories = true
+            }
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.begin { result in
+                guard result == .OK, let selected = panel.url else {
+                    replyHandler(nil, nil)
+                    return
+                }
+                if selectingSaveLocation {
+                    guard FileManager.default.isWritableFile(atPath: selected.path) else {
+                        replyHandler(nil, "선택한 폴더에 저장할 권한이 없습니다. 다른 폴더를 선택해 주세요.")
+                        return
+                    }
+                    UserDefaults.standard.set(selected.path, forKey: self.saveDirectoryKey)
+                    replyHandler(self.locationInfo(selected), nil)
+                } else {
+                    replyHandler(selected.path, nil)
+                }
+            }
+        }
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -217,6 +324,9 @@ struct WorkspaceView: NSViewRepresentable {
         func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                       suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
             let panel = NSSavePanel()
+            if ["txt", "srt", "vtt", "md"].contains((suggestedFilename as NSString).pathExtension.lowercased()) {
+                panel.directoryURL = textSaveDirectory
+            }
             panel.nameFieldStringValue = suggestedFilename
             panel.begin { result in completionHandler(result == .OK ? panel.url : nil) }
         }

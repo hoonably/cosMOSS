@@ -85,6 +85,10 @@ class NoteStore:
                 "device_id": "TEXT NOT NULL DEFAULT 'local'",
                 "device_name": "TEXT NOT NULL DEFAULT '이 Mac'",
                 "device_snapshot_json": "TEXT",
+                "text_path": "TEXT",
+                "text_hash": "TEXT",
+                "speaker_merges_json": "TEXT NOT NULL DEFAULT '{}'",
+                "output_format": "TEXT NOT NULL DEFAULT 'txt'",
             }
             for name, definition in migrations.items():
                 if name not in columns:
@@ -350,6 +354,7 @@ class NoteStore:
             "raw_segments": "raw_segments_json",
             "segments": "segments_json",
             "speaker_names": "speaker_names_json",
+            "speaker_merges": "speaker_merges_json",
             "model_progress": "model_progress_json",
         }
         normalized: dict[str, Any] = {}
@@ -389,5 +394,6 @@ class NoteStore:
         result["raw_segments"] = json.loads(result.pop("raw_segments_json") or "[]")
         result["segments"] = json.loads(result.pop("segments_json") or "[]")
         result["speaker_names"] = json.loads(result.pop("speaker_names_json") or "{}")
+        result["speaker_merges"] = json.loads(result.pop("speaker_merges_json", "{}") or "{}")
         result["model_progress"] = json.loads(result.pop("model_progress_json", "{}") or "{}")
         return result
