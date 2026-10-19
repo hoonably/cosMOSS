@@ -1,5 +1,47 @@
 # Development
 
+[← cosMOSS](../README.md)
+
+## Run from source
+
+Apple Silicon, macOS 13 or later, Xcode Command Line Tools, uv, and FFmpeg are
+required to build and run the development app.
+
+```bash
+brew install uv ffmpeg
+git clone https://github.com/hoonably/cosMOSS.git
+cd cosMOSS
+cp .env.example .env
+./scripts/setup-app.sh
+./scripts/build-mac-app.sh
+open dist/cosMOSS.app
+```
+
+Prepare the model through the app after launching. For browser development,
+run `./scripts/run-app.sh` instead of opening the Mac bundle.
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+node --check static/app.js
+node --check static/selects.js
+node --check static/panes.js
+```
+
+Build the downloadable app and ZIP with `./scripts/build-mac-release.sh`.
+The output is `dist/cosMOSS-v0.1.0-macos-arm64.zip` and its SHA-256 file.
+
+## Local configuration and data
+
+The development launcher reads the checkout's `.env`; available settings are
+listed in [`.env.example`](../.env.example). Source runs keep notes, recordings,
+and device settings in `data/`, logs in `logs/`, and the MLX environment in
+`.venv-mlx/`. Quit the app before backing up its data. Release-app storage is
+described below.
+
+Hugging Face uses `~/.cache/huggingface/hub` by default and honors `HF_HOME` and
+`HF_HUB_CACHE`. Device-specific model options are covered in the
+[user guide](USAGE.md); SSH workers are documented in [DEVICES.md](DEVICES.md).
+
 ## Boundaries
 
 cosMOSS is a local-first Mac application. Its default device is This Mac; connecting
