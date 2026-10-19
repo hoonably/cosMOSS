@@ -1,0 +1,20 @@
+[project]
+name = "cosmoss"
+version = "0.1.0"
+description = "Turn recordings into organized notes with transcription and speaker diarization"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.urls]
+"Repository" = "https://github.com/hoonably/cosMOSS"
+"Based on" = "https://github.com/ginjae/mac-moss"
+"Original project" = "https://github.com/JoNebula/moss-note"
+"Base fork" = "https://github.com/jiseungjeong/moss-note"
