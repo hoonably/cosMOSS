@@ -83,11 +83,14 @@ see [device architecture](DEVICES.md). The browser editor talks to FastAPI; Fast
 transcription endpoint. Keep device-specific inference code outside the editor
 and note store.
 
-Managed CUDA devices retain their dedicated venv, private uv when needed, managed Python when needed,
-ownership/version metadata and model cache. `remote_bootstrap.cleanup_job_files`
+Managed CUDA devices reuse an account-scoped, versioned venv, private uv when needed,
+managed Python when needed, and model cache. Older per-device environments are
+discovered in place. `runtime_environment.SharedRuntime` handles shared setup locks and validated
+installation generations; deleting Mac app data or re-registering a device does
+not trigger another compatible installation. `remote_bootstrap.cleanup_job_files`
 removes only the known transient worker paths after the owned process exits. It
 never follows transient symlinks, rejects overlapping model paths, and preserves
-unrelated devices and files. Setup/build caches use per-worker paths and UV copy
+unrelated devices and files. Setup/build caches use per-installation paths and UV copy
 installs so deleting cache entries does not remove runtime dependencies.
 `tests/test_remote_cleanup.py` covers retention, cache isolation, ownership,
 symlinks, process termination, startup/setup failures and cleanup failure states.
@@ -98,6 +101,9 @@ Environment inspection and installation are separate from model preparation:
 `tests/test_runtime_environment.py` covers deleted-venv repair, package validation,
 private uv installation, and GPU/download-free checks. `tests/runtime_ui_smoke.py`
 exercises manual installation and recovery on both Mac and SSH cards.
+`tests/test_remote_runtime.py` covers old-environment discovery, app/device
+reinstallation, deleted/damaged server environments, failed-setup recovery,
+quantization isolation, ownership/symlinks and two independent setup processes.
 
 `TextLibrary` indexes selected-folder TXT files in `data/text-library.sqlite3`
 without importing them into the audio note store or copying their contents.

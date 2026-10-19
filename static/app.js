@@ -1207,7 +1207,8 @@ function devicePresentation(device) {
     ready: !!status?.ok,
   };
   const phases = {
-    connecting: "연결 중", installing_uv: "uv 설치 중", installing: "환경 설치 중",
+    connecting: "연결 중", checking_environment: "기존 환경 확인 중", waiting_environment: "다른 장치의 환경 준비 대기 중",
+    installing_uv: "uv 설치 중", installing: "환경 설치 중",
     checking_model: "모델 확인 중", downloading: "다운로드 중",
     idle: "모델 준비 필요", installed: "모델 준비됨", stopped: "모델 준비됨",
     loading: "GPU 준비 중", ready: "GPU 사용 중", stopping: "정리 중",
@@ -1215,7 +1216,7 @@ function devicePresentation(device) {
   };
   const phase = worker?.phase || "unknown";
   const ready = ["installed", "stopped"].includes(phase) && !worker?.active_gpu_uuid;
-  const busy = ["connecting", "installing_uv", "installing", "checking_model", "downloading", "loading", "ready", "stopping"].includes(phase);
+  const busy = ["connecting", "checking_environment", "waiting_environment", "installing_uv", "installing", "checking_model", "downloading", "loading", "ready", "stopping"].includes(phase);
   return { label: worker?.active_gpu_uuid ? "이전 GPU 작업 확인" : (phases[phase] || phases.unknown),
     tone: ready ? "ready" : busy ? "busy" : "", ready };
 }
@@ -1346,6 +1347,8 @@ $("#registered-devices").addEventListener('change', event => {
 const localModelPhases = {
   checking: ["모델 확인 중", "선택한 모델과 실행 환경을 확인하고 있어요."],
   connecting: ["장치 연결 중", "선택한 장치의 실행 환경을 확인하고 있어요."],
+  checking_environment: ["기존 환경 확인 중", "이 계정에 준비된 실행 환경을 찾아 재사용합니다."],
+  waiting_environment: ["다른 장치의 환경 준비 대기 중", "먼저 시작한 설치가 끝나면 같은 실행 환경을 사용합니다."],
   installing_uv: ["uv 준비 중", "실행 환경 도구를 설치합니다."],
   checking_model: ["모델 확인 중", "이미 받은 모델을 확인하고 있어요."],
   installing: ["실행 환경 준비 중", "처음 한 번 필요한 패키지를 설치합니다. 잠시 기다려 주세요."],
@@ -1356,7 +1359,7 @@ const localModelPhases = {
 };
 
 function modelBusy(model) {
-  return ["checking", "connecting", "checking_model", "installing_uv", "installing", "downloading", "loading", "stopping"].includes(model?.phase);
+  return ["checking", "connecting", "checking_environment", "waiting_environment", "checking_model", "installing_uv", "installing", "downloading", "loading", "stopping"].includes(model?.phase);
 }
 function localModelBusy() { return modelBusy(state.localModel); }
 function currentModelState() { return state.modelDeviceId === "local" ? state.localModel : state.workerStates[state.modelDeviceId]; }

@@ -81,13 +81,33 @@ Model settings can later select a different cache or an existing model folder
 using an absolute or `~/...` path on that host.
 Opening the dialog reads paths without installing packages or loading a GPU.
 The app sends `runtime_environment.py`, `remote_bootstrap.py`, `model_cache.py`,
-and `model_download.py` to the selected host. Each device has a dedicated Python
-**venv**, created with uv under
-`~/.local/share/cosmoss/workers/<device-id>/.venv`. It is separate from Conda and
-does not include system site-packages. The environment, any managed base Python,
-and small ownership/version/coordination records are retained for reuse.
+and `model_download.py` to the selected host. Python **venvs**
+are shared by the SSH account and runtime version, independent of the Mac's device
+ID, host alias, model choice or application data. New installations live under
+`~/.local/share/cosmoss/runtimes/<runtime-version>/installs/<installation-id>/.venv`.
+They remain separate from Conda and do not include system site-packages.
+Removing/re-registering a device or reinstalling the Mac app reuses the same
+compatible server environment. Removing a server environment causes the next setup
+to rebuild it; version stamps alone never count as a working installation.
+
+Valid older installations in `workers/<device-id>/.venv` are discovered and reused
+in place without moving their interpreter, changing their ownership/token records,
+or touching another Mac's worker files. Missing/broken packages or incompatible
+versions are rejected. Repair builds a new installation and publishes its pointer
+only after validation, leaving previously usable environments intact for workers
+that may still be running. Interrupted, unpublished installations can be resumed.
+A per-version OS file lock serializes setup from different Macs; waiting clients
+recheck and reuse the completed environment. Installer children retain the lock
+if their SSH/bootstrap parent exits, so a retry cannot modify a still-running
+installation. Quantized variants share a separate
+dependency slot, so adding quantization cannot change a base runtime in use.
+Inspection remains read-only and reports the actual selected venv path.
+
+The environment, any managed base Python, and small version/coordination records
+are retained for reuse. Worker source, recordings, caches, credentials and process
+ownership still belong to the separate `workers/<device-id>` job directories.
 An existing uv executable is reused; otherwise uv 0.9.25 is installed from its
-official installer into the device's `tools/` directory using
+official installer into the runtime's `tools/` directory using
 `UV_UNMANAGED_INSTALL`, without modifying shell profiles or global tools.
 Linux, bootstrap Python >= 3.10, a compatible NVIDIA
 driver and network access are required. There is no sudo or system package setup.
@@ -135,9 +155,10 @@ After the result is stored on the Mac, stopping also removes the worker source,
 log, PID/GPU job record, temporary uploads and per-job caches. The retained venv
 and model snapshot are reused on the next run. Setup failures clean their temporary
 files too; failed model launches terminate the child created for that launch before
-cleaning. Upload spooling, UV/pip download caches, Hugging Face dynamic modules,
-CUDA/Triton/Torch compile caches and temporary files are directed inside the worker
-directory. UV installs use copy mode so deleting the download cache cannot break
+cleaning. Upload spooling, Hugging Face dynamic modules, CUDA/Triton/Torch compile
+caches and temporary files are directed inside the worker directory. Runtime
+installation uses its own temporary/cache paths so job cleanup on another Mac
+cannot interrupt setup. UV installs use copy mode so deleting the download cache cannot break
 the retained environment. Existing shared package caches elsewhere are not deleted.
 The cleanup checks directory ownership, preserves models and refuses overlapping
 model/job paths. Cleanup failure is shown on the device and can be retried with

@@ -132,11 +132,11 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue(self.python.exists())
 
     def test_install_failure_removes_download_artifacts_but_keeps_environment(self):
-        def fail(root,emit,environment):
-            (root/'tmp/private.wav').write_bytes(b'audio')
+        def fail(shared,device,emit):
+            (self.root/'tmp/private.wav').write_bytes(b'audio')
             raise RuntimeError('installation failed')
         request={'device':self.device,'action':'install'}
-        with patch.object(bootstrap.sys,'stdin',io.StringIO(json.dumps(request))),patch.object(bootstrap.sys,'stdout',io.StringIO()),patch.object(bootstrap,'prepare_runtime',side_effect=fail),self.assertRaisesRegex(RuntimeError,'installation failed'):
+        with patch.object(bootstrap.sys,'stdin',io.StringIO(json.dumps(request))),patch.object(bootstrap.sys,'stdout',io.StringIO()),patch.object(bootstrap,'prepare_shared_runtime',side_effect=fail),self.assertRaisesRegex(RuntimeError,'installation failed'):
             bootstrap.main()
         self.assertFalse((self.root/'cache').exists())
         self.assertFalse((self.root/'tmp').exists())

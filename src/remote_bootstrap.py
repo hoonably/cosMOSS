@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 
 try:
-    from src.runtime_environment import ensure_uv, inspect_environment
+    from src.runtime_environment import ensure_uv, inspect_environment, SharedRuntime
 except ModuleNotFoundError:
     # RemoteWorkers prepends the same standalone helper source over SSH.
     pass
@@ -23,6 +23,7 @@ except ModuleNotFoundError:
 UPSTREAM = "https://github.com/OpenMOSS/MOSS-Transcribe-Diarize/archive/e3bdd93f8ad58418e04659818efd5fd87a0bc486.tar.gz"
 PROCESSES = Path("/proc")
 RUNTIME_VERSION = "cuda128-torch280-moss-e3bdd93f-v1"
+QUANTIZATION_VERSION = "bitsandbytes-0.48.1-accelerate-v1"
 JOB_FILES = ("src", "tmp", "cache", "__pycache__", "worker.log", "worker.pid", "worker.json")
 
 
@@ -122,11 +123,11 @@ def prepare_model(request, python, emit, install=True, environment=None):
     return namespace["ensure_model"](request["device"], python, emit, install)
 
 
-def prepare_runtime(root, emit, environment=None):
+def prepare_runtime(root, emit, environment=None, pass_fds=()):
     runtime = root / ".venv"
     python = runtime / "bin" / "python"
     emit("installing_uv")
-    uv = ensure_uv(root / "tools", environment)
+    uv = ensure_uv(root / "tools", environment, pass_fds=pass_fds)
     check = inspect_environment(runtime, root / "runtime-version", RUNTIME_VERSION, root / "tools")
     emit("installing", runtime=check)
     if check["ready"]:
@@ -136,14 +137,14 @@ def prepare_runtime(root, emit, environment=None):
     recreated = not check["venv"]["ready"]
     if recreated:
         # Rebuild only this owned venv if its interpreter was deleted or broken.
-        subprocess.run([uv, "venv", "--clear", "--python", "3.12", str(runtime)], check=True, env=environment)
+        subprocess.run([uv, "venv", "--clear", "--python", "3.12", str(runtime)], check=True, env=environment, pass_fds=pass_fds)
         emit("installing", runtime=inspect_environment(runtime, root / "runtime-version", RUNTIME_VERSION, root / "tools"))
     installer = [uv, "pip", "install", "--python", str(python)]
     stamp = root / "runtime-version"
     version = RUNTIME_VERSION
     if recreated or not check["packages"]["ready"]:
-        subprocess.run(installer + ["torch==2.8.0+cu128", "torchaudio==2.8.0+cu128", "--index-url", "https://download.pytorch.org/whl/cu128"], check=True, env=environment)
-        subprocess.run(installer + [UPSTREAM, "fastapi>=0.116,<1", "uvicorn[standard]>=0.35,<1", "python-multipart", "jinja2"], check=True, env=environment)
+        subprocess.run(installer + ["torch==2.8.0+cu128", "torchaudio==2.8.0+cu128", "--index-url", "https://download.pytorch.org/whl/cu128"], check=True, env=environment, pass_fds=pass_fds)
+        subprocess.run(installer + [UPSTREAM, "fastapi>=0.116,<1", "uvicorn[standard]>=0.35,<1", "python-multipart", "jinja2"], check=True, env=environment, pass_fds=pass_fds)
         stamp.write_text(version)
     return python
 
@@ -162,19 +163,32 @@ def hardware_info():
         return dict(gpus=[])
 
 
-def prepare_quantization_runtime(root, python, options, emit, environment=None):
+def prepare_quantization_runtime(root, python, options, emit, environment=None, pass_fds=()):
     if options.get("precision") not in {"int8", "int4"}:
         return
     stamp = root / "quantization-version"
-    version = "bitsandbytes-0.48.1-accelerate-v1"
+    version = QUANTIZATION_VERSION
     checked = inspect_environment(root / ".venv", root / "runtime-version", RUNTIME_VERSION, root / "tools", precision=options["precision"])
     if stamp.is_file() and stamp.read_text() == version and checked["packages"]["ready"]:
         return
     emit("installing")
-    uv = ensure_uv(root / "tools", environment)
+    uv = ensure_uv(root / "tools", environment, pass_fds=pass_fds)
     installer = [uv, "pip", "install", "--python", str(python)]
-    subprocess.run(installer + ["bitsandbytes==0.48.1", "accelerate>=1,<2"], check=True, env=environment)
+    subprocess.run(installer + ["bitsandbytes==0.48.1", "accelerate>=1,<2"], check=True, env=environment, pass_fds=pass_fds)
     stamp.write_text(version)
+
+
+def prepare_shared_runtime(shared, device, emit):
+    def install(runtime_root, lock_descriptor):
+        # Installer caches belong to this unpublished runtime, not a Mac's job
+        # directory. Another client's cleanup cannot remove them mid-install.
+        environment = temporary_environment(runtime_root, device)
+        try:
+            python = prepare_runtime(runtime_root, emit, environment, pass_fds=(lock_descriptor,))
+            prepare_quantization_runtime(runtime_root, python, device.get("options", {}), emit, environment, pass_fds=(lock_descriptor,))
+        finally:
+            cleanup_job_files(runtime_root, device, verified=True)
+    return shared.ensure(emit, install)
 
 
 def process_live(process_root):
@@ -237,6 +251,8 @@ def main():
     if len(device_id) != 32 or any(character not in "0123456789abcdef" for character in device_id):
         raise ValueError("Invalid worker ID")
     root = Path.home() / ".local" / "share" / "cosmoss" / "workers" / device_id
+    shared = SharedRuntime(RUNTIME_VERSION, device.get("options", {}).get("precision", "auto"),
+                           QUANTIZATION_VERSION, probe=inspect_environment)
     port = int(device["remote_port"])
     if not 1024 <= port <= 65535:
         raise ValueError("Use an unprivileged worker port")
@@ -258,8 +274,7 @@ def main():
         print("COSMOSS:" + json.dumps({"phase": phase, **details}), flush=True)
 
     def runtime_status():
-        return inspect_environment(root / ".venv", root / "runtime-version", RUNTIME_VERSION,
-                                   root / "tools", precision=device.get("options", {}).get("precision", "auto"))
+        return shared.inspect()
 
     if action == "environment":
         emit("environment", runtime=runtime_status())
@@ -277,8 +292,8 @@ def main():
         if sys.version_info < (3, 10):
             raise RuntimeError("Python 3.10 or newer is required on the selected host")
         if action == "inspect":
-            python = root / ".venv/bin/python"
             runtime = runtime_status()
+            python = Path(runtime["venv"].get("path", root / ".venv")) / "bin/python"
             try:
                 details = dict(prepare_model(request, python, emit, install=False), model_ready=True)
             except RuntimeError as error:
@@ -296,8 +311,7 @@ def main():
             details = None
             try:
                 environment = temporary_environment(root, device)
-                python = prepare_runtime(root, emit, environment)
-                prepare_quantization_runtime(root, python, device.get("options", {}), emit, environment)
+                python = prepare_shared_runtime(shared, device, emit)
                 if action == "runtime":
                     try:
                         details = dict(prepare_model(request, python, emit, install=False), model_ready=True)
@@ -348,8 +362,7 @@ def main():
     ready = False
     try:
         environment = temporary_environment(root, device)
-        python = prepare_runtime(root, emit, environment)
-        prepare_quantization_runtime(root, python, device.get("options", {}), emit, environment)
+        python = prepare_shared_runtime(shared, device, emit)
         model_details = prepare_model(request, python, emit, environment=environment)
         source = root / "src"
         source.mkdir(exist_ok=True)
