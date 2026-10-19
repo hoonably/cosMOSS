@@ -5,8 +5,9 @@
 Turn recordings into organized notes with transcription, speaker diarization, and AI summaries.
 
 녹음·영상에서 누가 무슨 말을 했는지 구분하고, 핵심을 정리하는 앱을 만들고 있습니다.
-현재는 전사·화자 구분·수동 편집이 가능한 기반과 macOS 개발용 앱을 제공합니다.
-**AI 요약과 RTX 3090용 CUDA 추론 서버는 아직 구현하지 않았습니다.**
+전사·화자 구분·수동 편집이 가능한 macOS 개발용 앱입니다.
+기본 장치는 이 Mac이며, SSH로 연결할 서버와 GPU를 여러 개 등록할 수 있습니다.
+**AI 요약은 아직 구현하지 않았습니다. CUDA 워커는 구현했으며 실제 모델 추론 검증은 별도로 필요합니다.**
 
 ## 현재 기능
 
@@ -14,7 +15,9 @@ Turn recordings into organized notes with transcription, speaker diarization, an
 - MOSS 기반 전사, 화자 구분, 타임스탬프, 청크 경계 화자 연결
 - 음성 재생, 본문·화자 이름 편집, 노트 검색과 자동 저장
 - TXT, SRT, WebVTT, JSON 내보내기
-- Apple Silicon MLX 추론 서버 또는 호환 전사 서버 연결
+- Apple Silicon MLX 추론 서버, SSH로 연결한 GPU별 CUDA 워커, 호환 전사 서버 연결
+- SSH config 호스트 선택, nvidia-smi GPU 상태 자동 갱신, GPU 번호 선택
+- 녹음마다 처리 장치 지정, 선택한 GPU UUID를 작업에 고정
 - SwiftUI + WebKit macOS 앱: 로컬 앱 서버 자동 시작, 파일 선택·저장 대화상자
 
 현재 ‘녹음’은 녹음된 파일 업로드를 뜻합니다. 앱 내 마이크 녹음과 실시간 전사는 아직 지원하지 않습니다.
@@ -67,23 +70,39 @@ Apple Silicon에서 웹 앱과 MLX 서버를 함께 실행하는 기존 방식�
 ./scripts/start-mac.sh
 ```
 
-### 외부 추론 서버 연결
+### SSH 서버와 GPU 선택
 
-`.env`에서 다음 설정을 바꿉니다.
+1. 앱의 **처리 장치 관리**를 엽니다. 처음에는 **이 Mac**만 등록돼 있습니다.
+2. `~/.ssh/config`의 호스트를 선택합니다. `Include` 파일의 별칭도 표시합니다.
+3. GPU별 사용률, 여유/전체 VRAM, 프로세스를 약 3초 간격으로 확인합니다.
+4. GPU 번호를 하나 고르고 **선택 GPU 추가**를 누릅니다. 내부적으로 GPU UUID를 저장합니다.
+5. 등록된 장치에서 **전사 준비**를 누릅니다. 최초에는 원격 사용자 폴더에 실행 환경·모델을 설치합니다.
+6. 준비가 끝나면 새 녹음의 **처리 장치**에서 해당 서버/GPU를 선택합니다.
+7. 사용을 마치면 **워커 종료**를 누릅니다. 원격 워커는 앱을 닫아도 유지됩니다.
 
-```dotenv
-MOSS_TRANSCRIPTION_BACKEND=remote
-MOSS_TRANSCRIPTION_URL=http://your-inference-host:8001/v1
-MOSS_MODEL_NAME=your-served-model-id
-MOSS_TRANSCRIPTION_API_KEY=
-```
+장치 이름은 예를 들어 `연구실 · GPU 2`로 붙일 수 있습니다. 포트는 기본적으로 `18400 + GPU 번호`이며
+모델 ID·서버 종류와 함께 고급 연결 설정에서 바꿀 수 있습니다.
 
-이 설정은 서버 연결 기능입니다. **CUDA 서버를 설치하거나 RTX 3090에서의 추론을 보장하는 기능은 아닙니다.**
-서버는 `/v1/models`와 `/v1/audio/transcriptions`를 지원하고,
-화자·타임스탬프가 포함된 MOSS 전사 문자열 또는 `segments` 배열을 JSON으로 반환해야 합니다.
-일반 음성 전사 API의 호환성은 별도 확인이 필요합니다. 자세한 계약은 [개발 안내](docs/DEVELOPMENT.md)에 있습니다.
+**원격 CUDA 워커 요구사항:** Linux, Python 3.10 이상, `venv` 또는 `uv`, 호환 NVIDIA 드라이버,
+PyPI·PyTorch·GitHub·Hugging Face에 접근할 인터넷 연결과 모델 저장 공간.
+워커는 PyTorch 2.8.0 / CUDA 12.8 빌드와 고정한 OpenMOSS 추론 코드를 사용합니다.
+지원 여부는 해당 서버의 드라이버·운영체제에서 확인해야 합니다.
 
-외부 서버를 지정하면 업로드한 음성이 해당 서버로 전송됩니다. 서버 토큰은 앱 백엔드에서만 사용합니다.
+SSH 키·ProxyJump 등은 기존 SSH 설정을 사용합니다. 암호 입력과 새 호스트 키 승인은 앱에서 처리하지 않으므로,
+필요하면 터미널에서 해당 별칭으로 먼저 접속하고 키를 SSH agent에 추가합니다.
+앱은 선택한 호스트에만 접속하며 GPU 상태 조회 단계에서 모델을 설치하지 않습니다.
+
+‘여유로 보임’은 현재 사용률 5% 이하, VRAM 80% 이상 여유, 확인 가능한 연산 프로세스 없음이라는
+관측 기준입니다. **GPU 예약이나 작업 실행 가능 보장은 아닙니다.**
+워커 준비 직전에도 GPU UUID와 연산 프로세스를 다시 확인하며, 다른 작업을 종료하지 않습니다.
+같은 사용자의 cosMOSS 워커끼리는 GPU별 파일 잠금을 사용합니다.
+
+이미 실행 중인 서버를 쓰려면 고급 설정의 **직접 실행한 호환 JSON 서버** 또는 **cosMOSS MLX 서버**를 선택합니다.
+이 경우 실행 GPU는 기존 서버 설정을 따릅니다. 서버는 `/v1/models`와 `/v1/audio/transcriptions`를 지원하고,
+화자·시간이 포함된 `text` 또는 `segments`를 반환해야 합니다.
+
+원격 전사 시 음성이 해당 서버로 전송됩니다. 원격 워커는 loopback에만 바인딩하고,
+앱이 소유하는 SSH 터널과 장치별 토큰을 통해 통신합니다.
 
 ## 설정
 
@@ -93,8 +112,8 @@ MOSS_TRANSCRIPTION_API_KEY=
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `MOSS_TRANSCRIPTION_BACKEND` | `mlx` | `mlx` 또는 `remote`; 표시 문구와 스트리밍 기본값 |
-| `MOSS_TRANSCRIPTION_URL` | `http://127.0.0.1:8001/v1` | 장치와 독립적인 추론 서버 주소 |
+| `MOSS_TRANSCRIPTION_BACKEND` | `mlx` | 장치 설정 도입 전 노트의 호환용 기본값 |
+| `MOSS_TRANSCRIPTION_URL` | `http://127.0.0.1:8001/v1` | 이전 노트의 호환용 전사 서버 주소 |
 | `MOSS_TRANSCRIPTION_API_KEY` | 빈 값 | 추론 서버 Bearer 토큰 |
 | `MOSS_TRANSCRIPTION_STREAM` | MLX: `true`, remote: `false` | 포함된 서버의 NDJSON 진행·취소 프로토콜 사용 |
 | `MOSS_MODEL_NAME` | `moss-mtd` | 서버가 제공하는 모델 ID |
@@ -106,8 +125,8 @@ MOSS_TRANSCRIPTION_API_KEY=
 | `MLX_KV_BITS` | `8` | MLX KV 캐시 양자화; `0`으로 비활성화 |
 | `MLX_PREFILL_STEP_SIZE` | `512` | MLX 음성 입력 처리 배치 크기 |
 
-새 URL 변수가 없으면 기존 `MOSS_MLX_URL`을 사용합니다. 로컬 MLX 포트를 바꿀 때에는
-`MOSS_MLX_PORT`와 앱의 `MOSS_TRANSCRIPTION_URL`을 함께 맞춥니다.
+새 작업은 앱에서 선택한 장치 설정을 사용합니다. 로컬 MLX 서버와 ‘이 Mac’ 장치는 `MOSS_MLX_PORT`를 사용합니다.
+장치 정보가 없는 이전 노트만 기존 전역 URL 설정을 사용하며, 새 URL 변수가 없으면 `MOSS_MLX_URL`을 사용합니다.
 
 ## 구조와 데이터
 
@@ -116,16 +135,19 @@ SwiftUI / WebKit Mac 앱 또는 브라우저
                     ↓
              FastAPI 앱 서버
                ↙         ↘
-  SQLite + 녹음 파일      전사 API
-                       ↙       ↘
-               로컬 MLX     호환 외부 서버
+  SQLite + 녹음 파일      작업별 장치 선택
+                       ↙          ↘
+               로컬 MLX        SSH 터널
+                                  ↓
+                          서버별 GPU 워커
 ```
 
-- `src/`: 앱 API, SQLite 저장소, 전사 파서, MLX 서버
+- `src/`: 앱 API, 노트·장치 저장소, SSH/GPU 조회, 터널, MLX·CUDA 서버
 - `static/`: 노트·전사 편집 UI
 - `macos/`: SwiftUI / WebKit 앱
 - `scripts/`: 설치, 실행, Mac 앱 빌드
-- `data/`: 녹음·노트, `models/`: 모델, `logs/`: 실행 로그
+- `data/`: 녹음·노트·장치 설정과 워커 토큰, `models/`: 로컬 모델, `logs/`: 실행 로그
+- 원격 `~/.local/share/cosmoss/`: GPU별 워커 환경, 로그, 모델 캐시
 
 녹음, 모델, 인증 정보, 런타임, 빌드 산출물은 Git에서 제외합니다.
 앱을 종료한 뒤 `data/` 전체를 백업하면 녹음과 노트를 보관할 수 있습니다.
@@ -134,9 +156,13 @@ SwiftUI / WebKit Mac 앱 또는 브라우저
 
 ## 다음 개발
 
-- [ ] RTX 3090용 CUDA 추론 서버와 실제 장치 검증
+- [x] SSH config 선택, GPU 상태 갱신, GPU별 장치 등록과 작업 라우팅
+- [x] GPU UUID에 고정된 CUDA 워커의 준비·종료 구현
+- [ ] CUDA 모델 설치와 실제 녹음 전사의 장치별 검증
+- [ ] 장치별 동시 작업과 자동 배정; 현재 전사 큐는 한 작업씩 처리
 - [ ] 요약·주요 논의·결정·할 일 생성과 편집
-- [ ] 앱에서 추론 서버·모델·요약 제공자 설정
+- [x] 앱에서 SSH 추론 서버·GPU·모델 설정
+- [ ] 앱에서 요약 제공자 설정
 - [ ] Mac 앱에서 MLX 서버 시작·종료와 모델 설치 관리
 - [ ] 독립 실행 Mac 앱 패키징과 배포
 

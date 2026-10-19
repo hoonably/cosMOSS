@@ -82,6 +82,9 @@ class NoteStore:
                 "processing_seconds": "REAL",
                 "chunk_seconds": "INTEGER",
                 "preprocessing_seconds": "REAL NOT NULL DEFAULT 0",
+                "device_id": "TEXT NOT NULL DEFAULT 'local'",
+                "device_name": "TEXT NOT NULL DEFAULT '이 Mac'",
+                "device_snapshot_json": "TEXT",
             }
             for name, definition in migrations.items():
                 if name not in columns:

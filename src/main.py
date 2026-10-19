@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import ipaddress
 import json
 import mimetypes
 import os
@@ -16,7 +17,7 @@ from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from urllib.parse import quote
 
 import httpx
@@ -26,6 +27,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import TranscriptionConfig
+from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
+from src.remote_workers import RemoteWorkers
+from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host
 from src.store import NoteStore
 from src.transcript import json_text, parse_transcript, plain_text, srt_text, vtt_text
 
@@ -51,6 +55,9 @@ BRIDGE_AUDIO_SECONDS = max(
     2, min(int(os.getenv("MOSS_BRIDGE_SECONDS", "30")), MAX_SUPPORTED_CHUNK_SECONDS)
 )
 STORE = NoteStore(DATA_DIR / "moss-note.sqlite3")
+DEVICES = DeviceStore(DATA_DIR / "devices.sqlite3")
+TUNNELS = SSHTunnels()
+REMOTE_WORKERS = RemoteWorkers()
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
 PREPARATION_TASKS: dict[str, asyncio.Task] = {}
 TRANSCRIPTION_TASKS: dict[str, asyncio.Task] = {}
@@ -72,6 +79,20 @@ class NotePatch(BaseModel):
     speaker_names: dict[str, str] | None = None
 
 
+class SSHHostRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    host: str = Field(min_length=1, max_length=128)
+
+
+class SSHDeviceRequest(SSHHostRequest):
+    name: str = Field(min_length=1, max_length=80)
+    remote_port: int = Field(default=18400, ge=1024, le=65535)
+    model: str = Field(default="OpenMOSS-Team/MOSS-Transcribe-Diarize", min_length=1, max_length=200)
+    backend: Literal["cuda", "mlx", "remote"] = "cuda"
+    gpu_uuid: str | None = Field(default=None, pattern=r"^GPU-[0-9a-fA-F-]{8,64}$")
+    gpu_index: int | None = Field(default=None, ge=0, le=1024)
+
+
 def public_note(note: dict[str, Any]) -> dict[str, Any]:
     result = {
         key: value
@@ -81,6 +102,7 @@ def public_note(note: dict[str, Any]) -> dict[str, Any]:
             "source_path",
             "normalized_path",
             "raw_transcript",
+            "device_snapshot_json",
         }
     }
     result["processing_elapsed_seconds"] = note.get("processing_seconds")
@@ -356,12 +378,12 @@ def make_bridge_chunks(
     return bridges
 
 
-def transcription_form(note: dict[str, Any]) -> dict[str, str]:
+def transcription_form(note: dict[str, Any], model_name: str | None = None) -> dict[str, str]:
     prompt = DEFAULT_PROMPT
     if note.get("hotwords"):
         prompt += f"热词提示：{note['hotwords']}"
     form = {
-        "model": MODEL_NAME,
+        "model": model_name or MODEL_NAME,
         "response_format": "json",
         "temperature": "0",
         "prompt": prompt,
@@ -378,17 +400,23 @@ async def transcribe_chunk(
     client: httpx.AsyncClient, audio_path: Path, note: dict[str, Any],
     on_progress: Callable[[dict[str, Any]], None] | None = None,
     request_id: str = "",
+    target: ResolvedDevice | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
-    form = transcription_form(note)
-    if on_progress and TRANSCRIPTION.stream:
+    config = target.config if target else TRANSCRIPTION
+    endpoint = config.url if target else TRANSCRIPTION_URL
+    form = transcription_form(note, target.model if target else None)
+    headers = config.headers
+    if target and target.gpu_uuid:
+        headers.update({"X-CosMOSS-Device-ID": target.device_id, "X-CosMOSS-GPU-UUID": target.gpu_uuid})
+    if on_progress and config.stream:
         form.update(stream="true", request_id=request_id)
     payload: dict[str, Any] | None = None
     try:
         with audio_path.open("rb") as audio:
             async with client.stream(
                 "POST",
-                f"{TRANSCRIPTION_URL}/audio/transcriptions",
-                headers=TRANSCRIPTION.headers,
+                f"{endpoint}/audio/transcriptions",
+                headers=headers,
                 data=form,
                 files={"file": ("audio.wav", audio, "audio/wav")},
             ) as response:
@@ -411,13 +439,13 @@ async def transcribe_chunk(
                     await response.aread()
                     payload = response.json()
     except asyncio.CancelledError:
-        if request_id and TRANSCRIPTION.stream:
+        if request_id and config.stream:
             # Closing the stream also cancels generation. The explicit request
             # waits for the GPU thread to release the model before reporting done.
             with suppress(httpx.HTTPError):
                 await client.post(
-                    f"{TRANSCRIPTION_URL}/audio/transcriptions/{quote(request_id, safe='')}/cancel",
-                    headers=TRANSCRIPTION.headers,
+                    f"{endpoint}/audio/transcriptions/{quote(request_id, safe='')}/cancel",
+                    headers=config.headers,
                     timeout=httpx.Timeout(5, read=None),
                 )
         raise
@@ -583,6 +611,16 @@ async def transcribe(note_id: str) -> None:
     chunk_dir: Path | None = None
     preprocessing_seconds = note.get("preprocessing_seconds") or 0
     try:
+        target = None
+        if snapshot := note.get("device_snapshot_json"):
+            # The snapshot fixes this job's destination. Removal must never cause
+            # an implicit fallback to this Mac or a different remote endpoint.
+            DEVICES.get(note["device_id"])
+            target = await resolve_device(json.loads(snapshot), TUNNELS)
+            if target.gpu_uuid:
+                availability = await model_health(target)
+                if not availability["moss"]["ok"]:
+                    raise RuntimeError(availability["moss"].get("error", "선택한 GPU의 워커를 먼저 준비해 주세요."))
         chunk_seconds = note.get("chunk_seconds") or MAX_AUDIO_CHUNK_SECONDS
         if note.get("chunk_seconds") is None:
             note = STORE.update(note_id, chunk_seconds=chunk_seconds)
@@ -624,7 +662,7 @@ async def transcribe(note_id: str) -> None:
                     )
 
                 raw, segments = await transcribe_chunk(
-                    client, chunk_path, note, on_progress, f"{note_id}:main:{index}"
+                    client, chunk_path, note, on_progress, f"{note_id}:main:{index}", target=target,
                 )
                 raw_results.append(raw)
                 chunk_results.append((offset, segments))
@@ -651,7 +689,7 @@ async def transcribe(note_id: str) -> None:
                     )
 
                 _, segments = await transcribe_chunk(
-                    client, bridge_path, note, on_progress, f"{note_id}:bridge:{index}"
+                    client, bridge_path, note, on_progress, f"{note_id}:bridge:{index}", target=target,
                 )
                 bridge_results.append((offset, segments))
                 STORE.update(
@@ -758,6 +796,8 @@ async def lifespan(_: FastAPI):
         await asyncio.gather(*preparations, return_exceptions=True)
         with suppress(asyncio.CancelledError):
             await worker
+        await TUNNELS.close_all()
+        await REMOTE_WORKERS.close()
 
 
 app = FastAPI(
@@ -786,6 +826,15 @@ def valid_basic_auth(header: str | None) -> bool:
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
+    if request.url.path.startswith(("/api/devices", "/api/ssh")):
+        try:
+            local_client = request.client is not None and ipaddress.ip_address(request.client.host).is_loopback
+        except ValueError:
+            local_client = False
+        if not local_client or request.url.hostname not in {"localhost", "127.0.0.1", "::1"}:
+            return JSONResponse({"detail": "장치 관리는 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
+        if request.headers.get("sec-fetch-site") == "cross-site":
+            return JSONResponse({"detail": "외부 웹사이트에서는 장치를 관리할 수 없습니다."}, status_code=403)
     if request.url.path not in {"/healthz", "/readyz"} and not valid_basic_auth(
         request.headers.get("Authorization")
     ):
@@ -808,21 +857,31 @@ async def security_middleware(request: Request, call_next):
     return response
 
 
-async def model_health() -> dict[str, Any]:
+async def model_health(target: ResolvedDevice | None = None) -> dict[str, Any]:
     """Probe the configured transcription server independently of its device."""
+    config = target.config if target else TRANSCRIPTION
+    endpoint = config.url if target else TRANSCRIPTION_URL
+    model_name = target.model if target else MODEL_NAME
     services: dict[str, dict[str, Any]] = {
         "moss": {
-            "ok": False, "backend": TRANSCRIPTION.backend,
-            "label": TRANSCRIPTION.label,
+            "ok": False, "backend": config.backend,
+            "label": target.name if target else config.label,
         },
     }
 
     async with httpx.AsyncClient(timeout=3) as client:
         try:
+            if target and target.gpu_uuid:
+                identity = await client.get(endpoint.removesuffix("/v1") + "/healthz", headers=config.headers)
+                identity.raise_for_status()
+                payload = identity.json()
+                if not isinstance(payload, dict) or payload.get("device_id") != target.device_id or payload.get("gpu_uuid") != target.gpu_uuid:
+                    services["moss"]["error"] = "선택한 GPU와 다른 워커입니다. 포트와 GPU를 확인해 주세요."
+                    return services
             result: Any = await client.get(
-                f"{TRANSCRIPTION_URL}/models", headers=TRANSCRIPTION.headers,
+                f"{endpoint}/models", headers=config.headers,
             )
-        except httpx.HTTPError as error:
+        except (httpx.HTTPError, ValueError) as error:
             result = error
     moss = services["moss"]
     if isinstance(result, httpx.Response):
@@ -836,7 +895,7 @@ async def model_health() -> dict[str, Any]:
                     item["id"] for item in models
                     if isinstance(item, dict) and isinstance(item.get("id"), str)
                 ]
-                moss["ok"] = MODEL_NAME in moss["models"]
+                moss["ok"] = model_name in moss["models"]
                 if not moss["ok"]:
                     moss["error"] = "설정한 전사 모델을 서버에서 찾을 수 없습니다."
             except ValueError:
@@ -855,7 +914,7 @@ def liveness() -> dict[str, Any]:
 
 @app.get("/readyz", include_in_schema=False)
 async def readiness() -> JSONResponse:
-    services = await model_health()
+    services = await model_health(await resolve_device(DEVICES.get("local"), TUNNELS))
     ready = services["moss"]["ok"]
     return JSONResponse(
         {
@@ -868,7 +927,7 @@ async def readiness() -> JSONResponse:
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    services = await model_health()
+    services = await model_health(await resolve_device(DEVICES.get("local"), TUNNELS))
     return {
         "ok": True,
         **services,
@@ -877,6 +936,105 @@ async def health() -> dict[str, Any]:
         "default_chunk_seconds": MAX_AUDIO_CHUNK_SECONDS,
         "max_chunk_seconds": MAX_SUPPORTED_CHUNK_SECONDS,
     }
+
+
+@app.get("/api/devices")
+def list_devices() -> list[dict[str, Any]]:
+    return [public_device(device) for device in DEVICES.list()]
+
+
+@app.get("/api/ssh/hosts")
+async def ssh_hosts() -> dict[str, Any]:
+    return {"hosts": await asyncio.to_thread(discover_hosts)}
+
+
+@app.post("/api/ssh/probe")
+async def inspect_ssh_host(request: SSHHostRequest) -> dict[str, Any]:
+    try:
+        result = await probe_host(request.host)
+        return {**result, "checked_at": datetime.now(UTC).isoformat()}
+    except (SSHError, OSError) as error:
+        raise HTTPException(400, str(error)) from None
+
+
+@app.post("/api/devices", status_code=201)
+def add_device(request: SSHDeviceRequest) -> dict[str, Any]:
+    if request.host not in discover_hosts():
+        raise HTTPException(400, "SSH config에 등록된 별칭을 선택해 주세요.")
+    name, model = request.name.strip(), request.model.strip()
+    if not name or not model:
+        raise HTTPException(400, "장치 이름과 모델 ID를 입력해 주세요.")
+    if request.backend == "cuda" and (not request.gpu_uuid or request.gpu_index is None):
+        raise HTTPException(400, "실행할 GPU 번호를 선택해 주세요.")
+    try:
+        return public_device(DEVICES.add_ssh(name=name, host=request.host, remote_port=request.remote_port,
+                               model=model, backend=request.backend, gpu_uuid=request.gpu_uuid,
+                               gpu_index=request.gpu_index))
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.delete("/api/devices/{device_id}", status_code=204)
+async def remove_device(device_id: str) -> Response:
+    if device_id in REMOTE_WORKERS.tasks and not REMOTE_WORKERS.tasks[device_id].done():
+        raise HTTPException(409, "워커 준비·종료가 끝난 뒤 장치를 제거해 주세요.")
+    if any(note["device_id"] == device_id and note["status"] in {"queued", "processing"} for note in STORE.list()):
+        raise HTTPException(409, "이 장치의 대기·실행 중 작업을 먼저 취소해 주세요.")
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    if device["backend"] == "cuda" and REMOTE_WORKERS.states.get(device_id, {}).get("phase") != "stopped":
+        raise HTTPException(409, "원격 GPU가 계속 점유되지 않도록 먼저 ‘워커 종료’를 눌러 주세요.")
+    try:
+        DEVICES.delete(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+    await TUNNELS.close(device_id)
+    return Response(status_code=204)
+
+
+@app.post("/api/devices/{device_id}/status")
+async def device_status(device_id: str) -> dict[str, Any]:
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    try:
+        target = await resolve_device(device, TUNNELS)
+        result = await model_health(target)
+        return {"device_id": device_id, **result["moss"]}
+    except (SSHError, OSError) as error:
+        return {"device_id": device_id, "ok": False, "error": str(error)}
+
+
+@app.get("/api/devices/{device_id}/worker")
+def worker_state(device_id: str) -> dict[str, Any]:
+    try:
+        DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    return REMOTE_WORKERS.states.get(device_id, {"phase": "unknown"})
+
+
+@app.post("/api/devices/{device_id}/worker/{action}", status_code=202)
+async def control_worker(device_id: str, action: Literal["prepare", "stop"]) -> dict[str, Any]:
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
+    if device["backend"] != "cuda":
+        raise HTTPException(400, "GPU를 선택해 등록한 CUDA 장치만 자동 준비할 수 있습니다.")
+    if action == "stop" and any(note["device_id"] == device_id and note["status"] in {"queued", "processing"} for note in STORE.list()):
+        raise HTTPException(409, "이 장치의 대기·실행 중 작업을 먼저 취소해 주세요.")
+    if action == "stop":
+        preparation = REMOTE_WORKERS.tasks.get(device_id)
+        if preparation and not preparation.done():
+            preparation.cancel()
+            await asyncio.gather(preparation, return_exceptions=True)
+    return REMOTE_WORKERS.start(device, action)
 
 
 @app.post("/api/uploads", status_code=202)
@@ -921,10 +1079,17 @@ async def create_note(
     hotwords: str = Form(""),
     chunk_minutes: int | None = Form(None, ge=1, le=MAX_SUPPORTED_CHUNK_SECONDS // 60),
     upload_id: str | None = Form(None),
+    device_id: str = Form("local"),
 ) -> dict[str, Any]:
     if bool(file) == bool(upload_id):
         raise HTTPException(400, "전사할 음성 파일을 하나 선택해 주세요.")
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(400, "전사할 장치를 선택해 주세요.") from None
     settings = {
+        "device_id": device["id"], "device_name": device["name"],
+        "device_snapshot_json": json.dumps(device, ensure_ascii=False),
         "language": language.strip() or None, "hotwords": hotwords.strip() or None,
         "chunk_seconds": chunk_minutes * 60 if chunk_minutes is not None else MAX_AUDIO_CHUNK_SECONDS,
     }
@@ -1047,6 +1212,11 @@ async def restart_note(note_id: str) -> dict[str, Any]:
             raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
         if note["status"] not in {"cancelled", "error"}:
             raise HTTPException(409, "취소되었거나 오류가 발생한 노트만 다시 시작할 수 있습니다.")
+        if note.get("device_snapshot_json"):
+            try:
+                DEVICES.get(note["device_id"])
+            except KeyError:
+                raise HTTPException(409, "원래 처리 장치가 제거되었습니다. 장치를 등록한 뒤 새 작업으로 시작해 주세요.") from None
         task = TRANSCRIPTION_TASKS.get(note_id)
         if task is not None and not task.done():
             raise HTTPException(409, "작업을 정리 중입니다. 잠시 후 다시 시작해 주세요.")

@@ -95,7 +95,7 @@ def json_text(note: dict[str, Any]) -> str:
     payload = {
         key: value
         for key, value in note.items()
-        if key not in {"source_path", "normalized_path", "error"}
+        if key not in {"source_path", "normalized_path", "error", "device_snapshot_json"}
     }
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 

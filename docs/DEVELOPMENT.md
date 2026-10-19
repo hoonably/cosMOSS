@@ -2,8 +2,9 @@
 
 ## Boundaries
 
-The SwiftUI app owns only its local FastAPI process. It does not start an MLX or
-CUDA model server. The browser editor talks to FastAPI; FastAPI talks to the
+The SwiftUI app owns its local FastAPI process. The local MLX server is started
+separately. The device manager can explicitly prepare and stop remote CUDA workers;
+see [device architecture](DEVICES.md). The browser editor talks to FastAPI; FastAPI talks to the
 transcription endpoint. Keep device-specific inference code outside the editor
 and note store.
 
@@ -41,7 +42,8 @@ cancellation-specific fields. This prevents assuming that external endpoints
 implement the included MLX server's custom protocol. Remote inference may
 continue on the remote device after a local cancellation. SSE streams are not
 supported. An adapter may be needed for an otherwise OpenAI-compatible server;
-implementing and verifying the CUDA adapter is a separate milestone.
+the included managed CUDA worker implements this JSON contract. Actual CUDA
+installation and inference need hardware validation.
 
 `MOSS_TRANSCRIPTION_API_KEY`, when set, becomes a Bearer header on health,
 transcription, and cancellation requests. It is never included in UI responses.
@@ -69,3 +71,5 @@ Build the Swift application with `./scripts/build-mac-app.sh`. For manual QA:
 Application source was imported from ginjae/mac-moss commit
 `d69b3dbc227e9cee5c9beb8523e5b26b311b2b40`. Its Git metadata, private files,
 recordings, model weights, environments, and caches were not copied.
+
+Device/GPU tests and a browser smoke test are documented in [DEVICES.md](DEVICES.md).

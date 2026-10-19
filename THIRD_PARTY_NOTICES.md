@@ -42,6 +42,17 @@ retain their applicable license and attribution files and follow their
 redistribution terms, including Apache-2.0 section 4 where applicable. A custom
 `MLX_MODEL_ID` may select a model with different terms.
 
+## Remote CUDA runtime
+
+Managed CUDA preparation installs PyTorch/torchaudio 2.8.0 CUDA 12.8 wheels and
+OpenMOSS helper code at commit `e3bdd93f8ad58418e04659818efd5fd87a0bc486` on the
+selected remote device. These packages and model weights are downloaded, not
+vendored in the application repository. Their shipped licenses continue to apply.
+
+- [PyTorch source and license](https://github.com/pytorch/pytorch)
+- [torchaudio source and license](https://github.com/pytorch/audio)
+- [Pinned OpenMOSS helper source](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize/tree/e3bdd93f8ad58418e04659818efd5fd87a0bc486)
+
 ## Web application dependencies
 
 The following direct runtime dependencies are installed from PyPI rather than

@@ -5,6 +5,9 @@ const state = {
   transcriptView: "edited", maxUploadBytes: null, defaultChunkMinutes: 30, uploading: false, deletingId: null,
   elapsedAnchor: null, elapsedTimer: null,
   uploadPreparation: null, cancellingId: null, restartingId: null, cancellationNoteId: null, deletionNoteId: null,
+  devices: [], deviceStatus: {}, sshProbeHost: null, sshRequest: 0, healthChecking: false,
+  gpuTimer: null, gpuAbort: null, gpuInventory: [], selectedGpu: null, workerStates: {}, workerTimers: {},
+  addingDevice: false,
 };
 const colors = ["#17ad6d", "#e49a3d", "#6878df", "#db667a", "#2ca5b7", "#9c67c5"];
 
@@ -213,7 +216,7 @@ function renderWorkspace() {
     ? state.pendingChanges.changes.title ?? note.title : note.title;
   const chunkLength = note.chunk_seconds ? ` · 청크 ${note.chunk_seconds / 60}분` : "";
   const chunkMeta = `${chunkLength}${note.chunk_count > 1 ? ` · ${note.chunk_count}개 구간으로 나누어 전사` : ""}`;
-  $("#note-meta").textContent = `${formatDate(note.created_at)} · ${note.original_filename}${chunkMeta}`;
+  $("#note-meta").textContent = `${formatDate(note.created_at)} · ${note.original_filename}${chunkMeta} · ${note.device_name || "이 Mac"}`;
   const pending = ["queued", "processing"].includes(note.status);
   $("#processing-card").classList.toggle("hidden", !pending && !["error", "cancelled"].includes(note.status));
   $("#processing-card").classList.toggle("failed", note.status === "error");
@@ -489,6 +492,7 @@ function openUpload() {
   input.defaultValue = state.defaultChunkMinutes;
   if (!input.value) input.value = state.defaultChunkMinutes;
   $("#upload-dialog").showModal();
+  loadDevices().catch(error => toast(error.message, true));
 }
 $("#open-upload").addEventListener("click", openUpload);
 $("#welcome-upload").addEventListener("click", openUpload);
@@ -881,11 +885,225 @@ $("#confirm-delete-note").addEventListener("click", async () => {
 });
 bindConfirmationDialog("#delete-dialog", closeDeletionDialog);
 
+async function loadDevices() {
+  const selected = $("#device-select").value || "local";
+  state.devices = await api("/api/devices");
+  $("#device-select").innerHTML = state.devices.map(device =>
+    `<option value="${escapeHtml(device.id)}">${escapeHtml(device.name)}${device.kind === "local" ? " · 로컬" : " · SSH"}</option>`
+  ).join("");
+  $("#device-select").value = state.devices.some(device => device.id === selected) ? selected : "local";
+  renderDevices();
+}
+
+function renderDevices() {
+  $("#registered-devices").innerHTML = state.devices.map(device => {
+    const status = state.deviceStatus[device.id];
+    const worker = state.workerStates[device.id];
+    const phases = { connecting: "SSH 연결 중…", installing: "원격 실행 환경 설치 중…", loading: "모델 다운로드·GPU 로딩 중…", ready: "GPU 워커 준비 완료", stopped: "워커 종료 완료", stopping: "워커 종료 중…", error: "워커 준비 실패", interrupted: "준비 연결 종료" };
+    const detail = device.kind === "local" ? "로컬 Apple Silicon · MLX"
+      : `${device.host}${device.gpu_index != null ? ` · GPU #${device.gpu_index}` : ""} · 포트 ${device.remote_port} · ${device.model}`;
+    return `<div class="registered-device" data-device-id="${escapeHtml(device.id)}">
+      <div><b>${escapeHtml(device.name)}</b><small>${escapeHtml(detail)}</small>
+      ${status ? `<div class="device-status ${status.ok ? "ready" : ""}">${escapeHtml(status.ok ? "전사 준비 완료" : status.error || "전사 서버 연결 안 됨")}</div>` : ""}
+      ${worker ? `<div class="device-status">${escapeHtml(phases[worker.phase] || worker.phase)}${worker.error ? `<br>${escapeHtml(worker.error)}` : ""}</div>` : ""}</div>
+      <div class="device-actions">${device.backend === "cuda" ? '<button class="ghost-button" data-device-action="prepare" type="button">전사 준비</button><button class="ghost-button" data-device-action="stop" type="button">워커 종료</button>' : ""}<button class="ghost-button" data-device-action="status" type="button">서버 확인</button>
+      ${device.kind === "ssh" ? '<button class="ghost-button danger" data-device-action="remove" type="button">제거</button>' : ""}</div>
+    </div>`;
+  }).join("");
+}
+
+async function openDevices() {
+  if (!$("#device-dialog").open) $("#device-dialog").showModal();
+  try {
+    await loadDevices();
+    const selected = $("#ssh-host").value;
+    const { hosts } = await api("/api/ssh/hosts");
+    $("#ssh-host").innerHTML = '<option value="">호스트를 선택하세요</option>' + hosts.map(host =>
+      `<option value="${escapeHtml(host)}">${escapeHtml(host)}</option>`
+    ).join("");
+    if (hosts.includes(selected)) $("#ssh-host").value = selected;
+    $("#probe-ssh-host").disabled = !$("#ssh-host").value;
+    if (!hosts.length) $("#gpu-probe-result").textContent = "~/.ssh/config에 Host 별칭을 추가한 뒤 다시 열어 주세요. Include 파일도 읽습니다.";
+    if ($("#ssh-host").value) refreshGpu();
+  } catch (error) { toast(error.message, true); }
+}
+
+$("#manage-devices").addEventListener("click", openDevices);
+$("#manage-upload-devices").addEventListener("click", openDevices);
+$("#close-device-dialog").addEventListener("click", () => $("#device-dialog").close());
+$("#device-dialog").addEventListener("close", () => {
+  clearTimeout(state.gpuTimer);
+  state.gpuAbort?.abort();
+  state.sshRequest++;
+});
+$("#ssh-host").addEventListener("change", () => {
+  state.sshRequest++;
+  state.sshProbeHost = null;
+  state.selectedGpu = null;
+  state.gpuInventory = [];
+  clearTimeout(state.gpuTimer);
+  state.gpuAbort?.abort();
+  $("#add-device").disabled = true;
+  $("#probe-ssh-host").disabled = !$("#ssh-host").value;
+  $("#device-name").value = $("#ssh-host").value;
+  $("#gpu-probe-result").textContent = "";
+  if ($("#ssh-host").value) refreshGpu();
+});
+
+function gib(value) { return value == null ? "확인 불가" : `${(value / 1024).toFixed(1)} GB`; }
+
+function updateGpuSelection() {
+  const managed = $("#device-backend").value === "cuda";
+  $("#add-device").disabled = state.addingDevice || state.sshProbeHost !== $("#ssh-host").value || !state.sshProbeHost || (managed && !state.selectedGpu);
+}
+
+async function refreshGpu() {
+  const host = $("#ssh-host").value;
+  if (!host) return;
+  clearTimeout(state.gpuTimer);
+  state.gpuAbort?.abort();
+  const controller = new AbortController();
+  state.gpuAbort = controller;
+  const request = ++state.sshRequest;
+  const button = $("#probe-ssh-host");
+  button.disabled = true;
+  if (state.sshProbeHost !== host || !state.gpuInventory.length) {
+    $("#add-device").disabled = true;
+    state.sshProbeHost = null;
+  }
+  if (!state.gpuInventory.length) $("#gpu-probe-result").textContent = `${host} 연결 및 GPU 확인 중…`;
+  try {
+    const result = await api("/api/ssh/probe", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host }), signal: controller.signal,
+    });
+    if (request !== state.sshRequest) return;
+    state.sshProbeHost = result.reachable ? host : null;
+    state.gpuInventory = result.gpus;
+    state.selectedGpu = result.gpus.find(gpu => gpu.uuid === state.selectedGpu?.uuid) || null;
+    updateGpuSelection();
+    const checked = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(result.checked_at));
+    const rows = result.gpus.map(gpu => {
+      const activity = gpu.utilization_percent == null ? "확인 불가" : `${gpu.utilization_percent}%`;
+      const processes = gpu.process_info_known ? `${gpu.processes.length}개` : "확인 불가";
+      const tooltip = gpu.processes.map(process => `${process.name} (PID ${process.pid})`).join(", ");
+      return `<tr><td><label><input type="radio" name="selected-gpu" value="${escapeHtml(gpu.uuid)}" ${state.selectedGpu?.uuid === gpu.uuid ? "checked" : ""}>#${gpu.index} · ${escapeHtml(gpu.name)}</label></td>
+        <td>${escapeHtml(gib(gpu.memory_free_mib))} / ${escapeHtml(gib(gpu.memory_total_mib))}</td>
+        <td>${activity}</td><td title="${escapeHtml(tooltip)}">${processes}</td>
+        <td class="${gpu.idle_candidate ? "gpu-idle" : "gpu-occupied"}">${gpu.idle_candidate ? "여유로 보임" : "사용 중 / 확인 필요"}</td></tr>`;
+    }).join("");
+    $("#gpu-probe-result").innerHTML = `<b>${escapeHtml(host)} · ${checked} 확인 · 3초마다 갱신</b>
+      ${rows ? `<div class="gpu-table-wrap"><table class="gpu-table"><thead><tr><th>GPU</th><th>여유 / 전체 VRAM</th><th>사용률</th><th>프로세스</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+      <p>${escapeHtml(result.message)}</p>
+      ${rows ? '<p>여유 기준: 사용률 5% 이하, VRAM 80% 이상 여유, 확인 가능한 연산 프로세스 없음. 작업에 필요한 메모리는 별도로 확인해야 합니다.</p>' : ""}`;
+  } catch (error) {
+    if (request !== state.sshRequest || error.name === "AbortError") return;
+    state.sshProbeHost = null;
+    updateGpuSelection();
+    $("#gpu-probe-result").textContent = `${error.message} 처음 연결하는 호스트나 암호가 필요한 키는 터미널에서 먼저 ssh로 연결해 주세요.`;
+  } finally {
+    if (request === state.sshRequest) {
+      button.disabled = false;
+      if ($("#device-dialog").open && $("#ssh-host").value === host) state.gpuTimer = setTimeout(refreshGpu, 3000);
+    }
+  }
+}
+
+$("#probe-ssh-host").addEventListener("click", refreshGpu);
+$("#gpu-probe-result").addEventListener("change", event => {
+  if (event.target.name !== "selected-gpu") return;
+  state.selectedGpu = state.gpuInventory.find(gpu => gpu.uuid === event.target.value) || null;
+  if (state.selectedGpu) {
+    $("#device-name").value = `${$("#ssh-host").value} · GPU ${state.selectedGpu.index}`;
+    $("#device-port").value = 18400 + state.selectedGpu.index;
+  }
+  updateGpuSelection();
+});
+
+$("#device-backend").addEventListener("change", () => {
+  $("#device-model").value = $("#device-backend").value === "mlx" ? "moss-mtd" : "OpenMOSS-Team/MOSS-Transcribe-Diarize";
+  $("#worker-setup-help").textContent = $("#device-backend").value === "cuda"
+    ? "GPU 번호를 선택해 추가한 뒤 ‘전사 준비’를 누르세요. 처음에는 원격 사용자 폴더에 실행 환경과 모델을 설치합니다. Linux, Python 3.10 이상, NVIDIA 드라이버와 인터넷 연결이 필요합니다."
+    : "직접 실행한 전사 서버에 연결합니다. 실제 실행 GPU는 해당 서버의 설정을 따릅니다.";
+  updateGpuSelection();
+});
+
+$("#add-device-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (state.addingDevice) return;
+  const host = $("#ssh-host").value;
+  if (!host || state.sshProbeHost !== host) return toast("먼저 SSH 연결을 확인해 주세요.", true);
+  const values = Object.fromEntries(new FormData(event.target));
+  values.host = host;
+  values.remote_port = Number(values.remote_port);
+  if (values.backend === "cuda") {
+    if (!state.selectedGpu) return toast("실행할 GPU 번호를 선택해 주세요.", true);
+    values.gpu_uuid = state.selectedGpu.uuid;
+    values.gpu_index = state.selectedGpu.index;
+  }
+  const button = $("#add-device");
+  state.addingDevice = true;
+  button.disabled = true;
+  try {
+    await api("/api/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+    await loadDevices();
+    toast("장치를 추가했습니다. 녹음을 올릴 때 선택할 수 있어요.");
+  } catch (error) { toast(error.message, true); }
+  finally { state.addingDevice = false; updateGpuSelection(); }
+});
+
+$("#registered-devices").addEventListener("click", async event => {
+  const button = event.target.closest("[data-device-action]");
+  if (!button) return;
+  const id = button.closest("[data-device-id]").dataset.deviceId;
+  button.disabled = true;
+  try {
+    if (["prepare", "stop"].includes(button.dataset.deviceAction)) {
+      state.workerStates[id] = await api(`/api/devices/${encodeURIComponent(id)}/worker/${button.dataset.deviceAction}`, { method: "POST" });
+      renderDevices();
+      pollWorker(id);
+    } else if (button.dataset.deviceAction === "remove") {
+      await api(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+      delete state.deviceStatus[id];
+      await loadDevices();
+      toast("장치를 목록에서 제거했습니다.");
+    } else {
+      button.textContent = "확인 중…";
+      state.deviceStatus[id] = await api(`/api/devices/${encodeURIComponent(id)}/status`, { method: "POST" });
+      renderDevices();
+    }
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+});
+
+async function pollWorker(id) {
+  clearTimeout(state.workerTimers[id]);
+  try {
+    const worker = await api(`/api/devices/${encodeURIComponent(id)}/worker`);
+    state.workerStates[id] = worker;
+    renderDevices();
+    if (["ready", "stopped", "error", "interrupted"].includes(worker.phase)) {
+      if (worker.phase === "ready") {
+        state.deviceStatus[id] = await api(`/api/devices/${encodeURIComponent(id)}/status`, { method: "POST" });
+        renderDevices();
+      }
+      return;
+    }
+    state.workerTimers[id] = setTimeout(() => pollWorker(id), 2000);
+  } catch (error) { toast(error.message, true); }
+}
+
+$("#device-select").addEventListener("change", checkHealth);
+
 async function checkHealth() {
+  if (state.healthChecking) return;
+  state.healthChecking = true;
   const element = $("#server-state");
   try {
     const health = await api("/api/health");
-    const online = health.moss.ok;
+    const selected = ($("#upload-dialog").open ? $("#device-select").value : state.current?.device_id) || $("#device-select").value || "local";
+    const device = selected === "local" ? health.moss
+      : await api(`/api/devices/${encodeURIComponent(selected)}/status`, { method: "POST" });
+    const online = device.ok;
     state.maxUploadBytes = health.max_upload_bytes;
     const defaultMinutes = health.default_chunk_seconds / 60;
     if (Number.isInteger(defaultMinutes) && defaultMinutes >= 1 && defaultMinutes <= 90) {
@@ -897,17 +1115,18 @@ async function checkHealth() {
     element.className = `server-state ${online ? "online" : "offline"}`;
     element.querySelector("b").textContent = online ? "전사 준비 완료" : "전사 서버 연결 안 됨";
     element.querySelector("small").textContent = online
-      ? health.moss.label
-      : "전사 서버가 실행 중인지 확인해 주세요";
+      ? device.label
+      : device.error || "전사 서버가 실행 중인지 확인해 주세요";
   } catch (_) {
     element.className = "server-state offline";
     element.querySelector("b").textContent = "앱 연결을 확인해 주세요";
     element.querySelector("small").textContent = "잠시 후 다시 연결합니다";
-  }
+  } finally { state.healthChecking = false; }
 }
 window.addEventListener("beforeunload", event => {
   if (state.pendingChanges || state.savePromise || state.uploading) event.preventDefault();
 });
 loadNotes();
+loadDevices().catch(error => toast(error.message, true));
 checkHealth();
 setInterval(checkHealth, 10000);

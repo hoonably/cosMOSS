@@ -30,6 +30,7 @@
         <div class="side-label"><span>내 노트</span><span id="note-count">0</span></div>
         <div class="note-list" id="note-list"></div>
 
+        <button class="device-manager-button" id="manage-devices" type="button">처리 장치 관리 <span>＋</span></button>
         <div class="server-state" id="server-state">
           <span class="state-dot"></span>
           <div><b>모델 확인 중</b><small>전사 서버 연결 확인 중</small></div>
@@ -155,6 +156,11 @@
         </div>
         <label class="field"><span>노트 제목 <small>선택</small></span><input name="title" placeholder="파일명으로 자동 생성" maxlength="200" /></label>
         <label class="field">
+          <span>처리 장치 <button class="inline-link" id="manage-upload-devices" type="button">장치 관리</button></span>
+          <select id="device-select" name="device_id"><option value="local">이 Mac</option></select>
+          <small class="field-help" id="device-privacy">선택한 장치에 음성을 보내 전사합니다. 녹음과 노트는 이 Mac에 보관합니다.</small>
+        </label>
+        <label class="field">
           <span>청크 길이 <small>분</small></span>
           <input id="chunk-minutes" name="chunk_minutes" type="number" min="1" max="90" step="1" value="30" aria-describedby="chunk-length-help" required />
           <small class="field-help" id="chunk-length-help">1~90분 · 이 길이를 넘는 녹음은 나누어 전사합니다.</small>
@@ -166,6 +172,33 @@
         <p class="privacy-note"><span>◆</span> 녹음과 노트는 앱에 저장되며, 음성은 연결한 전사 서버에서 처리합니다.</p>
         <button class="submit-upload" type="submit" disabled>전사 시작하기 <span>→</span></button>
       </form>
+    </dialog>
+
+    <dialog class="device-dialog" id="device-dialog" aria-labelledby="device-dialog-title">
+      <div class="dialog-head">
+        <div><p class="eyebrow">실행 위치 선택</p><h2 id="device-dialog-title">처리 장치</h2></div>
+        <button class="dialog-close" id="close-device-dialog" type="button" aria-label="장치 관리 닫기">×</button>
+      </div>
+      <p class="device-description">기본 장치는 이 Mac입니다. SSH로 연결할 장치와 GPU를 추가하고, 녹음마다 처리할 곳을 고를 수 있어요. 준비한 원격 워커는 앱을 닫아도 유지됩니다. 사용을 마치면 ‘워커 종료’를 눌러 GPU를 비워 주세요.</p>
+      <div class="registered-devices" id="registered-devices"></div>
+      <section class="ssh-device-section">
+        <h3>SSH 장치 추가</h3>
+        <label class="field"><span>SSH config의 호스트</span>
+          <select id="ssh-host"><option value="">불러오는 중…</option></select>
+        </label>
+        <button class="ghost-button" id="probe-ssh-host" type="button" disabled>GPU 상태 새로고침</button>
+        <div class="gpu-probe-result" id="gpu-probe-result" role="status" aria-live="polite"></div>
+        <form id="add-device-form">
+          <label class="field"><span>장치 이름</span><input id="device-name" name="name" maxlength="80" required placeholder="예: 연구실 3090" /></label>
+          <details class="device-advanced"><summary>고급 연결 설정</summary>
+            <label class="field"><span>전사 서버 포트</span><input id="device-port" name="remote_port" type="number" min="1024" max="65535" value="18400" required /></label>
+          <label class="field"><span>서버의 모델 ID</span><input id="device-model" name="model" value="OpenMOSS-Team/MOSS-Transcribe-Diarize" maxlength="200" required /></label>
+          <label class="field"><span>전사 서버 종류</span><select id="device-backend" name="backend"><option value="cuda">CUDA 워커 · 선택 GPU 자동 준비</option><option value="remote">직접 실행한 호환 JSON 서버</option><option value="mlx">직접 실행한 cosMOSS MLX 서버</option></select></label>
+          </details>
+          <p class="field-help" id="worker-setup-help">GPU 번호를 선택해 추가한 뒤 ‘전사 준비’를 누르세요. 처음에는 해당 서버의 사용자 폴더에 Python 실행 환경과 모델을 설치합니다. Linux, Python 3.10 이상, NVIDIA 드라이버와 인터넷 연결이 필요합니다.</p>
+          <button class="primary-action" id="add-device" type="submit" disabled>선택 GPU 추가</button>
+        </form>
+      </section>
     </dialog>
 
     <dialog class="confirmation-dialog" id="cancel-dialog" role="alertdialog" aria-modal="true" aria-labelledby="cancel-dialog-title" aria-describedby="cancel-dialog-description">
