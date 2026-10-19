@@ -990,6 +990,15 @@ def liveness() -> dict[str, Any]:
     return {"ok": True, "app": "cosMOSS"}
 
 
+@app.get("/api/update-status")
+async def update_status() -> dict[str, bool]:
+    """Do not relaunch during owned work; loaded, idle models can be stopped."""
+    tasks = [*PREPARATION_TASKS.values(), *TRANSCRIPTION_TASKS.values(),
+             *SUMMARIES.tasks.values(), *REMOTE_WORKERS.tasks.values(), LOCAL_MODELS.task]
+    return {"busy": any(task is not None and not task.done() for task in tasks)
+            or any(note["status"] in {"queued", "processing"} for note in STORE.list())}
+
+
 @app.get("/readyz", include_in_schema=False)
 async def readiness() -> JSONResponse:
     services = await model_health(await resolve_device(DEVICES.get("local"), TUNNELS))

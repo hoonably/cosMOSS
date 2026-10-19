@@ -40,6 +40,7 @@ for name in ('src', 'static'):
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
 for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
     shutil.copy2(root / name, resources / name)
+shutil.copy2(root / 'macos/.build/checkouts/Sparkle/LICENSE', resources / 'Sparkle-LICENSE')
 python = root / 'dist/.release-python/cpython-3.12.12-macos-aarch64-none'
 assert (python / 'BUILD').read_text().strip() == '20260113', 'Review licenses for the new Python build before packaging'
 shutil.copytree(python, resources / 'python', symlinks=True,
@@ -75,7 +76,8 @@ for path in sorted((app / 'Contents/Resources').rglob('*')):
         header = file.read(4)
     if header in mach_o:
         subprocess.run(['codesign', '--force', '--sign', '-', str(path)], check=True)
-subprocess.run(['codesign', '--force', '--deep', '--sign', '-', str(app)], check=True)
+subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app / 'Contents/Frameworks/Sparkle.framework')], check=True)
+subprocess.run(['codesign', '--force', '--sign', '-', str(app)], check=True)
 subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
 PY
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/Contents/Info.plist")"

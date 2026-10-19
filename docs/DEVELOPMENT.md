@@ -28,7 +28,34 @@ node --check static/panes.js
 ```
 
 Build the downloadable app and ZIP with `./scripts/build-mac-release.sh`.
-The output is `dist/cosMOSS-v0.1.0-macos-arm64.zip` and its SHA-256 file.
+The output is `dist/cosMOSS-v<version>-macos-arm64.zip` and its SHA-256 file.
+
+## Publishing updates
+
+The app uses Sparkle 2.9.6 with signed appcasts and Ed25519 archive validation.
+Both the app version and monotonic build number come from `pyproject.toml`
+(build = major × 1,000,000 + minor × 1,000 + patch). Update the matching project
+version in `uv.lock` when bumping the version; keep dependency pins unchanged.
+
+Run `UV_BIN=/path/to/uv ./scripts/prepare-release.sh` to test, build the ZIP, and
+generate `appcast.xml`. This feed is served from the repository's `main` branch.
+Publish the ZIP and SHA-256 file on the matching GitHub release before pushing
+the new feed, so installed apps only see downloadable updates. Publish a feed
+change as a separate follow-up commit if necessary. Release notes stay short.
+
+The cosMOSS signing key is kept outside the checkout at
+`~/Library/Application Support/cosMOSS Development/sparkle-private-key` (0600).
+Back up and transfer this key securely for releases from another Mac. The
+repository contains only `macos/UpdatePublicKey.txt`. `SPARKLE_PRIVATE_KEY_FILE`
+can select an existing restored key. Never regenerate a key for an existing
+installation; `scripts/setup-update-key.swift` checks that both keys match.
+
+`scripts/verify-update.swift` verifies both feed and archive using only the
+embedded public key. An install/relaunch waits for transcription, uploads,
+model preparation and summaries to finish, and for pending editor saves.
+The updater is disabled in checkout-based development launchers.
+The original `0.1.0` build had no updater. Its replacement pre-release uses build
+1000 and must be installed manually once; subsequent versions update in-app.
 
 ## Local configuration and data
 

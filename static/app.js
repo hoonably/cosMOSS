@@ -85,10 +85,40 @@ function formatDate(value) {
   return new Intl.DateTimeFormat("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
+async function loadAppInfo() {
+  const bridge = window.webkit?.messageHandlers?.getAppInfo;
+  if (!bridge) return;
+  try {
+    const info = await bridge.postMessage({});
+    $("#app-version").textContent = `v${info.version}`;
+    $("#app-update-info").classList.remove("hidden");
+    $("#check-app-update").classList.toggle("hidden", !info.updatesAvailable);
+    $("#check-app-update").disabled = !info.canCheckForUpdates;
+  } catch (_) {}
+}
+
+$("#check-app-update").addEventListener("click", async () => {
+  const bridge = window.webkit?.messageHandlers?.checkForUpdates;
+  if (!bridge) return;
+  try {
+    await flushSave();
+    await bridge.postMessage({});
+    $("#developer-dialog").close();
+  } catch (error) { toast(error.message || "업데이트를 확인하지 못했습니다.", true); }
+});
+
+window.prepareForAppUpdate = async () => {
+  if (state.uploading || state.uploadPreparation || state.speakerDraft || state.speakerSaving || state.summarySubmitting || state.addingDevice) return false;
+  try { await flushSave(); }
+  catch (_) { return false; }
+  return !state.pendingChanges && !state.savePromise;
+};
+
 // Keep the coffee surprise inside the same modal so focus returns to its opener.
 (() => {
   const dialog = $("#developer-dialog");
   $("#open-developer-info").addEventListener("click", () => {
+    loadAppInfo();
     $("#developer-info-view").classList.remove("hidden");
     $("#developer-coffee-view").classList.add("hidden");
     dialog.setAttribute("aria-labelledby", "developer-dialog-title");

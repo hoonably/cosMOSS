@@ -16,28 +16,44 @@ BIN_DIR="$(swift build --package-path "$PROJECT_DIR/macos" -c release --show-bin
 APP_DIR="${COSMOSS_APP_DIR:-$PROJECT_DIR/dist/cosMOSS.app}"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BIN_DIR/CosMOSS" "$APP_DIR/Contents/MacOS/CosMOSS"
+mkdir -p "$APP_DIR/Contents/Frameworks"
+SPARKLE_FRAMEWORK="$PROJECT_DIR/macos/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+ditto "$SPARKLE_FRAMEWORK" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
+if ! otool -l "$APP_DIR/Contents/MacOS/CosMOSS" | grep -q '@executable_path/../Frameworks'; then
+  install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_DIR/Contents/MacOS/CosMOSS"
+fi
 "$PROJECT_DIR/.venv/bin/python" - "$PROJECT_DIR" "$APP_DIR" <<'PY'
 import plistlib
 import sys
+import tomllib
 from pathlib import Path
 
 root, app = map(Path, sys.argv[1:])
+version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
+major, minor, patch = map(int, version.split('.'))
 metadata = {
     'CFBundleName': 'cosMOSS',
     'CFBundleDisplayName': 'cosMOSS',
     'CFBundleIdentifier': 'io.github.hoonably.cosmoss',
     'CFBundleExecutable': 'CosMOSS',
     'CFBundlePackageType': 'APPL',
-    'CFBundleShortVersionString': '0.1.0',
-    'CFBundleVersion': '1',
+    'CFBundleShortVersionString': version,
+    'CFBundleVersion': str(major * 1_000_000 + minor * 1_000 + patch),
     'LSMinimumSystemVersion': '13.0',
     'NSHighResolutionCapable': True,
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
     'CosMOSSProjectRoot': str(root),
+    'SUFeedURL': 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml',
+    'SUPublicEDKey': (root / 'macos/UpdatePublicKey.txt').read_text().strip(),
+    'SUEnableAutomaticChecks': True,
+    'SURequireSignedFeed': True,
+    'SUVerifyUpdateBeforeExtraction': True,
+    'SUSignedFeedFailureExpirationInterval': 0,
 }
 with (app / 'Contents/Info.plist').open('wb') as file:
     plistlib.dump(metadata, file)
 PY
-codesign --force --deep --sign - "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR/Contents/Frameworks/Sparkle.framework"
+codesign --force --sign - "$APP_DIR"
 echo "개발용 앱: $APP_DIR"
 echo "실행: open \"$APP_DIR\""

@@ -6,6 +6,7 @@ import WebKit
 struct CosMOSSApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var backend = BackendController.shared
+    @StateObject private var updates = UpdateController.shared
 
     var body: some Scene {
         WindowGroup("cosMOSS") {
@@ -31,10 +32,19 @@ struct CosMOSSApp: App {
                 }
             }
             .frame(minWidth: 1100, minHeight: 720)
-            .task { await backend.start() }
+            .task {
+                await backend.start()
+                updates.start()
+            }
         }
         .defaultSize(width: 1480, height: 900)
-        .commands { CommandGroup(replacing: .newItem) {} }
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .appInfo) {
+                Button("업데이트 확인…") { updates.checkForUpdates() }
+                    .disabled(!updates.canCheckForUpdates)
+            }
+        }
     }
 }
 
@@ -56,6 +66,30 @@ final class BackendController: ObservableObject {
     private var process: Process?
     private var log: FileHandle?
     private var starting = false
+    weak var webView: WKWebView?
+
+    func prepareForUpdate() async -> Bool {
+        guard let url else { return !starting }
+        var request = URLRequest(url: url.appendingPathComponent("api/update-status"))
+        request.timeoutInterval = 3
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let status = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  status["busy"] as? Bool == false else { return false }
+            if let webView {
+                let ready: Any = try await withCheckedThrowingContinuation { continuation in
+                    webView.callAsyncJavaScript(
+                        "return typeof window.prepareForAppUpdate === 'function' && await window.prepareForAppUpdate();",
+                        arguments: [:], in: nil, in: .page
+                    ) { result in continuation.resume(with: result) }
+                }
+                return ready as? Bool == true
+            }
+            return true
+        } catch { return false }
+    }
 
     private enum Health { case ready, occupied, unavailable }
 
@@ -205,7 +239,7 @@ struct WorkspaceView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        for name in ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile"] {
+        for name in ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile", "getAppInfo", "checkForUpdates"] {
             configuration.userContentController.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: name)
         }
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -213,6 +247,7 @@ struct WorkspaceView: NSViewRepresentable {
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.load(URLRequest(url: url))
+        BackendController.shared.webView = webView
         return webView
     }
 
@@ -238,10 +273,25 @@ struct WorkspaceView: NSViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage,
                                    replyHandler: @escaping (Any?, String?) -> Void) {
-            guard ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile"].contains(message.name), message.frameInfo.isMainFrame,
+            guard ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile", "getAppInfo", "checkForUpdates"].contains(message.name), message.frameInfo.isMainFrame,
                   let url = message.frameInfo.request.url,
                   url.scheme == origin.scheme, url.host == origin.host, url.port == origin.port else {
                 replyHandler(nil, "이 앱에서만 폴더 설정을 사용할 수 있습니다.")
+                return
+            }
+            if message.name == "getAppInfo" {
+                replyHandler(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+                              "updatesAvailable": Bundle.main.object(forInfoDictionaryKey: "CosMOSSProjectRoot") == nil,
+                              "canCheckForUpdates": UpdateController.shared.canCheckForUpdates], nil)
+                return
+            }
+            if message.name == "checkForUpdates" {
+                guard UpdateController.shared.canCheckForUpdates else {
+                    replyHandler(nil, "잠시 후 다시 확인해 주세요.")
+                    return
+                }
+                UpdateController.shared.checkForUpdates()
+                replyHandler(true, nil)
                 return
             }
             if message.name == "getSaveLocation" {

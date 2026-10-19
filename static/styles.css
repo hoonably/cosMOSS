@@ -615,6 +615,8 @@ dialog::backdrop { background: rgba(11,25,17,.62); backdrop-filter: blur(4px); }
 .developer-dialog-heading .eyebrow { margin: 0 0 8px; color: #91a08d; font-size: 10px; font-weight: 500; letter-spacing: .04em; }
 .developer-wordmark { margin: 0; color: #2d4734; font-size: 27px; font-weight: 500; letter-spacing: -.05em; }
 .developer-wordmark strong { color: var(--accent); font-weight: 750; }
+.app-update-info { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.app-update-info .inline-link { font-size: 12px; }
 .developer-links { display: grid; gap: 8px; }
 .developer-link { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 54px; padding: 12px; border: 1px solid transparent; border-radius: 11px; text-align: left; text-decoration: none; font-size: 13px; font-weight: 400; line-height: 1.6; transition: background .15s, border-color .15s; }
 .developer-link > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

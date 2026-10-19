@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import tomllib
 import socket
 import subprocess
 import sys
@@ -20,7 +21,14 @@ def main():
     app = Path(sys.argv[1]).resolve()
     resources = app / 'Contents/Resources'
     metadata = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
-    assert metadata['CFBundleShortVersionString'] == '0.1.0'
+    root = Path(__file__).resolve().parents[1]
+    version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
+    assert metadata['CFBundleShortVersionString'] == version
+    assert metadata['SUPublicEDKey'] == (root / 'macos/UpdatePublicKey.txt').read_text().strip()
+    assert metadata['SUFeedURL'] == 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml'
+    assert metadata['SURequireSignedFeed'] and metadata['SUVerifyUpdateBeforeExtraction']
+    assert metadata['SUEnableAutomaticChecks']
+    assert (app / 'Contents/Frameworks/Sparkle.framework').is_dir()
     assert 'CosMOSSProjectRoot' not in metadata
     assert (resources / 'python/licenses/LICENSE.cpython.txt').is_file()
     assert (resources / 'tools/uv-0.9.25.dist-info/licenses/LICENSE-MIT').is_file()

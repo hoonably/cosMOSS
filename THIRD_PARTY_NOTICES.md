@@ -73,6 +73,11 @@ redistributed binary bundle.
 
 ## Mac release bundle
 
+The Mac app uses [Sparkle 2.9.6](https://github.com/sparkle-project/Sparkle/tree/2.9.6)
+for in-app updates under its permissive license. Its complete upstream license
+and third-party notices are included as `Contents/Resources/Sparkle-LICENSE`;
+the bundled framework retains its own resources and signatures.
+
 The downloadable Mac app includes a standalone CPython 3.12.12 distribution
 provided through python-build-standalone, uv 0.9.25 (MIT or Apache-2.0), and the
 web dependencies pinned in `uv.lock`. CPython and its bundled libraries retain
