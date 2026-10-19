@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.config import TranscriptionConfig
 from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
 from src.local_models import LocalModels
-from src.model_catalog import catalog, model_selection, DEFAULT_OPTIONS
+from src.model_catalog import catalog, model_selection, recommendation, DEFAULT_OPTIONS
 from src.remote_workers import RemoteWorkers
 from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host
 from src.store import NoteStore
@@ -1160,8 +1160,10 @@ async def remote_model_options(device_id: str) -> dict[str, Any]:
         raise HTTPException(400, "모델을 준비할 장치를 선택해 주세요.")
     try:
         result = await REMOTE_WORKERS.options(device)
-        return {**result, "model_key": device.get("model_key", "cuda-original"), "options": {**DEFAULT_OPTIONS, **device.get("options", {})},
-                **catalog("cuda", result.get("hardware"))}
+        metadata = catalog("cuda", result.get("hardware"))
+        defaults = {**DEFAULT_OPTIONS, "chunk_minutes": metadata["recommendation"]["options"]["chunk_minutes"]}
+        return {**result, "model_key": device.get("model_key", "cuda-original"),
+                "options": {**defaults, **device.get("options", {})}, **metadata}
     except (SSHError, OSError, TimeoutError) as error:
         raise HTTPException(400, str(error) or "장치에 연결하지 못했습니다.") from None
 
@@ -1309,6 +1311,7 @@ async def create_note(
     except KeyError:
         raise HTTPException(400, "전사할 장치를 선택해 주세요.") from None
     device = {key: value for key, value in device.items() if key not in {"gpu_uuid", "gpu_index"}}
+    default_chunk_minutes = MAX_AUDIO_CHUNK_SECONDS // 60
     if device["backend"] == "cuda":
         if not gpu_uuid:
             raise HTTPException(400, "이번 전사에 사용할 GPU를 선택해 주세요.")
@@ -1319,6 +1322,9 @@ async def create_note(
         gpu = next((item for item in inventory["gpus"] if item["uuid"] == gpu_uuid), None)
         if not gpu or not gpu["idle_candidate"]:
             raise HTTPException(409, "선택한 GPU가 없거나 사용 중입니다. 상태를 새로고침한 뒤 다시 선택해 주세요.")
+        if gpu.get("memory_total_mib") is not None:
+            default_chunk_minutes = recommendation("cuda", gpu["memory_total_mib"] / 1024)["options"]["chunk_minutes"]
+        device["options"] = {"chunk_minutes": default_chunk_minutes, **device.get("options", {})}
         device.update(gpu_uuid=gpu["uuid"], gpu_index=gpu["index"])
     elif gpu_uuid:
         raise HTTPException(400, "이 장치는 별도의 GPU 선택을 지원하지 않습니다.")
@@ -1326,7 +1332,7 @@ async def create_note(
         "device_id": device["id"], "device_name": device["name"] + (f" · GPU #{device['gpu_index']}" if device.get("gpu_uuid") else ""),
         "device_snapshot_json": json.dumps(device, ensure_ascii=False),
         "language": language.strip() or None, "hotwords": hotwords.strip() or None,
-        "chunk_seconds": chunk_minutes * 60 if chunk_minutes is not None else device.get("options", {}).get("chunk_minutes", MAX_AUDIO_CHUNK_SECONDS // 60) * 60,
+        "chunk_seconds": chunk_minutes * 60 if chunk_minutes is not None else device.get("options", {}).get("chunk_minutes", default_chunk_minutes) * 60,
         "output_format": output_format,
     }
     if upload_id:

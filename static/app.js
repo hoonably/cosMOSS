@@ -1265,8 +1265,8 @@ function modelOptionsHtml(id, selected, all = true) {
   return models + `<option value="custom" ${selected === "custom" ? "selected" : ""}>다른 MOSS 저장소…</option>` + unavailable;
 }
 function deviceKnobSummary(device) {
-  const options = device.options || (device.kind === "local" ? state.localModel?.options : null);
-  return `청크 ${options?.chunk_minutes || 30}분`;
+  const minutes = device.options?.chunk_minutes ?? (device.kind === "local" ? state.localModel?.options?.chunk_minutes : state.modelMetadata[device.id]?.options?.chunk_minutes);
+  return minutes != null ? `청크 ${minutes}분` : device.backend === "cuda" ? "청크 자동 · GPU 권장값" : "청크 30분";
 }
 async function loadModelCatalog() {
   state.catalog = await api("/api/model-catalog");

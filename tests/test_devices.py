@@ -200,6 +200,38 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         blocked = await self.client.post(f"/api/devices/{device['id']}/environment")
         self.assertEqual(blocked.status_code, 409)
 
+    async def test_remote_model_dialog_defaults_to_recommended_chunk_and_preserves_manual_value(self):
+        device = await self.add()
+        hardware = {"gpus": [{"name": "RTX PRO 6000", "index": 0, "memory_gib": 96}]}
+        with patch.object(self.workers, "options", new=AsyncMock(return_value={"hardware": hardware})):
+            response = await self.client.get(f"/api/devices/{device['id']}/model")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["options"]["chunk_minutes"], 60)
+            self.devices.configure(device['id'], options={"chunk_minutes": 20})
+            response = await self.client.get(f"/api/devices/{device['id']}/model")
+            self.assertEqual(response.json()["options"]["chunk_minutes"], 20)
+
+    async def test_new_notes_use_selected_gpu_chunk_recommendation_without_model_setup(self):
+        device = await self.add()
+        small = parse_gpu_xml(GPU_XML)[0]
+        large = {**small, "uuid": "GPU-aaaaaaaa-2222-3333-4444-555555555555", "index": 1,
+                 "memory_total_mib": 96 * 1024}
+        self.probe.return_value["gpus"] = [small, large]
+        for gpu, expected in ((large, 60), (small, 30)):
+            response = await self.client.post("/api/notes", data={"device_id": device['id'], "gpu_uuid": gpu['uuid']},
+                                              files={"file": ("voice.wav", b"audio", "audio/wav")})
+            self.assertEqual(response.status_code, 202, response.text)
+            note = self.store.get(response.json()['id'])
+            self.assertEqual(note['chunk_seconds'], expected * 60)
+            self.assertEqual(json.loads(note['device_snapshot_json'])['options']['chunk_minutes'], expected)
+        self.assertNotIn('options', self.devices.get(device['id']))
+        self.devices.configure(device['id'], options={"chunk_minutes": 20})
+        for override, expected in (({}, 20), ({"chunk_minutes": "10"}, 10)):
+            response = await self.client.post("/api/notes", data={"device_id": device['id'], "gpu_uuid": large['uuid'], **override},
+                                              files={"file": ("voice.wav", b"audio", "audio/wav")})
+            self.assertEqual(response.status_code, 202, response.text)
+            self.assertEqual(self.store.get(response.json()['id'])['chunk_seconds'], expected * 60)
+
     async def test_local_environment_can_be_checked_without_model_preparation(self):
         with patch.object(self.main.LOCAL_MODELS, 'environment', new=AsyncMock(return_value={'ready': True})), \
              patch.object(self.main.LOCAL_MODELS, 'start_environment', return_value={'phase': 'installing_uv'}) as start:
