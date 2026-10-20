@@ -6,13 +6,14 @@ import asyncio
 import json
 import shlex
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.ssh_devices import SSHError, discover_hosts, ssh_arguments
 
 
 class RemoteWorkers:
-    def __init__(self):
+    def __init__(self, on_stopped: Callable[[str], None] | None = None):
+        self.on_stopped = on_stopped
         self.tasks: dict[str, asyncio.Task] = {}
         self.states: dict[str, dict[str, Any]] = {}
         self.locks: dict[str, asyncio.Lock] = {}
@@ -102,7 +103,9 @@ class RemoteWorkers:
         try:
             await self.execute(device, action, self.states[device_id].update)
             if action == "stop":
-                self.states[device_id] = {**self.states[device_id], "phase": "stopped"}
+                self.states[device_id] = {**self.states[device_id], "phase": "stopped", "active_gpu_uuid": None, "worker_cleanup_pending": False}
+            if self.on_stopped and (action == "stop" or (action == "inspect" and self.states[device_id].get("worker_cleanup_pending") is False)):
+                self.on_stopped(device_id)
         except asyncio.CancelledError:
             self.states[device_id] = {"phase": "interrupted", "error": "연결이 종료되었습니다. 모델 준비를 다시 확인해 주세요."}
             raise
@@ -110,7 +113,7 @@ class RemoteWorkers:
             previous = self.states[device_id]
             detail = previous.get("error", str(error))
             if action == "stop":
-                detail = "서버 작업 파일을 정리하지 못했습니다. ‘GPU 해제’로 다시 시도해 주세요. " + detail
+                detail = "이전 전사 작업을 정리하지 못했습니다. 연결을 확인한 뒤 ‘작업 정리’로 다시 시도해 주세요. " + detail
             self.states[device_id] = {**previous, "phase": "error", "error": detail}
 
     async def close(self) -> None:

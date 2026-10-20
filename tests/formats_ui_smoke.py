@@ -47,16 +47,13 @@ async def main():
                 await page.get_by_role('button',name='기존 자막 '+fmt.upper(),exact=False).first.click()
                 await page.locator('#note-dialog').wait_for(state='visible')
                 assert await page.locator('#text-document-format').inner_text()==fmt.upper()
-                assert await page.locator('#save-txt').inner_text()==fmt.upper()+' 저장'
+                assert await page.locator('#save-txt, #export-toggle').count()==0
+                assert await page.locator('#retry-result-save').is_hidden()
                 assert await page.locator('#text-document-body').input_value()==files[fmt]
                 await page.click('#reveal-txt')
                 await page.wait_for_function('(path)=>window.__revealed===path',arg=str(file))
                 assert await page.evaluate('window.__revealed')==str(file)
-                await page.click('#export-toggle')
-                async with page.expect_download() as download:
-                    await page.locator(f'[data-format="{fmt}"]').click()
-                artifact=await download.value
-                assert Path(await artifact.path()).read_bytes()==original
+                assert file.read_bytes()==original
                 edited=files[fmt].replace('첫 발언','수정한 첫 발언')
                 await page.fill('#text-document-body',edited)
                 await page.wait_for_function('!state.pendingChanges && !state.savePromise')

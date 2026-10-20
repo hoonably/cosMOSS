@@ -47,9 +47,16 @@ async def main():
         await page.route('**/api/notes', lambda r:r.fulfill(json=[]))
         await page.route('**/api/text-library**', lambda r:r.fulfill(json=[]))
         await page.route('**/api/summary/providers', lambda r:r.fulfill(json=[]))
-        await page.route('**/api/devices', lambda r:r.fulfill(json=[
+        devices = [
             {'id':'local','kind':'local','name':'이 Mac','backend':'mlx','setup':{'phase':'idle'}},
-            {'id':'remote','kind':'ssh','name':'원격 GPU','host':'lab','backend':'cuda','setup':{'phase':'installed'}}]))
+            {'id':'remote','kind':'ssh','name':'원격 GPU','host':'lab','backend':'cuda','setup':{'phase':'installed'}}]
+        await page.route('**/api/devices', lambda r:r.fulfill(json=devices))
+        async def save_chunk_default(route):
+            values=route.request.post_data_json
+            device=devices[1]
+            device['options']={**device.get('options',{}),'chunk_minutes':values['chunk_minutes']}
+            await route.fulfill(json=device)
+        await page.route('**/api/devices/remote/chunk-default',save_chunk_default)
         await page.route('**/api/devices/*/environment', lambda r:r.fulfill(json={'ready':False}))
         await page.route('**/api/devices/remote/worker', lambda r:r.fulfill(json={'phase':'installed'}))
         metadata = await (await page.request.get(base + '/api/model-catalog')).json()
@@ -85,6 +92,12 @@ async def main():
         await page.locator('[data-device-id="remote"] [data-device-action="install"]').click()
         await page.locator('#prepare-local-model:not([disabled])').wait_for()
         assert await page.locator('[data-knob="chunk_minutes"]').input_value() == '60'
+        await page.click('#model-knobs > summary')
+        await page.fill('[data-knob="chunk_minutes"]','90')
+        await page.click('#save-chunk-default')
+        await page.wait_for_function('document.querySelector("#chunk-default-status").textContent.includes("저장됨")')
+        assert devices[1]['options']['chunk_minutes'] == 90
+        assert remote_prepared == [], 'Saving the split default started model preparation'
         await page.click('#prepare-local-model')
         await page.wait_for_function('!state.localModelSubmitting')
         assert len(remote_prepared) == 1

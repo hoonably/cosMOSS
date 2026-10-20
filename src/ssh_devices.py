@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import glob
+import hashlib
+import json
 import re
 import shlex
 import shutil
@@ -70,7 +72,9 @@ def ssh_arguments(alias: str) -> list[str]:
         raise SSHError("OpenSSH 클라이언트를 찾을 수 없습니다.")
     return [
         executable, "-T",
-        "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        # Host-key policy, aliases, ports and proxy hops belong to SSH config.
+        # Do not replace a user's per-host policy with a global override.
+        "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=8", "-o", "ConnectionAttempts=1",
         "-o", "ControlMaster=no", "-o", "ControlPath=none",
         "-o", "ForwardAgent=no", "-o", "PermitLocalCommand=no",
@@ -84,6 +88,14 @@ def number(value: str | None) -> float | None:
         return None
     match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(?:MiB|%)?\s*", value)
     return float(match[1]) if match else None
+
+
+def gpu_warning_token(gpu: dict[str, Any]) -> str:
+    """Bind explicit confirmation to one GPU and its observed processes."""
+    processes = sorted((str(p.get("pid") or ""), str(p.get("name") or ""), str(p.get("type") or ""))
+                       for p in gpu.get("processes", []))
+    details = [gpu["uuid"], gpu.get("process_info_known"), processes]
+    return hashlib.sha256(json.dumps(details, ensure_ascii=False).encode()).hexdigest()
 
 
 def parse_gpu_xml(xml: str) -> list[dict[str, Any]]:
@@ -119,6 +131,7 @@ def parse_gpu_xml(xml: str) -> list[dict[str, Any]]:
             "processes": processes, "process_info_known": process_info_known,
             "idle_candidate": idle,
         })
+        gpus[-1]["busy_confirmation"] = gpu_warning_token(gpus[-1])
     return gpus
 
 

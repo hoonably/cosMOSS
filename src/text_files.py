@@ -1,4 +1,4 @@
-"""Keep an explicitly saved TXT in sync without overwriting outside edits."""
+"""Save transcript files and keep edits in sync without overwriting outside edits."""
 from __future__ import annotations
 
 import hashlib
@@ -70,7 +70,7 @@ def speaker_changes(note: dict, names: dict[str, str], merges: dict[str, str] | 
             "segments": [{**segment, "speaker": resolved.get(segment["speaker"], segment["speaker"])} for segment in note["segments"]]}
 
 
-def write_text(note: dict, directory: str = "") -> dict[str, str]:
+def write_text(note: dict, directory: str = "", *, reuse_existing: bool = False) -> dict[str, str]:
     if note["status"] != "done":
         raise ValueError("전사가 완료된 노트만 파일로 저장할 수 있습니다.")
     format_name = file_format(note)
@@ -91,7 +91,11 @@ def write_text(note: dict, directory: str = "") -> dict[str, str]:
         folder = folder.resolve()
         folder.mkdir(parents=True, exist_ok=True)
         title = "".join(c for c in note["title"] if c.isalnum() or c in "-_ ").strip()[:80] or "노트"
-        stem = f"{title}-{note['id'][:8]}"
+        # Reconnect an old manual export without rewriting it or listing it twice.
+        candidate = folder / f"{title}.{format_name}"
+        if reuse_existing and candidate.is_file() and not candidate.is_symlink() and candidate.stat().st_size == len(content) and digest(candidate.read_bytes()) == content_hash:
+            return {"text_path": str(candidate), "text_hash": content_hash}
+        stem = title
         target = folder / f"{stem}.{format_name}"
         suffix = 1
         while os.path.lexists(target):
@@ -114,11 +118,11 @@ def write_text(note: dict, directory: str = "") -> dict[str, str]:
     return {"text_path": str(target), "text_hash": content_hash}
 
 
-def save_text(store, note_id: str, directory: str = "", changes: dict | None = None) -> dict:
+def save_text(store, note_id: str, directory: str = "", changes: dict | None = None, *, reuse_existing: bool = False) -> dict:
     with store.lock:
         note = store.get(note_id)
         changes = dict(changes or {})
         if "speaker_names" in changes or "speaker_merges" in changes:
             changes.update(speaker_changes(note, changes.get("speaker_names", {}), changes.get("speaker_merges")))
-        metadata = write_text({**note, **changes}, directory)
-        return store.update(note_id, **changes, **metadata)
+        metadata = write_text({**note, **changes}, directory, reuse_existing=reuse_existing)
+        return store.update(note_id, **changes, **metadata, text_save_error=None)

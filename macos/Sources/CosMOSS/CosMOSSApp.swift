@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 @main
@@ -7,11 +8,19 @@ struct CosMOSSApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var backend = BackendController.shared
     @StateObject private var updates = UpdateController.shared
+    @StateObject private var fileAccess = FullDiskAccessGate()
 
     var body: some Scene {
         WindowGroup("cosMOSS") {
             Group {
-                if let url = backend.url {
+                if !fileAccess.isReady {
+                    if fileAccess.hasChecked {
+                        StartupAccessView(access: fileAccess) { Task { await startAfterPermission() } }
+                    } else {
+                        ProgressView("접근 권한을 확인하고 있어요")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else if let url = backend.url {
                     WorkspaceView(url: url)
                 } else if let error = backend.error {
                     VStack(spacing: 18) {
@@ -32,9 +41,9 @@ struct CosMOSSApp: App {
                 }
             }
             .frame(minWidth: 1100, minHeight: 720)
-            .task {
-                await backend.start()
-                updates.start()
+            .task { await startAfterPermission() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                if !fileAccess.isReady { Task { await startAfterPermission() } }
             }
         }
         .defaultSize(width: 1480, height: 900)
@@ -45,6 +54,16 @@ struct CosMOSSApp: App {
                     .disabled(!updates.canCheckForUpdates)
             }
         }
+    }
+
+    @MainActor
+    private func startAfterPermission() async {
+        guard await fileAccess.check() else { return }
+        if FullDiskAccessAssistant.shared.window?.isVisible == true {
+            FullDiskAccessAssistant.shared.close()
+        }
+        await backend.start()
+        updates.start()
     }
 }
 
@@ -239,7 +258,7 @@ struct WorkspaceView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        for name in ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile", "getAppInfo", "checkForUpdates"] {
+        for name in ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile", "getAppInfo", "checkForUpdates", "openVoiceMemos", "requestVoiceMemosAccess", "openVoiceMemoPrivacy"] {
             configuration.userContentController.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: name)
         }
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -270,10 +289,25 @@ struct WorkspaceView: NSViewRepresentable {
             ["path": url.path, "name": url.lastPathComponent]
         }
 
+        private func probeVoiceMemoAccess(completion: @escaping (Bool) -> Void) {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let home = FileManager.default.homeDirectoryForCurrentUser
+                let folders = [
+                    "Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings",
+                    "Library/Containers/com.apple.VoiceMemos/Data/Library/Application Support/Recordings",
+                    "Library/Application Support/com.apple.voicememos/Recordings",
+                ]
+                let allowed = folders.contains { folder in
+                    (try? FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(folder).path)) != nil
+                }
+                DispatchQueue.main.async { completion(allowed) }
+            }
+        }
+
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage,
                                    replyHandler: @escaping (Any?, String?) -> Void) {
-            guard ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile", "getAppInfo", "checkForUpdates"].contains(message.name), message.frameInfo.isMainFrame,
+            guard ["chooseModelFolder", "getSaveLocation", "chooseSaveLocation", "revealTextFile", "getAppInfo", "checkForUpdates", "openVoiceMemos", "requestVoiceMemosAccess", "openVoiceMemoPrivacy"].contains(message.name), message.frameInfo.isMainFrame,
                   let url = message.frameInfo.request.url,
                   url.scheme == origin.scheme, url.host == origin.host, url.port == origin.port else {
                 replyHandler(nil, "이 앱에서만 폴더 설정을 사용할 수 있습니다.")
@@ -291,6 +325,27 @@ struct WorkspaceView: NSViewRepresentable {
                     return
                 }
                 UpdateController.shared.checkForUpdates()
+                replyHandler(true, nil)
+                return
+            }
+            if message.name == "openVoiceMemoPrivacy" {
+                let opened = FullDiskAccessAssistant.shared.present(relativeTo: message.webView?.window) { [weak webView = message.webView] in
+                    guard let webView else { return }
+                    webView.evaluateJavaScript("window.dispatchEvent(new Event('cosmoss-voice-memo-permission-return'));")
+                }
+                replyHandler(opened, nil)
+                return
+            }
+            if message.name == "requestVoiceMemosAccess" {
+                probeVoiceMemoAccess { allowed in replyHandler(allowed, nil) }
+                return
+            }
+            if message.name == "openVoiceMemos" {
+                guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.VoiceMemos") else {
+                    replyHandler(nil, "음성 메모 앱을 찾을 수 없습니다.")
+                    return
+                }
+                NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
                 replyHandler(true, nil)
                 return
             }
@@ -374,7 +429,7 @@ struct WorkspaceView: NSViewRepresentable {
         func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                       suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
             let panel = NSSavePanel()
-            if ["txt", "srt", "vtt", "md"].contains((suggestedFilename as NSString).pathExtension.lowercased()) {
+            if ["txt", "srt", "vtt", "md", "mossvoice"].contains((suggestedFilename as NSString).pathExtension.lowercased()) {
                 panel.directoryURL = textSaveDirectory
             }
             panel.nameFieldStringValue = suggestedFilename
@@ -392,11 +447,29 @@ struct WorkspaceView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+            guard frame.isMainFrame, let url = frame.request.url,
+                  url.scheme == origin.scheme, url.host == origin.host, url.port == origin.port else {
+                completionHandler(nil)
+                return
+            }
             let panel = NSOpenPanel()
             panel.canChooseDirectories = false
             panel.canChooseFiles = true
             panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.allowedContentTypes = [.audio, .movie, UTType(exportedAs: "io.github.hoonably.cosmoss.voiceprofile", conformingTo: .json)]
             panel.begin { result in completionHandler(result == .OK ? panel.urls : nil) }
+        }
+
+        func webView(_ webView: WKWebView, requestMediaCapturePermissionFor securityOrigin: WKSecurityOrigin,
+                     initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                     decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+            guard frame.isMainFrame, securityOrigin.protocol == origin.scheme,
+                  securityOrigin.host == origin.host, securityOrigin.port == origin.port,
+                  type == .microphone else {
+                decisionHandler(.deny)
+                return
+            }
+            decisionHandler(.prompt)
         }
     }
 }

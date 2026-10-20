@@ -50,6 +50,22 @@ class TextTests(unittest.TestCase):
         self.assertTrue(self.store.resolve_path(note['id'], note['source_path']).exists())
         self.assertFalse((self.root / 'other').exists())
 
+    def test_legacy_export_is_reused_without_rewriting_and_changed_files_are_preserved(self):
+        from src.text_files import transcript_content
+        self.folder.mkdir()
+        existing = self.folder / (self.note['title'] + '.txt')
+        existing.write_text(transcript_content(self.note))
+        original_mtime = existing.stat().st_mtime_ns
+        note = save_text(self.store, self.note['id'], str(self.folder), reuse_existing=True)
+        self.assertEqual(note['text_path'], str(existing))
+        self.assertEqual(existing.stat().st_mtime_ns, original_mtime)
+        self.assertEqual(len(list(self.folder.iterdir())), 1)
+        self.store.update(note['id'], text_path=None, text_hash=None)
+        existing.write_text('외부에서 수정한 파일')
+        saved = save_text(self.store, note['id'], str(self.folder), reuse_existing=True)
+        self.assertNotEqual(saved['text_path'], str(existing))
+        self.assertEqual(existing.read_text(), '외부에서 수정한 파일')
+
     def test_outside_edit_is_not_overwritten_or_committed(self):
         note = save_text(self.store, self.note['id'], str(self.folder))
         Path(note['text_path']).write_text('외부에서 수정한 내용')

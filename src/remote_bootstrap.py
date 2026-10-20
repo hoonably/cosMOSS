@@ -27,6 +27,10 @@ QUANTIZATION_VERSION = "bitsandbytes-0.48.1-accelerate-v1"
 JOB_FILES = ("src", "tmp", "cache", "__pycache__", "worker.log", "worker.pid", "worker.json")
 
 
+def job_cleanup_pending(root):
+    return any((root / name).exists() or (root / name).is_symlink() for name in JOB_FILES)
+
+
 def model_cache(device):
     if device.get("model_cache") or os.environ.get("HF_HUB_CACHE"):
         return Path(device.get("model_cache") or os.environ["HF_HUB_CACHE"]).expanduser()
@@ -289,6 +293,8 @@ def main():
         return
 
     if action in {"install", "inspect", "runtime"}:
+        if action == 'install':
+            emit("checking", hardware=hardware_info())
         if sys.version_info < (3, 10):
             raise RuntimeError("Python 3.10 or newer is required on the selected host")
         if action == "inspect":
@@ -299,8 +305,12 @@ def main():
             except RuntimeError as error:
                 details = {"model_ready": False, "model_error": str(error)}
             active = status()
+            details["active_gpu_uuid"] = None
+            # A crashed worker can leave private job files without a live PID.
+            details["worker_cleanup_pending"] = job_cleanup_pending(root)
             if isinstance(active, dict) and active.get("app") == "cosMOSS CUDA worker" and active.get("device_id") == device_id:
                 details["active_gpu_uuid"] = active.get("gpu_uuid")
+                details["worker_cleanup_pending"] = True
         else:
             pid_file = root / "worker.pid"
             if pid_file.is_file() and process_live(PROCESSES / pid_file.read_text().strip()):
@@ -345,7 +355,8 @@ def main():
     if sys.version_info < (3, 10):
         raise RuntimeError("Python 3.10 or newer is required on the selected host")
 
-    # Refuse to take over a GPU that is already running someone else's job.
+    # Busy/unknown GPUs require explicit confirmation in this job's snapshot.
+    # Other processes are never stopped; the worker only shares the selected GPU.
     import xml.etree.ElementTree as ET
     inventory = ET.fromstring(subprocess.check_output(["nvidia-smi", "-q", "-x"], timeout=10))
     selected = next((gpu for gpu in inventory.findall("gpu") if gpu.findtext("uuid") == device["gpu_uuid"]), None)
@@ -353,7 +364,7 @@ def main():
         raise RuntimeError("The selected GPU UUID is no longer present")
     processes = selected.find("processes")
     compute = [] if processes is None else [process for process in processes.findall("process_info") if process.findtext("type", "") != "G"]
-    if processes is None or (processes.text or "").strip() not in {"", "None"} or compute:
+    if (processes is None or (processes.text or "").strip() not in {"", "None"} or compute) and device.get("allow_busy_gpu") is not True:
         raise RuntimeError("The selected GPU has active or unknown processes; choose an idle GPU")
 
     claim_root(root, device)
@@ -375,7 +386,7 @@ def main():
             "COSMOSS_WORKER_TOKEN": device["api_key"],
             "PYTHONUNBUFFERED": "1", "COSMOSS_MODEL_OPTIONS": json.dumps(device.get("options", {})),
         })
-        emit("loading")
+        emit("loading", active_gpu_uuid=device["gpu_uuid"], worker_cleanup_pending=True)
         with (root / "worker.log").open("ab") as log:
             worker = subprocess.Popen(
                 [str(python), "-m", "uvicorn", "src.cuda_server:app", "--host", "127.0.0.1", "--port", str(port), "--workers", "1"],

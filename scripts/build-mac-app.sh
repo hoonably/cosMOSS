@@ -16,6 +16,8 @@ BIN_DIR="$(swift build --package-path "$PROJECT_DIR/macos" -c release --show-bin
 APP_DIR="${COSMOSS_APP_DIR:-$PROJECT_DIR/dist/cosMOSS.app}"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BIN_DIR/CosMOSS" "$APP_DIR/Contents/MacOS/CosMOSS"
+mkdir -p "$APP_DIR/Contents/Resources"
+cp "$PROJECT_DIR/macos/Assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP_DIR/Contents/Frameworks"
 SPARKLE_FRAMEWORK="$PROJECT_DIR/macos/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 ditto "$SPARKLE_FRAMEWORK" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
@@ -36,11 +38,17 @@ metadata = {
     'CFBundleDisplayName': 'cosMOSS',
     'CFBundleIdentifier': 'io.github.hoonably.cosmoss',
     'CFBundleExecutable': 'CosMOSS',
+    'CFBundleIconFile': 'AppIcon.icns',
     'CFBundlePackageType': 'APPL',
     'CFBundleShortVersionString': version,
     'CFBundleVersion': str(major * 1_000_000 + minor * 1_000 + patch),
     'LSMinimumSystemVersion': '13.0',
     'NSHighResolutionCapable': True,
+    'NSMicrophoneUsageDescription': '화자 목소리 프로필을 등록하기 위해 약 5초 동안 목소리를 녹음합니다.',
+    'UTExportedTypeDeclarations': [{'UTTypeIdentifier': 'io.github.hoonably.cosmoss.voiceprofile',
+        'UTTypeDescription': 'cosMOSS Voice Profile', 'UTTypeConformsTo': ['public.json'],
+        'UTTypeTagSpecification': {'public.filename-extension': ['mossvoice'],
+                                    'public.mime-type': 'application/vnd.cosmoss.voice+json'}}],
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
     'CosMOSSProjectRoot': str(root),
     'SUFeedURL': 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml',
@@ -53,7 +61,6 @@ metadata = {
 with (app / 'Contents/Info.plist').open('wb') as file:
     plistlib.dump(metadata, file)
 PY
-codesign --verify --deep --strict "$APP_DIR/Contents/Frameworks/Sparkle.framework"
-codesign --force --sign - "$APP_DIR"
+"$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/sign-mac-app.py" "$APP_DIR"
 echo "개발용 앱: $APP_DIR"
 echo "실행: open \"$APP_DIR\""

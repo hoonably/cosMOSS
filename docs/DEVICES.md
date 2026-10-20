@@ -51,12 +51,21 @@ processes may remain. It is not a scheduler reservation or capacity estimate.
 
 GPU UUID is the routing identity; the numeric index is a display aid. Ports are
 independent of GPU indexes. A per-job selection survives refreshes by UUID, but is
-cleared if that GPU disappears or becomes busy. Local/manual servers show no GPU
+cleared if that GPU disappears. Busy GPUs remain selectable, with an app-styled
+warning listing process names, PIDs, VRAM usage and the risk of memory exhaustion
+or slower processing. Cancel is focused by default. Confirming permits this job
+to share the GPU; it never kills existing processes. Local/manual servers show no GPU
 picker. Note creation probes again before consuming the upload and pins the UUID
-and observed index in the private job snapshot. Bootstrap checks once more at launch.
+and observed index in the private job snapshot. Busy/unknown states require a
+confirmation token bound to the GPU UUID and observed process list. Changed
+processes produce another warning before the upload is consumed. The override
+is stored only in that job's snapshot, never in device settings. Bootstrap checks
+once more at launch and permits occupied GPUs only for a confirmed job.
 
-SSH is noninteractive (`BatchMode=yes`), requires an already trusted host key,
-disables forwarding for probes, and does not enable agent forwarding. Unsupported
+SSH is noninteractive (`BatchMode=yes`), preserves each alias's host-key and
+known-hosts policy from SSH config, disables forwarding for probes, and does not
+enable agent forwarding. This includes local ports forwarded to Kubernetes pods.
+With OpenSSH's default host-key policy, trust a new host in Terminal first. Unsupported
 hosts without nvidia-smi can still be used with a separately configured MLX or
 compatible server, but not the managed CUDA mode.
 
@@ -79,6 +88,11 @@ and model without selecting, loading or probing a GPU. Existing installations
 are reused; the default model location is the SSH user's Hugging Face cache.
 Model settings can later select a different cache or an existing model folder
 using an absolute or `~/...` path on that host.
+Failed initial setup can be removed from the local device list even while the
+host is offline. Once a transcription launch is attempted, a durable cleanup
+flag preserves the requirement to stop that device's owned worker before removal.
+Only a running/loading GPU or a pending transcription cleanup shows a cleanup
+button; setup and connection errors alone never show “GPU 해제”.
 Opening the dialog reads paths without installing packages or loading a GPU.
 The app sends `runtime_environment.py`, `remote_bootstrap.py`, `model_cache.py`,
 and `model_download.py` to the selected host. Python **venvs**
@@ -198,7 +212,7 @@ Unit/integration tests exercise parsing, registry persistence, credentials, targ
 snapshots, GPU identity checks, bootstrap process arguments and stop ownership with
 mock GPU/SSH responses. Cache tests cover environment precedence, offline reuse,
 prefetch-on-miss and partial snapshots. `tests/ui_smoke.py` checks host-only
-registration, model readiness, per-job GPU selection, busy GPU rejection,
+registration, model readiness, per-job GPU selection, explicit busy-GPU confirmation,
 submitted UUID and polling cleanup in real Chromium/WebKit browsers with
 fixture SSH responses. Actual nvidia-smi inventory was also read from a 6x RTX 3090
 host. Live package installation, model downloads and GPU inference have not been

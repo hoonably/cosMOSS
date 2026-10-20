@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import tempfile
 import unittest
 import urllib.error
@@ -14,7 +15,7 @@ import httpx
 
 from src.config import TranscriptionConfig
 from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
-from src.ssh_devices import SSHError, discover_hosts, parse_gpu_xml, probe_host, ssh_arguments
+from src.ssh_devices import SSHError, discover_hosts, parse_gpu_xml, probe_host, ssh_arguments, gpu_warning_token
 
 
 GPU_UUID = "GPU-11111111-2222-3333-4444-555555555555"
@@ -35,10 +36,11 @@ class SSHDiscoveryTests(unittest.TestCase):
             self.assertEqual(discover_hosts(root / "config"), ["gpu-a", "gpu-b", "gpu-c", "gpu-d"])
             self.assertFalse((root / "should-not-run").exists())
 
-    def test_ssh_uses_strict_noninteractive_arguments(self):
+    def test_ssh_is_noninteractive_and_preserves_configured_host_key_policy(self):
         arguments = ssh_arguments("gpu-a")
-        for option in ["BatchMode=yes", "StrictHostKeyChecking=yes", "ControlPath=none", "ForwardAgent=no"]:
+        for option in ["BatchMode=yes", "ControlPath=none", "ForwardAgent=no"]:
             self.assertIn(option, arguments)
+        self.assertFalse(any('StrictHostKeyChecking=' in option or 'UserKnownHostsFile=' in option for option in arguments))
         with self.assertRaises(SSHError):
             ssh_arguments("-oProxyCommand=malicious")
 
@@ -50,6 +52,18 @@ class SSHDiscoveryTests(unittest.TestCase):
         gpu = parse_gpu_xml(busy)[0]
         self.assertFalse(gpu["idle_candidate"])
         self.assertEqual(gpu["processes"][0]["pid"], "42")
+
+    @unittest.skipUnless(shutil.which('ssh'), 'OpenSSH required')
+    def test_port_forward_alias_retains_explicit_known_hosts_policy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / 'config'
+            config.write_text('Host pod\n  HostName 127.0.0.1\n  Port 2222\n  User hoon\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n')
+            result = subprocess.run(ssh_arguments('pod') + ['-F', str(config), '-G', 'pod'], capture_output=True, text=True, check=True)
+            settings = dict(line.split(' ', 1) for line in result.stdout.splitlines())
+            self.assertEqual(settings['hostname'], '127.0.0.1')
+            self.assertEqual(settings['port'], '2222')
+            self.assertEqual(settings['stricthostkeychecking'], 'false')
+            self.assertEqual(settings['userknownhostsfile'], '/dev/null')
 
     def test_unknown_metrics_and_processes_are_never_reported_idle(self):
         for xml in [GPU_XML.replace("0 %", "N/A"), GPU_XML.replace("<processes/>", "<processes>N/A</processes>"),
@@ -132,6 +146,8 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
 
         async def emulate_worker(device, action):
             self.workers.states[device["id"]] = {"phase": {"prepare": "ready", "stop": "stopped"}.get(action, "installed"), "action": action}
+            if action == 'stop':
+                self.main.remote_worker_stopped(device['id'])
 
         self.worker_run = self.enterContext(patch.object(self.workers, "run", new=AsyncMock(side_effect=emulate_worker)))
         self.probe = self.enterContext(patch.object(main, "probe_host", new=AsyncMock(return_value={"reachable": True, "gpus": parse_gpu_xml(GPU_XML)})))
@@ -206,7 +222,7 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.workers, "options", new=AsyncMock(return_value={"hardware": hardware})):
             response = await self.client.get(f"/api/devices/{device['id']}/model")
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual(response.json()["options"]["chunk_minutes"], 60)
+            self.assertEqual(response.json()["options"]["chunk_minutes"], 90)
             self.devices.configure(device['id'], options={"chunk_minutes": 20})
             response = await self.client.get(f"/api/devices/{device['id']}/model")
             self.assertEqual(response.json()["options"]["chunk_minutes"], 20)
@@ -217,7 +233,7 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         large = {**small, "uuid": "GPU-aaaaaaaa-2222-3333-4444-555555555555", "index": 1,
                  "memory_total_mib": 96 * 1024}
         self.probe.return_value["gpus"] = [small, large]
-        for gpu, expected in ((large, 60), (small, 30)):
+        for gpu, expected in ((large, 90), (small, 30)):
             response = await self.client.post("/api/notes", data={"device_id": device['id'], "gpu_uuid": gpu['uuid']},
                                               files={"file": ("voice.wav", b"audio", "audio/wav")})
             self.assertEqual(response.status_code, 202, response.text)
@@ -231,6 +247,61 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
                                               files={"file": ("voice.wav", b"audio", "audio/wav")})
             self.assertEqual(response.status_code, 202, response.text)
             self.assertEqual(self.store.get(response.json()['id'])['chunk_seconds'], expected * 60)
+
+    async def test_prepared_note_chunk_override_is_validated_and_does_not_change_device_defaults(self):
+        remote = await self.add()
+        for index, device in enumerate((self.devices.get('local'), remote)):
+            self.devices.configure(device['id'], options={'chunk_minutes':60})
+            upload_id = str(index + 1) * 32
+            self.store.create_upload({'id':upload_id, 'original_filename':'recording.m4a',
+                                     'media_type':'audio/mp4', 'source_path':str(self.store.upload_directory(upload_id) / 'source.m4a'),
+                                     'status':'ready', 'duration':3660})
+            values = {'device_id':device['id'], 'upload_id':upload_id}
+            if device['backend'] == 'cuda':
+                values['gpu_uuid'] = self.probe.return_value['gpus'][0]['uuid']
+            for invalid in ('0', '91', 'nan', 'inf'):
+                response = await self.client.post('/api/notes', data={**values, 'chunk_minutes':invalid})
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.store.get_upload(upload_id)['status'], 'ready')
+            response = await self.client.post('/api/notes', data={**values, 'chunk_minutes':'30.5'})
+            self.assertEqual(response.status_code, 202, response.text)
+            note = self.store.get(response.json()['id'])
+            self.assertEqual(note['chunk_seconds'], 30.5 * 60)
+            self.assertEqual(note['duration'], 3660)
+            self.assertEqual(self.devices.get(device['id'])['options']['chunk_minutes'], 60)
+
+    async def test_prepared_note_count_divides_the_recording_exactly_on_local_and_remote(self):
+        remote = await self.add()
+        for index, device in enumerate((self.devices.get('local'), remote)):
+            self.devices.configure(device['id'], options={'chunk_minutes':60})
+            for count in (1, 2, 3, 7):
+                upload_id = f'{index}{count}' * 16
+                self.store.create_upload({'id':upload_id, 'original_filename':'recording.m4a',
+                                         'media_type':'audio/mp4', 'source_path':str(self.store.upload_directory(upload_id) / 'source.m4a'),
+                                         'status':'ready', 'duration':3660.123})
+                values = {'device_id':device['id'], 'upload_id':upload_id, 'chunk_count':str(count)}
+                if device['backend'] == 'cuda':
+                    values['gpu_uuid'] = self.probe.return_value['gpus'][0]['uuid']
+                for invalid in ({'chunk_count':'0'}, {'chunk_count':'1001'}, {'chunk_count':'1.5'}, {'chunk_minutes':'30'}):
+                    response = await self.client.post('/api/notes', data={**values, **invalid})
+                    self.assertEqual(response.status_code, 422, response.text)
+                    self.assertEqual(self.store.get_upload(upload_id)['status'], 'ready')
+                response = await self.client.post('/api/notes', data=values)
+                self.assertEqual(response.status_code, 202, response.text)
+                note = self.store.get(response.json()['id'])
+                self.assertAlmostEqual(note['chunk_seconds'], 3660.123 / count)
+                self.assertEqual(note['chunk_count'], count)
+                self.assertEqual(self.devices.get(device['id'])['options']['chunk_minutes'], 60)
+
+    async def test_count_limits_keep_prepared_recordings_available(self):
+        for index, duration, count in ((1, 10801, 2), (2, 3, 4), (3, None, 2)):
+            upload_id = str(index) * 32
+            self.store.create_upload({'id':upload_id, 'original_filename':'recording.m4a',
+                                     'media_type':'audio/mp4', 'source_path':str(self.store.upload_directory(upload_id) / 'source.m4a'),
+                                     'status':'ready', 'duration':duration})
+            response = await self.client.post('/api/notes', data={'upload_id':upload_id, 'chunk_count':str(count)})
+            self.assertEqual(response.status_code, 422, response.text)
+            self.assertEqual(self.store.get_upload(upload_id)['status'], 'ready')
 
     async def test_local_environment_can_be_checked_without_model_preparation(self):
         with patch.object(self.main.LOCAL_MODELS, 'environment', new=AsyncMock(return_value={'ready': True})), \
@@ -334,6 +405,7 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         files = {"file": ("voice.wav", b"audio", "audio/wav")}
         response = await self.client.post("/api/notes", data={"device_id": device["id"]}, files=files)
         self.assertEqual(response.status_code, 400)
+
         other_uuid = "GPU-aaaaaaaa-2222-3333-4444-555555555555"
         self.probe.return_value["gpus"].append({**parse_gpu_xml(GPU_XML)[0], "uuid": other_uuid, "index": 2})
         for gpu_uuid, index in [(GPU_UUID, 0), (other_uuid, 2)]:
@@ -343,6 +415,22 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((snapshot["gpu_uuid"], snapshot["gpu_index"]), (gpu_uuid, index))
         self.assertNotIn("gpu_uuid", self.devices.get(device["id"]))
 
+    async def test_failed_initial_setup_can_be_removed_without_connecting_or_stopping_a_gpu(self):
+        device = await self.add()
+        self.workers.states[device['id']] = {'phase': 'error', 'action': 'install', 'error': 'SSH unavailable'}
+        with patch.object(self.workers, 'perform', new=AsyncMock(side_effect=SSHError('offline'))) as stop:
+            response = await self.client.delete(f"/api/devices/{device['id']}")
+        self.assertEqual(response.status_code, 204)
+        stop.assert_not_awaited()
+
+    async def test_possible_live_job_must_be_cleaned_before_removal(self):
+        device = await self.add()
+        self.devices.configure(device['id'], worker_cleanup_pending=True)
+        with patch.object(self.workers, 'perform', new=AsyncMock(side_effect=SSHError('offline'))):
+            response = await self.client.delete(f"/api/devices/{device['id']}")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.devices.get(device['id'])['host'], 'gpu-a')
+
     async def test_busy_or_missing_gpu_is_rejected_without_consuming_audio(self):
         device = await self.add()
         for gpus in [[], [{**parse_gpu_xml(GPU_XML)[0], "idle_candidate": False}]]:
@@ -350,6 +438,36 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.post("/api/notes", data={"device_id": device["id"], "gpu_uuid": GPU_UUID}, files={"file": ("voice.wav", b"audio")})
             self.assertEqual(response.status_code, 409)
         self.assertEqual(self.store.list(), [])
+
+    async def test_busy_gpu_requires_confirmation_for_current_processes_and_only_this_job(self):
+        device = await self.add()
+        gpu = {**parse_gpu_xml(GPU_XML)[0], 'idle_candidate': False,
+               'processes': [{'pid': '42', 'name': 'dummy.py', 'type': 'C', 'memory_mib': 2000}]}
+        self.probe.return_value['gpus'] = [gpu]
+        data = {'device_id': device['id'], 'gpu_uuid': GPU_UUID}
+        files = {'file': ('voice.wav', b'audio')}
+        response = await self.client.post('/api/notes', data=data, files=files)
+        self.assertEqual(response.status_code, 409)
+        detail = response.json()['detail']
+        self.assertEqual(detail['code'], 'gpu_confirmation_required')
+        self.assertEqual(detail['gpu']['processes'][0]['name'], 'dummy.py')
+        token = detail['gpu']['busy_confirmation']
+        response = await self.client.post('/api/notes', data={**data, 'gpu_confirmation': '확인'}, files=files)
+        self.assertEqual(response.status_code, 409)
+        gpu['processes'][0]['pid'] = '43'
+        response = await self.client.post('/api/notes', data={**data, 'gpu_confirmation': token}, files=files)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.store.list(), [])
+        response = await self.client.post('/api/notes', data={**data, 'gpu_confirmation': gpu_warning_token(gpu)}, files=files)
+        self.assertEqual(response.status_code, 202)
+        snapshot = json.loads(self.store.get(response.json()['id'])['device_snapshot_json'])
+        self.assertTrue(snapshot['allow_busy_gpu'])
+        self.assertNotIn('allow_busy_gpu', self.devices.get(device['id']))
+        response = await self.client.post('/api/notes', data=data, files=files)
+        self.assertEqual(response.status_code, 409, 'Confirmation leaked into a subsequent job')
+        self.probe.return_value['gpus'] = []
+        response = await self.client.post('/api/notes', data={**data, 'gpu_confirmation': token}, files=files)
+        self.assertEqual(response.status_code, 409, 'Confirmation bypassed missing-GPU validation')
 
     async def test_gpu_inventory_is_scoped_to_registered_device(self):
         device = await self.add()
@@ -458,8 +576,18 @@ class BootstrapTests(unittest.TestCase):
                 "model": "moss", "api_key": "private-test-token"}
 
     def test_launch_masks_the_physical_gpu_and_binds_loopback(self):
+        self._assert_launch(allow_busy=False)
+
+    def test_confirmed_busy_gpu_launches_without_stopping_existing_processes(self):
+        self._assert_launch(allow_busy=True)
+
+    def _assert_launch(self, allow_busy):
         from src import remote_bootstrap as bootstrap
         device = self.spec()
+        xml = GPU_XML
+        if allow_busy:
+            device['allow_busy_gpu'] = True
+            xml = xml.replace('<processes/>', '<processes><process_info><type>C</type><pid>42</pid><process_name>dummy.py</process_name></process_info></processes>')
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / ".local/share/cosmoss/workers" / device["id"]
             (root / ".venv/bin").mkdir(parents=True)
@@ -476,7 +604,7 @@ class BootstrapTests(unittest.TestCase):
                  patch.object(bootstrap.sys, "stdout", io.StringIO()), \
                  patch.object(bootstrap.urllib.request, "urlopen", side_effect=[urllib.error.URLError("not running"), io.BytesIO(json.dumps(identity).encode())]), \
                  patch.object(bootstrap.socket, "socket", return_value=fake_socket), \
-                 patch.object(bootstrap.subprocess, "check_output", return_value=GPU_XML.encode()), \
+                 patch.object(bootstrap.subprocess, "check_output", return_value=xml.encode()), \
                  patch.object(bootstrap.subprocess, "run") as install, \
                  patch.object(bootstrap, "prepare_model", return_value={"model_path": "/cache/model", "model_cache": "/cache"}), \
                  patch.object(bootstrap.subprocess, "Popen", return_value=worker) as launch:
@@ -506,7 +634,7 @@ class BootstrapTests(unittest.TestCase):
             bootstrap.main()
         launch.assert_not_called()
 
-    def test_registration_install_does_not_probe_or_load_any_gpu(self):
+    def test_registration_install_reads_vram_without_loading_any_gpu(self):
         from src import remote_bootstrap as bootstrap
         device = self.spec()
         del device["gpu_uuid"]
@@ -517,10 +645,10 @@ class BootstrapTests(unittest.TestCase):
                  patch.object(bootstrap.sys, "stdout", output), \
                  patch.object(bootstrap, "prepare_runtime", return_value=Path(temporary) / "python"), \
                  patch.object(bootstrap, "prepare_model", return_value={"model_path": "/cache/model", "model_cache": "/cache", "reused": True}), \
-                 patch.object(bootstrap.subprocess, "check_output") as gpu_probe, \
+                 patch.object(bootstrap.subprocess, "check_output", return_value=GPU_XML.encode()) as gpu_probe, \
                  patch.object(bootstrap.subprocess, "Popen") as launch:
                 bootstrap.main()
-            gpu_probe.assert_not_called()
+            gpu_probe.assert_called_once_with(['nvidia-smi', '-q', '-x'], timeout=8)
             launch.assert_not_called()
             self.assertIn('"phase": "installed"', output.getvalue())
             self.assertIn('"reused": true', output.getvalue())

@@ -19,6 +19,13 @@ DEFAULT_OPTIONS = dict(chunk_minutes=30, bridge_seconds=30, max_tokens=32768,
                        kv_bits=8, prefill_step_size=512, precision='auto', attention='sdpa', use_cache=True)
 
 
+def default_chunk_minutes(backend, memory_gib=None):
+    # Leave room for driver-reserved VRAM on nominal 48/80 GB cards.
+    if backend != 'cuda' or memory_gib is None:
+        return 30
+    return 90 if memory_gib >= 72 else 60 if memory_gib >= 40 else 30
+
+
 def model_selection(backend, key='', repo=''):
     if key == 'custom':
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}', repo) or '--' in repo or '..' in repo or any(part.endswith(('.', '-')) for part in repo.split('/')):
@@ -37,19 +44,16 @@ def recommendation(backend, memory_gib=None):
     if backend == 'mlx':
         low = memory_gib is not None and memory_gib < 16
         key = 'mlx-4bit' if low else 'mlx-8bit'
-        options.update(chunk_minutes=10 if low else 30, prefill_step_size=256 if low else 512)
+        options.update(prefill_step_size=256 if low else 512)
     else:
         key = 'cuda-original'
         if memory_gib is not None and memory_gib < 8:
             key = 'cuda-4bit'
-            options.update(chunk_minutes=5, precision='int4')
+            options.update(precision='int4')
         elif memory_gib is not None and memory_gib < 12:
             key = 'cuda-8bit'
-            options.update(chunk_minutes=10, precision='int8')
-        elif memory_gib is not None and memory_gib < 24:
-            options.update(chunk_minutes=15)
-        elif memory_gib is not None and memory_gib >= 48:
-            options.update(chunk_minutes=60)
+            options.update(precision='int8')
+    options['chunk_minutes'] = default_chunk_minutes(backend, memory_gib)
     return dict(model_key=key, options=options)
 
 

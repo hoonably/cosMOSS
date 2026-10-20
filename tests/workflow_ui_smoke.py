@@ -74,11 +74,28 @@ async def main():
             return await route.fulfill(json=note)
         await page.route('**/api/notes/*', notes)
         await page.route('**/api/notes/*/**', notes)
-        await page.route('**/api/text-library**', lambda route: route.fulfill(json=[]))
+        await page.route('**/api/text-library**', lambda route: route.fulfill(json=[{
+            'id': 'txt_' + 'd' * 32, 'title': note['title'], 'status': 'done', 'source_type': 'text_file',
+            'text_path': '/Users/tester/Downloads/cosMOSS-회의-eeeeeeee.txt', 'output_format': 'txt',
+            'created_at': note['created_at'], 'updated_at': note['created_at'],
+        }]))
         await page.goto(base)
+        await page.locator('.note-item').wait_for()
+        assert await page.locator('.note-item').count() == 1, 'Recording and result file appeared twice'
+        assert await page.locator('.note-status').inner_text() == 'TXT'
+        assert len(calls) == 1 and calls[0][0] == 'text-file', 'Legacy result was not automatically linked'
+        calls.clear()
         await page.locator('.note-item').click()
-        await page.locator('#editor').wait_for(state='visible')
+        try:
+            await page.locator('#editor').wait_for(state='visible', timeout=10000)
+        except Exception as error:
+            raise AssertionError({'toast': await page.locator('#toast').inner_text(), 'errors': errors,
+                                  'current': await page.evaluate('state.current?.id')}) from error
         assert await page.locator('#note-dialog').is_visible()
+        assert await page.locator('#save-txt, #export-toggle').count() == 0
+        assert await page.locator('#retry-result-save').is_hidden()
+        assert await page.locator('.player-card').is_hidden()
+        assert '.m4a' not in await page.locator('#note-meta').inner_text()
         assert await page.locator('#note-dialog').evaluate('el=>el.clientWidth>=1000')
         assert await page.locator('#welcome').is_visible(), 'Device stage disappeared'
         assert await page.locator('.summary-panel').is_visible()

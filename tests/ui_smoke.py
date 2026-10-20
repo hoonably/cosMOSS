@@ -28,6 +28,7 @@ async def main():
     engine = sys.argv[3] if len(sys.argv) > 3 else "chromium"
     calls = 0
     busy = False
+    busy_revision = 42
     worker_polls = 0
     remote_prepared = []
     remote_active = False
@@ -40,6 +41,10 @@ async def main():
     host_requests = 0
     local_setup = {"phase": "idle", "source": "cache", "model_id": "vanch007/mlx-MOSS-Transcribe-Diarize-8bit", "cache_dir": "/Users/tester/.cache/huggingface/hub", "suggested_path": ""}
     local_prepared = []
+    memo_imports = []
+    memo_lists = 0
+    memo = {'id': 'e' * 64, 'version': 'f' * 64, 'title': '음성 메모 연구 미팅',
+            'created_at': '2026-10-16T01:53:50+00:00', 'duration': 65, 'size': 1000, 'available': True}
     async with async_playwright() as playwright:
         kwargs = {"executable_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"} if engine == "chromium" else {}
         browser = await getattr(playwright, engine).launch(headless=True, **kwargs)
@@ -133,6 +138,9 @@ async def main():
         await page.add_init_script("""
             const readLocation = () => JSON.parse(localStorage.getItem('test-save-location') || '{"path":"/Users/tester/Downloads","name":"Downloads"}');
             window.webkit = {messageHandlers: {
+                openVoiceMemos: {postMessage: async () => true},
+                openVoiceMemoPrivacy: {postMessage: async () => { window.__openedMemoPrivacy = true; return true; }},
+                requestVoiceMemosAccess: {postMessage: async () => { window.__memoAccessChecks = (window.__memoAccessChecks || 0) + 1; return Boolean(window.__memoAccessAllowed); }},
                 chooseModelFolder: {postMessage: async () => '/Users/tester/Models/moss mlx'},
                 getSaveLocation: {postMessage: async () => readLocation()},
                 chooseSaveLocation: {postMessage: async () => {
@@ -144,17 +152,23 @@ async def main():
             }};
         """)
 
+        def occupied_gpu():
+            return {"index": 2, "uuid": GPU_OTHER, "name": "NVIDIA GeForce RTX 3090", "idle_candidate": False,
+                    "memory_used_mib": 12000, "memory_total_mib": 24576, "memory_free_mib": 12576,
+                    "utilization_percent": 90, "process_info_known": True, "busy_confirmation": f"busy-{busy_revision}",
+                    "processes": [{"pid": str(busy_revision), "name": "gpu_dummy.py", "type": "C", "memory_mib": 12000}]}
+
         async def probe(route):
             nonlocal calls
             calls += 1
             gpu = {"index": 0, "uuid": GPU_UUID, "name": "NVIDIA GeForce RTX 3090", "memory_free_mib": 23000,
-                   "memory_total_mib": 24576, "utilization_percent": min(calls, 4), "processes": [],
+                   "memory_used_mib": 4, "memory_total_mib": 24576, "utilization_percent": min(calls, 4), "processes": [],
                    "process_info_known": True, "idle_candidate": True}
             await route.fulfill(json={
                 "host": "lab-3090", "reachable": True, "gpu_supported": True,
                 "checked_at": datetime.now(timezone.utc).isoformat(), "message": "현재 상태이며 GPU 예약이 아닙니다.",
-                "gpus": [gpu, {**gpu, "index": 2, "uuid": GPU_OTHER, "idle_candidate": not busy,
-                                "utilization_percent": 90 if busy else 0}],
+                "gpus": [gpu, occupied_gpu() if busy else {**gpu, "index": 2, "uuid": GPU_OTHER,
+                                                         "memory_used_mib": 0, "utilization_percent": 0}],
             })
 
         async def uploads(route):
@@ -165,7 +179,10 @@ async def main():
             if route.request.method == "POST":
                 raw = b"Content-Type: " + route.request.headers["content-type"].encode() + b"\r\n\r\n" + route.request.post_data_buffer
                 form = BytesParser(policy=default).parsebytes(raw)
-                submitted = {part.get_param("name", header="content-disposition"): part.get_payload(decode=True).decode() for part in form.iter_parts()}
+                values = {part.get_param("name", header="content-disposition"): part.get_payload(decode=True).decode() for part in form.iter_parts()}
+                if busy and values.get('gpu_uuid') == GPU_OTHER and values.get('gpu_confirmation') != f'busy-{busy_revision}':
+                    return await route.fulfill(status=409, json={'detail': {'code': 'gpu_confirmation_required', 'message': 'GPU 사용 확인 필요', 'gpu': occupied_gpu()}})
+                submitted = values
                 note = {"id": "d" * 32, "title": "회의", "original_filename": "voice.wav", "status": "queued", "created_at": datetime.now(timezone.utc).isoformat(),
                         "device_id": "b" * 32, "device_name": "lab-3090 · GPU #2", "segments": [], "speaker_names": {}, "duration": 1,
                         "chunk_seconds": 1800, "progress_phase": "queued"}
@@ -176,6 +193,19 @@ async def main():
 
         await page.route("**/api/devices/*/gpus", probe)
         await page.route("**/api/uploads", uploads)
+        async def list_memos(route):
+            nonlocal memo_lists
+            memo_lists += 1
+            allowed = await page.evaluate('Boolean(window.__memoAccessAllowed)')
+            await route.fulfill(json={
+                'recordings': [memo, {**memo, 'id': 'd' * 64, 'title': 'iCloud 녹음', 'available': False}] if allowed else [],
+                'permission_required': not allowed, 'metadata_unavailable': False,
+            })
+        await page.route('**/api/voice-memos', list_memos)
+        async def import_memo(route):
+            memo_imports.append(route.request.post_data_json)
+            await uploads(route)
+        await page.route('**/api/voice-memos/import', import_memo)
         await page.route("**/api/uploads/*", lambda route: route.fulfill(status=204))
         await page.route("**/api/notes", note_list)
         await page.route("**/api/notes/" + "d" * 32, lambda route: route.fulfill(json=notes[0]))
@@ -314,41 +344,118 @@ async def main():
         assert "gpu_uuid" not in added and "gpu_index" not in added
         assert added["model_cache"] == "" and added["remote_port"] == 18400
         assert calls == 0, "Model preparation must not touch GPUs"
+        presentations = await page.evaluate('''() => {
+            const id = 'b'.repeat(32);
+            const previous = state.workerStates[id];
+            const result = [];
+            for (const worker of [
+                {phase:'error', action:'install'},
+                {phase:'interrupted', action:'install'},
+                {phase:'error', action:'prepare', worker_cleanup_pending:true},
+                {phase:'ready', action:'prepare', active_gpu_uuid:'GPU-test'},
+            ]) {
+                state.workerStates[id] = worker;
+                renderDevices();
+                result.push(document.querySelector(`[data-device-id="${id}"] [data-device-action="stop"]`)?.textContent || '');
+            }
+            state.workerStates[id] = previous;
+            renderDevices();
+            return result;
+        }''')
+        assert presentations == ['', '', '작업 정리', 'GPU 해제'], presentations
         if screenshot:
             await page.locator(".device-panel").screenshot(path=screenshot.replace(".png", "-devices.png"))
         await page.locator('[data-device-id="' + "b" * 32 + '"] .use-device').click()
         assert await page.evaluate('state.executionDeviceId') == 'b' * 32
         await choose_option(page, '#output-format', 'srt')
         await page.locator('input[name="selected-gpu"]').first.wait_for()
+        assert await page.locator('.gpu-table th').nth(1).inner_text() == '사용 / 전체 VRAM'
+        assert await page.locator('.gpu-table tbody tr').nth(0).locator('td').nth(1).inner_text() == '4 MiB / 24576 MiB'
+        assert await page.locator('.gpu-table tbody tr').nth(1).locator('td').nth(1).inner_text() == '0 MiB / 24576 MiB'
         data = io.BytesIO()
         with wave.open(data, "wb") as audio:
             audio.setnchannels(1)
             audio.setsampwidth(2)
             audio.setframerate(16000)
             audio.writeframes(b"\0\0" * 16000)
-        await page.set_input_files("#audio-file", {"name": "voice.wav", "mimeType": "audio/wav", "buffer": data.getvalue()})
+        left = await page.locator('#drop-zone').bounding_box()
+        right = await page.locator('#choose-voice-memo').bounding_box()
+        assert right['x'] > left['x'] and abs(left['y'] - right['y']) < 1
+        assert abs(left['width'] - right['width']) < 1 and abs(left['height'] - right['height']) < 1
+        await page.click('#choose-voice-memo')
+        await page.locator('#voice-memo-access').wait_for(state='visible')
+        assert not memo_imports
+        await page.click('#voice-memo-privacy')
+        assert await page.evaluate('window.__openedMemoPrivacy')
+        assert await page.locator('#reveal-current-app').count() == 0
+        assert await page.evaluate('window.__memoAccessChecks >= 1')
+        assert await page.locator('.voice-memo-empty').count() == 0
+        await page.click('#refresh-voice-memos')
+        await page.wait_for_function("document.querySelector('#voice-memo-status').textContent.includes('접근을 차단')")
+        assert memo_lists == 2 and not memo_imports
+        await page.evaluate("window.__memoAccessAllowed = true; window.dispatchEvent(new Event('cosmoss-voice-memo-permission-return'));")
+        await page.locator('.voice-memo-item').first.wait_for()
+        assert not memo_imports, 'Opening the picker imported a recording'
+        assert await page.locator('#import-voice-memo').is_disabled()
+        assert await page.locator('.voice-memo-item input:disabled').count() == 1
+        await page.fill('#voice-memo-search', '없는 녹음')
+        assert await page.locator('.voice-memo-empty').inner_text() == '검색 결과가 없습니다.'
+        await page.fill('#voice-memo-search', '연구')
+        await page.locator('.voice-memo-item').click()
+        assert not memo_imports, 'Selecting a row imported before confirmation'
+        if screenshot:
+            await page.locator('#voice-memo-dialog').screenshot(path=screenshot.replace('.png', '-memo-picker.png'))
+        await page.click('#close-voice-memo')
+        assert await page.evaluate('state.uploadPreparation') is None, 'Cancelling the picker started preparation'
+        await page.click('#choose-voice-memo')
+        await page.locator('.voice-memo-item').first.click()
+        await page.click('#import-voice-memo')
         await page.get_by_text("전처리 완료 · 전사를 시작할 수 있어요", exact=True).wait_for()
+        assert memo_imports == [{'id': memo['id'], 'version': memo['version']}]
+        assert await page.locator('#audio-file').evaluate('el => !el.required')
         assert await page.locator(".submit-upload").is_disabled()
         await page.check(f'input[value="{GPU_OTHER}"]')
         assert await page.locator(".submit-upload").is_enabled()
-        await page.wait_for_function("document.querySelector('#gpu-probe-result').textContent.includes('2%')", timeout=10000)
+        async with page.expect_response('**/api/devices/*/gpus'):
+            await page.click('#probe-ssh-host')
         assert await page.locator(f'input[value="{GPU_OTHER}"]').is_checked(), "Refresh lost job GPU selection"
         busy = True
         await page.click("#probe-ssh-host")
-        await page.locator(f'input[value="{GPU_OTHER}"]:disabled').wait_for()
-        assert await page.locator(".submit-upload").is_disabled(), "Busy GPU remained selectable"
-        busy = False
-        await page.click("#probe-ssh-host")
-        await page.locator(f'input[value="{GPU_OTHER}"]:enabled').wait_for()
+        await page.wait_for_function("document.querySelector('#gpu-probe-result').textContent.includes('사용 중')")
+        assert await page.locator(f'input[value="{GPU_OTHER}"]').is_enabled()
+        assert await page.locator(f'input[value="{GPU_OTHER}"]').is_checked()
+        await page.click('.submit-upload')
+        await page.locator('#gpu-warning-dialog').wait_for(state='visible')
+        assert 'gpu_dummy.py' in await page.locator('#gpu-warning-processes').inner_text()
+        assert '12000 MiB' in await page.locator('#gpu-warning-description').inner_text()
+        assert await page.locator('#cancel-gpu-warning').evaluate('el => document.activeElement === el')
+        await page.click('#cancel-gpu-warning')
+        await page.locator('.submit-upload:enabled').wait_for()
+        assert not notes and not submitted, 'Cancelling the warning created a note'
+        await page.check(f'input[value="{GPU_UUID}"]')
         await page.check(f'input[value="{GPU_OTHER}"]')
+        await page.locator('#gpu-warning-dialog').wait_for(state='visible')
+        await page.keyboard.press('Escape')
+        await page.locator(f'input[value="{GPU_UUID}"]:checked').wait_for()
+        await page.check(f'input[value="{GPU_OTHER}"]')
+        await page.locator('#gpu-warning-dialog').wait_for(state='visible')
+        if screenshot:
+            await page.locator('#gpu-warning-dialog').screenshot(path=screenshot.replace('.png', '-gpu-warning.png'))
+        await page.click('#confirm-gpu-warning')
+        await page.locator(f'input[value="{GPU_OTHER}"]:checked').wait_for()
         if screenshot:
             await page.locator("#upload-dialog").screenshot(path=screenshot)
+        busy_revision = 43
         await page.click(".submit-upload")
+        await page.locator('#gpu-warning-dialog').wait_for(state='visible')
+        assert 'PID 43' in await page.locator('#gpu-warning-processes').inner_text(), 'Changed processes were not reconfirmed'
+        await page.click('#confirm-gpu-warning')
         await page.locator("#upload-dialog").wait_for(state="hidden")
         assert submitted["device_id"] == "b" * 32 and submitted["gpu_uuid"] == GPU_OTHER, submitted
+        assert submitted['gpu_confirmation'] == 'busy-43'
         assert "selected-gpu" not in submitted
         assert submitted['output_format'] == 'srt'
-        assert 'chunk_minutes' not in submitted, 'Upload overrode the device chunk setting'
+        assert submitted['chunk_count'] == '1' and 'chunk_minutes' not in submitted, 'Notes should submit only an equal-sized chunk count'
         before = calls
         await asyncio.sleep(3.2)
         assert calls == before, "GPU polling continued after upload close"
@@ -361,6 +468,23 @@ async def main():
         assert await page.locator("#execution-gpu").is_hidden(), "Local target showed GPU selection"
         assert await page.locator("#device-privacy").count() == 0
         assert await page.locator("#output-format").input_value() == "srt"
+        await page.set_viewport_size({'width': 380, 'height': 850})
+        left = await page.locator('#drop-zone').bounding_box()
+        right = await page.locator('#choose-voice-memo').bounding_box()
+        assert left['x'] >= 0 and right['x'] + right['width'] <= 380
+        assert right['x'] > left['x'] and abs(left['height'] - right['height']) < 1
+        if screenshot:
+            await page.locator('#upload-dialog').screenshot(path=screenshot.replace('.png', '-sources-mobile.png'))
+        await page.set_viewport_size({'width': 1440, 'height': 1100})
+        if screenshot:
+            await page.locator('#upload-dialog').screenshot(path=screenshot.replace('.png', '-sources.png'))
+        async with page.expect_file_chooser() as chooser:
+            await page.locator('#audio-file').click()
+        await (await chooser.value).set_files([])
+        assert await page.evaluate('state.uploadPreparation') is None, 'Cancel started an upload'
+        assert await page.locator('#audio-file').evaluate('el => el.required')
+        await page.set_input_files('#audio-file', {'name': 'voice.wav', 'mimeType': 'audio/wav', 'buffer': data.getvalue()})
+        await page.get_by_text('전처리 완료 · 전사를 시작할 수 있어요', exact=True).wait_for()
         await page.click("#close-upload")
         await page.locator('#welcome').wait_for(state='visible')
         for index in range(12):
@@ -373,7 +497,7 @@ async def main():
         assert (await page.locator(".device-panel-head").bounding_box())["y"] >= 0
         assert not errors, errors
         await browser.close()
-    print(f"PASS {engine}: device panel and independent scrolling, SSH candidates, host-only registration, per-job GPU, submitted UUID, busy-GPU rejection, polling cleanup")
+    print(f"PASS {engine}: device panel, SSH registration, per-job GPU, busy-GPU confirmation/cancel, changed-process warning, polling cleanup")
 
 
 if __name__ == "__main__":

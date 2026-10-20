@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "note_id": "7eb40d10e4b849caaeffe2033115d8dd",
+  "monitor_started_at": "2026-10-20T12:54:31.200729+00:00",
+  "observations": [
+    {
+      "status": "processing",
+      "progress_phase": "transcribing",
+      "processed_chunks": 0,
+      "processed_bridges": 0,
+      "updated_at": "2026-10-20T12:52:00.386053+00:00",
+      "observed_at": "2026-10-20T12:54:31.200729+00:00",
+      "elapsed_seconds": 167.087
+    },
+    {
+      "status": "processing",
+      "progress_phase": "transcribing",
+      "processed_chunks": 0,
+      "processed_bridges": 0,
+      "updated_at": "2026-10-20T12:52:00.386053+00:00",
+      "observed_at": "2026-10-20T12:56:51.854929+00:00",
+      "elapsed_seconds": 307.741
+    },
+    {
+      "status": "processing",
+      "progress_phase": "transcribing",
+      "processed_chunks": 0,
+      "processed_bridges": 0,
+      "updated_at": "2026-10-20T12:52:00.386053+00:00",
+      "observed_at": "2026-10-20T12:58:50.311419+00:00",
+      "elapsed_seconds": 426.197
+    },
+    {
+      "status": "processing",
+      "progress_phase": "transcribing",
+      "processed_chunks": 0,
+      "processed_bridges": 0,
+      "updated_at": "2026-10-20T12:52:00.386053+00:00",
+      "observed_at": "2026-10-20T13:00:52.060388+00:00",
+      "elapsed_seconds": 547.946
+    },
+    {
+      "status": "done",
+      "progress_phase": "done",
+      "processed_chunks": 1,
+      "processed_bridges": 0,
+      "updated_at": "2026-10-20T13:01:20.444593+00:00",
+      "observed_at": "2026-10-20T13:02:50.325454+00:00",
+      "elapsed_seconds": 576.318
+    }
+  ],
+  "measurement_scope": "App-reported end-to-end processing_seconds, including prepared-upload preprocessing and device preparation/transfer/inference/finalization. Not isolated GPU inference latency. Remote cleanup after the done state is excluded.",
+  "limitations": [
+    "Single real recording; not a benchmark average.",
+    "Monitoring began after transcription started; earlier phase durations were not measured.",
+    "GPU contention, GPU peak memory, and cold/warm cache state were not measured.",
+    "Do not infer 30-minute versus 65-minute chunk scaling from this single sample."
+  ],
+  "last_observed_at": "2026-10-20T13:02:50.325454+00:00",
+  "job": {
+    "id": "7eb40d10e4b849caaeffe2033115d8dd",
+    "status": "done",
+    "duration": 3937.131,
+    "chunk_count": 1,
+    "chunk_seconds": 3937.131,
+    "bridge_count": 0,
+    "processed_chunks": 1,
+    "processed_bridges": 0,
+    "progress_phase": "done",
+    "created_at": "2026-10-20T12:51:46.337243+00:00",
+    "updated_at": "2026-10-20T13:01:20.444593+00:00",
+    "processing_started_at": "2026-10-20T12:51:46.340193+00:00",
+    "processing_finished_at": "2026-10-20T13:01:20.433388+00:00",
+    "processing_seconds": 576.318,
+    "preprocessing_seconds": 2.226,
+    "device_name": "juyu-h200 · GPU #0"
+  },
+  "device": {
+    "backend": "cuda",
+    "model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+    "model_key": null,
+    "options": {
+      "chunk_minutes": 90
+    },
+    "gpu_index": 0,
+    "gpu_uuid": "GPU-15458aa2-d8d9-0c12-536d-e724f64076e0",
+    "hardware": {
+      "gpus": [
+        {
+          "index": 0,
+          "name": "NVIDIA H200",
+          "memory_gib": 140.4
+        },
+        {
+          "index": 1,
+          "name": "NVIDIA H200",
+          "memory_gib": 140.4
+        },
+        {
+          "index": 2,
+          "name": "NVIDIA H200",
+          "memory_gib": 140.4
+        },
+        {
+          "index": 3,
+          "name": "NVIDIA H200",
+          "memory_gib": 140.4
+        }
+      ]
+    }
+  },
+  "result": {
+    "complete": true,
+    "terminal": true,
+    "total_processing_seconds": 576.318,
+    "processing_seconds_per_audio_second": 0.14638,
+    "audio_speed_multiple": 6.832
+  }
+}

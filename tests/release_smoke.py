@@ -28,6 +28,12 @@ def main():
     assert metadata['SUFeedURL'] == 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml'
     assert metadata['SURequireSignedFeed'] and metadata['SUVerifyUpdateBeforeExtraction']
     assert metadata['SUEnableAutomaticChecks']
+    assert metadata['NSMicrophoneUsageDescription']
+    assert metadata['UTExportedTypeDeclarations'][0]['UTTypeTagSpecification']['public.filename-extension'] == ['mossvoice']
+    assert (resources / 'app/static/voices.js').is_file()
+    assert (resources / 'app/src/voice_embedding_worker.py').is_file()
+    assert metadata['CFBundleIconFile'] == 'AppIcon.icns'
+    assert (resources / 'AppIcon.icns').read_bytes().startswith(b'icns')
     assert (app / 'Contents/Frameworks/Sparkle.framework').is_dir()
     assert 'CosMOSSProjectRoot' not in metadata
     assert (resources / 'python/licenses/LICENSE.cpython.txt').is_file()

@@ -2,15 +2,18 @@ const $ = (selector) => document.querySelector(selector);
 const state = {
   appSetup: null, appSetupRequest: 0, appSetupChecking: false, appSetupTimer: null,
   libraryRequest: 0, libraryLoading: false, executionDeviceId: "local",
+  textSaveAttempts: new Set(),
   environmentDeviceId: null, environments: {}, environmentRequests: new Set(), environmentSubmitting: false,
-  saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false,
+  saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false, voiceIdentifying: false,
   notes: [], current: null, saveTimer: null, pollTimer: null,
   pendingChanges: null, savePromise: null, noteRequest: 0, editRevision: 0, openingNote: null,
   transcriptView: "edited", maxUploadBytes: null, defaultChunkMinutes: 30, uploading: false, deletingId: null,
   elapsedAnchor: null, elapsedTimer: null,
-  uploadPreparation: null, cancellingId: null, restartingId: null, cancellationNoteId: null, deletionNoteId: null,
+  uploadPreparation: null, uploadChunkCount: null, cancellingId: null, restartingId: null, cancellationNoteId: null, deletionNoteId: null,
+  estimateKey: null, estimateTimer: null, estimateController: null, chunkDefaultSaving: false,
+  voiceMemos: [], voiceMemoSelected: null, voiceMemoRequest: 0, voiceMemoLoading: false, voiceMemoController: null,
   devices: [], deviceStatus: {}, sshProbeHost: null, sshRequest: 0, healthChecking: false,
-  gpuTimer: null, gpuAbort: null, gpuInventory: [], selectedGpu: null, workerStates: {}, workerTimers: {},
+  gpuTimer: null, gpuAbort: null, gpuInventory: [], selectedGpu: null, gpuApproval: null, gpuWarningResolve: null, workerStates: {}, workerTimers: {},
   addingDevice: false, gpuDeviceId: null, workerPolling: new Set(),
   sshHosts: [], panelRefreshing: false, localModel: null, localModelTimer: null, localModelSubmitting: false, modelDeviceId: "local", modelLoading: false, modelError: null, modelRequest: 0, catalog: null, modelMetadata: {},
 };
@@ -20,12 +23,14 @@ async function api(path, options = {}) {
   const response = await fetch(path, options);
   if (!response.ok) {
     let message = `요청 실패 (${response.status})`;
+    let detail;
     try {
-      const detail = (await response.json()).detail;
+      detail = (await response.json()).detail;
       if (typeof detail === "string") message = detail;
       else if (Array.isArray(detail)) message = "입력 내용을 확인해 주세요.";
+      else if (detail?.message) message = detail.message;
     } catch (_) {}
-    throw new Error(message);
+    throw Object.assign(new Error(message), { detail, status: response.status });
   }
   if (response.status === 204) return null;
   const payload = await response.json();
@@ -109,7 +114,8 @@ $("#check-app-update").addEventListener("click", async () => {
 });
 
 window.prepareForAppUpdate = async () => {
-  if (state.uploading || state.uploadPreparation || state.speakerDraft || state.speakerSaving || state.summarySubmitting || state.addingDevice) return false;
+  if (window.cosmossVoiceProfiles?.busy || state.voiceIdentifying) return false;
+  if (state.uploading || state.uploadPreparation || $("#voice-memo-dialog").open || state.speakerDraft || state.speakerSaving || state.summarySubmitting || state.addingDevice) return false;
   try { await flushSave(); }
   catch (_) { return false; }
   return !state.pendingChanges && !state.savePromise;
@@ -245,7 +251,7 @@ function renderList() {
   $("#note-list").innerHTML = notes.length ? notes.map(note => `
     <button class="note-item ${state.current?.id === note.id ? "active" : ""}" data-id="${escapeHtml(note.id)}" title="${escapeHtml(note.title)}" aria-pressed="${state.current?.id === note.id}" aria-haspopup="dialog" aria-controls="note-dialog">
       <span class="note-item-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6M8 13h8M8 17h5"/></svg></span>
-      <span class="note-item-copy"><b>${escapeHtml(note.title)}</b><small><span>${formatDate(note.created_at)}</span><span class="note-status ${note.status}">${note.source_type === "text_file" ? (note.output_format || "txt").toUpperCase() : noteStatus(note)}</span></small></span>
+      <span class="note-item-copy"><b>${escapeHtml(note.title)}</b><small><span>${formatDate(note.created_at)}</span><span class="note-status ${note.status}">${note.text_save_error ? "저장 실패" : note.status === "done" ? (note.output_format || "txt").toUpperCase() : noteStatus(note)}</span></small></span>
       <svg class="note-item-open" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
     </button>`).join("") : (query ? '<div class="empty-list">검색 결과가 없습니다</div>' : "");
   document.querySelectorAll(".note-item").forEach(button => button.addEventListener("click", () => openNote(button.dataset.id)));
@@ -256,16 +262,34 @@ async function loadNotes() {
   state.libraryLoading = true;
   try {
     await saveLocationReady;
-    const [notes, documents] = await Promise.allSettled([api("/api/notes"), api(`/api/text-library?directory=${encodeURIComponent(state.saveDirectory)}`)]);
+    const directory = state.saveDirectory;
+    const [notes, documents] = await Promise.allSettled([api("/api/notes"), api(`/api/text-library?directory=${encodeURIComponent(directory)}`)]);
     if (request !== state.libraryRequest) return;
     if (notes.status === "rejected") throw notes.reason;
+    // Reconnect old manual exports once; new jobs save on the backend even when
+    // this window is closed. Failed saves remain visible for an explicit retry.
+    for (let index = 0; index < notes.value.length; index++) {
+      const note = notes.value[index];
+      if (note.status !== "done" || note.text_path || note.text_save_error || state.textSaveAttempts.has(note.id)) continue;
+      state.textSaveAttempts.add(note.id);
+      try { notes.value[index] = await api(`/api/notes/${encodeURIComponent(note.id)}/text-file`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ directory }) }); }
+      catch (error) { note.text_save_error = error.message; }
+    }
+    if (request !== state.libraryRequest) return;
     const imported = documents.status === "fulfilled" ? documents.value : [];
     const managed = new Set(notes.value.map(note => note.text_path).filter(Boolean));
-    state.notes = [...notes.value, ...imported.filter(note => !managed.has(note.text_path))].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const filePaths = new Set(imported.map(note => note.text_path));
+    const visible = notes.value.filter(note => documents.status !== "fulfilled" || note.status !== "done" || !note.text_path || filePaths.has(note.text_path));
+    state.notes = [...visible, ...imported.filter(note => !managed.has(note.text_path))].sort((a, b) => b.created_at.localeCompare(a.created_at));
     $("#text-library-status").textContent = documents.status === "rejected" ? documents.reason.message : "";
     $("#text-library-status").classList.toggle("hidden", documents.status !== "rejected");
     renderList();
     const current = state.current;
+    const saved = notes.value.find(note => note.id === current?.id);
+    if (saved && (saved.text_path !== current.text_path || saved.text_save_error !== current.text_save_error)) {
+      state.current = { ...current, text_path: saved.text_path, text_hash: saved.text_hash, text_save_error: saved.text_save_error };
+      renderTextFileActions();
+    }
     const latest = imported.find(note => note.id === current?.id);
     if (latest && current?.source_type === "text_file" && latest.file_mtime_ns !== current.file_mtime_ns && !state.pendingChanges && !state.savePromise && !state.openingNote && !state.speakerDraft && document.activeElement !== $("#text-document-body")) openNote(current.id, true);
     if (!state.pollTimer && state.notes.some(note => ["queued", "processing"].includes(note.status))) schedulePoll();
@@ -279,7 +303,6 @@ async function openNote(id, quiet = false) {
   state.openingNote = request;
   clearTimeout(state.pollTimer);
   state.pollTimer = null;
-  closeExport();
   try {
     await flushSave();
     if (request !== state.noteRequest) return;
@@ -324,7 +347,6 @@ async function closeNoteWindow() {
   $("#note-close-error").classList.add("hidden");
   try {
     await flushSave();
-    closeExport();
     $("#media-player").pause();
     $("#note-dialog").close();
     const selected = [...document.querySelectorAll(".note-item")].find(button => button.dataset.id === state.current?.id);
@@ -362,21 +384,20 @@ function renderTranscriptionControls(note) {
 function renderWorkspace() {
   const note = state.current;
   const file = note.source_type === "text_file";
-  $("#note-title").readOnly = file;
+  $("#note-title").readOnly = file || note.status === "done";
   $("#note-title").title = note.title;
-  $("#delete-note").classList.toggle("hidden", file);
+  $("#delete-note").classList.toggle("hidden", file || note.status === "done");
   $("#note-title").value = state.pendingChanges?.id === note.id
     ? state.pendingChanges.changes.title ?? note.title : note.title;
-  const chunkLength = note.chunk_seconds ? ` · 청크 ${note.chunk_seconds / 60}분` : "";
+  const chunkLength = note.chunk_seconds ? ` · 청크 ${Number.isInteger(note.chunk_seconds / 60) ? `${note.chunk_seconds / 60}분` : clock(note.chunk_seconds)}` : "";
   const chunkMeta = `${chunkLength}${note.chunk_count > 1 ? ` · ${note.chunk_count}개 구간으로 나누어 전사` : ""}`;
-  $("#note-meta").textContent = file ? `${formatDate(note.updated_at)} · ${note.original_filename}` : `${formatDate(note.created_at)} · ${note.original_filename}${chunkMeta} · ${note.device_name || "이 Mac"}`;
+  $("#note-meta").textContent = file || note.status === "done" ? `${formatDate(note.updated_at || note.created_at)} · ${note.text_path?.split('/').pop() || note.title + '.' + (note.output_format || 'txt')}` : `${formatDate(note.created_at)} · ${note.original_filename}${chunkMeta} · ${note.device_name || "이 Mac"}`;
   renderTextFileActions();
   const pending = ["queued", "processing"].includes(note.status);
   $("#processing-card").classList.toggle("hidden", !pending && !["error", "cancelled"].includes(note.status));
   $("#processing-card").classList.toggle("failed", note.status === "error");
   $("#processing-card").classList.toggle("cancelled", note.status === "cancelled");
   $("#editor").classList.toggle("hidden", note.status !== "done");
-  $("#export-toggle").disabled = note.status !== "done";
   renderTranscriptionControls(note);
   renderProgress(note);
   if (pending) {
@@ -388,6 +409,7 @@ function renderWorkspace() {
       transcribing: "음성을 기록으로 옮기고 있어요",
       linking: "같은 화자의 발화를 연결하고 있어요",
       finalizing: "전사 결과를 저장하고 있어요",
+      identifying_speakers: "등록된 목소리와 화자를 비교하고 있어요",
     }[phase] || "음성을 읽고 있어요";
     $("#processing-copy").textContent = phase === "queued" ? "앞선 작업이 끝나면 자동으로 시작됩니다." : "페이지를 닫아도 앱이 실행 중이면 작업은 계속됩니다.";
   } else if (note.status === "error") {
@@ -431,6 +453,7 @@ function renderProgress(note) {
   else if (phase === "preparing_model") count.textContent = "모델 캐시 확인과 선택한 GPU 로딩 중";
   else if (phase === "normalizing") count.textContent = "음성 추출과 파일 정규화 중";
   else if (phase === "linking") count.textContent = `${note.processed_bridges || 0}/${note.bridge_count || 0}개 경계 화자 연결 완료`;
+  else if (phase === "identifying_speakers") count.textContent = "등록된 목소리와 화자 이름을 비교 중";
   else if (phase === "finalizing") count.textContent = "화자와 문장을 정리해 노트에 저장 중";
   else if (model.chunk_index && model.kind === "main") count.textContent = `${model.chunk_index}/${note.chunk_count || 1}번째 구간 전사 중`;
   else count.textContent = `${note.processed_chunks || 0}/${note.chunk_count || 1}개 구간 전사 완료`;
@@ -453,7 +476,7 @@ function renderProgress(note) {
   $("#prefill-track").setAttribute("aria-valuenow", String(inputPercent));
   $("#prefill-track").setAttribute("aria-valuetext", `음성 입력 ${inputPercent}% 처리`);
   $("#prefill-fill").style.width = `${inputPercent}%`;
-  const stage = { queued: -1, preparing_model: 0, normalizing: 0, transcribing: 1, linking: 2, finalizing: 2, done: 3, error: -1, cancelled: -1 }[phase] ?? 1;
+  const stage = { queued: -1, preparing_model: 0, normalizing: 0, transcribing: 1, linking: 2, finalizing: 2, identifying_speakers: 2, done: 3, error: -1, cancelled: -1 }[phase] ?? 1;
   document.querySelectorAll("[data-step]").forEach(element => {
     const index = Number(element.dataset.step);
     element.classList.toggle("completed", phase === "done" || index < stage);
@@ -486,7 +509,10 @@ function renderEditor() {
   const format = (note.output_format || "txt").toUpperCase();
   $("#text-document-format").textContent = format;
   $("#text-document-body").setAttribute("aria-label", `${format} 내용 편집`);
-  for (const option of document.querySelectorAll('[data-format="srt"], [data-format="vtt"]')) option.disabled = file && option.dataset.format !== note.output_format && (!note.segments.length || (note.output_format || "txt") === "txt");
+  $(".player-card").classList.add("hidden");
+  const player = $("#media-player");
+  player.pause();
+  player.removeAttribute("src");
   if (file) {
     const media = $("#media-player");
     media.pause();
@@ -501,10 +527,6 @@ function renderEditor() {
   const speakers = [...new Set(segments.map(segment => segment.speaker))];
   const allSpeakers = [...new Set([...(note.raw_segments || []), ...note.segments].map(segment => note.speaker_merges?.[segment.speaker] || segment.speaker))];
   const speakerIndex = Object.fromEntries(allSpeakers.map((speaker, index) => [speaker, index]));
-  const media = $("#media-player");
-  const mediaUrl = `/api/notes/${encodeURIComponent(note.id)}/media`;
-  if (media.getAttribute("src") !== mediaUrl) media.src = mediaUrl;
-  $("#file-pill").textContent = note.original_filename;
   $("#duration-label").textContent = note.duration ? `녹음 ${clock(note.duration)}` : "";
   renderCompletionTime(note);
   $("#editing-hint").textContent = editable ? "본문을 눌러 수정하고, 화자 설정에서 이름을 지정하세요." : "처음 전사한 본문입니다. 원본은 그대로 보존됩니다.";
@@ -638,7 +660,6 @@ async function openHome() {
     media.pause();
     media.removeAttribute("src");
     media.load();
-    closeExport();
     $("#transcript-search").value = "";
     $("#workspace").classList.add("hidden");
     $("#note-dialog").close();
@@ -665,6 +686,8 @@ function openUpload(deviceId) {
   if (state.deletingId || $("#upload-dialog").open) return;
   state.executionDeviceId = typeof deviceId === "string" ? deviceId : "local";
   if (!executionDevice()) return toast("장치 목록에서 처리 장치를 다시 선택해 주세요.", true);
+  state.uploadChunkCount = null;
+  renderUploadChunks();
   try { $("#output-format").value = localStorage.getItem("cosmoss.outputFormat") || "txt"; } catch (_) {}
   if (!$("#output-format").value) $("#output-format").value = "txt";
   $("#upload-dialog").showModal();
@@ -674,8 +697,12 @@ function openUpload(deviceId) {
 $("#close-upload").addEventListener("click", () => $("#upload-dialog").close());
 $("#upload-dialog").addEventListener("cancel", event => { if (state.uploading) event.preventDefault(); });
 $("#upload-dialog").addEventListener("close", () => {
+  clearUploadEstimate();
+  closeGpuWarning(false);
+  if ($("#voice-memo-dialog").open) $("#voice-memo-dialog").close();
   stopGpuMonitor();
   state.selectedGpu = null;
+  state.gpuApproval = null;
   state.gpuDeviceId = null;
   $("#execution-gpu").classList.add("hidden");
   if (state.uploading) return;
@@ -710,10 +737,91 @@ document.querySelectorAll("[data-transcript-view]").forEach(button => button.add
 
 const dropZone = $("#drop-zone");
 const fileInput = $("#audio-file");
+$("#choose-voice-memo").addEventListener("click", () => {
+  if (state.uploading) return;
+  state.voiceMemos = [];
+  state.voiceMemoSelected = null;
+  $("#voice-memo-access").classList.add('hidden');
+  $("#voice-memo-privacy").classList.toggle('hidden', !window.webkit?.messageHandlers?.openVoiceMemoPrivacy);
+  $("#voice-memo-search").value = "";
+  $("#open-voice-memos").classList.toggle("hidden", !window.webkit?.messageHandlers?.openVoiceMemos);
+  $("#voice-memo-dialog").showModal();
+  $("#voice-memo-title").focus({ preventScroll: true });
+  loadVoiceMemos();
+});
+function renderVoiceMemos() {
+  const search = $("#voice-memo-search").value.trim().toLocaleLowerCase();
+  const records = state.voiceMemos.filter(item => item.title.toLocaleLowerCase().includes(search));
+  $("#voice-memo-list").innerHTML = records.map(item => {
+    const date = item.created_at ? formatDate(item.created_at) : "";
+    const detail = [date, item.duration ? clock(item.duration) : "", item.size ? `${(item.size / 1024 / 1024).toFixed(1)} MB` : "", item.available ? "" : "이 Mac에 다운로드 필요"].filter(Boolean).join(" · ");
+    return `<label class="voice-memo-item"><input type="radio" name="voice-memo" value="${escapeHtml(item.id)}" ${item.id === state.voiceMemoSelected ? "checked" : ""} ${item.available ? "" : "disabled"}><span class="voice-memo-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-16v20m4-16v12m4-8v4"/></svg></span><span class="voice-memo-info"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(detail)}</small></span><span class="voice-memo-check" aria-hidden="true"></span></label>`;
+  }).join("") || (state.voiceMemoLoading || !$("#voice-memo-access").classList.contains('hidden') ? "" : `<p class="voice-memo-empty">${search ? "검색 결과가 없습니다." : "불러올 녹음이 없습니다."}</p>`);
+  $("#import-voice-memo").disabled = state.voiceMemoLoading || !records.some(item => item.id === state.voiceMemoSelected && item.available);
+  $("#refresh-voice-memos").disabled = state.voiceMemoLoading;
+}
+async function loadVoiceMemos() {
+  state.voiceMemoController?.abort();
+  const request = ++state.voiceMemoRequest;
+  const controller = new AbortController();
+  state.voiceMemoController = controller;
+  state.voiceMemoLoading = true;
+  $("#voice-memo-status").textContent = "녹음을 불러오고 있습니다…";
+  renderVoiceMemos();
+  try {
+    // Attribute the explicit library access to the foreground app before the
+    // Python backend scans it. macOS controls whether a denied app is listed.
+    try { await window.webkit?.messageHandlers?.requestVoiceMemosAccess?.postMessage({}); } catch (_) {}
+    if (request !== state.voiceMemoRequest || !$('#voice-memo-dialog').open) return;
+    const result = await api('/api/voice-memos', { signal: controller.signal });
+    if (request !== state.voiceMemoRequest || !$("#voice-memo-dialog").open) return;
+    state.voiceMemos = result.recordings;
+    $("#voice-memo-access").classList.toggle('hidden', !result.permission_required);
+    if (!state.voiceMemos.some(item => item.id === state.voiceMemoSelected && item.available)) state.voiceMemoSelected = null;
+    $("#voice-memo-status").textContent = result.permission_required
+      ? "macOS에서 음성 메모 데이터 접근을 차단했습니다."
+      : result.metadata_unavailable ? "녹음 제목을 읽지 못해 파일명으로 표시합니다."
+      : state.voiceMemos.length ? `녹음 ${state.voiceMemos.length}개 · 가져올 녹음을 선택하세요.`
+      : "음성 메모 앱에서 녹음을 이 Mac에 다운로드한 뒤 새로고침해 주세요.";
+  } catch (error) {
+    if (request !== state.voiceMemoRequest || error.name === 'AbortError') return;
+    $("#voice-memo-status").textContent = error.message;
+  } finally {
+    if (request === state.voiceMemoRequest) { state.voiceMemoLoading = false; renderVoiceMemos(); }
+  }
+}
+$("#voice-memo-search").addEventListener('input', renderVoiceMemos);
+$("#voice-memo-list").addEventListener('change', event => { state.voiceMemoSelected = event.target.value; $("#import-voice-memo").disabled = false; });
+$("#refresh-voice-memos").addEventListener('click', loadVoiceMemos);
+$("#close-voice-memo").addEventListener('click', () => $("#voice-memo-dialog").close());
+$("#voice-memo-dialog").addEventListener('close', () => { state.voiceMemoRequest++; state.voiceMemoController?.abort(); state.voiceMemoLoading = false; });
+$("#open-voice-memos").addEventListener('click', async () => {
+  try { await window.webkit?.messageHandlers?.openVoiceMemos?.postMessage({}); }
+  catch (error) { toast(error.message || "음성 메모를 열지 못했습니다.", true); }
+});
+$("#voice-memo-privacy").addEventListener('click', async () => {
+  try {
+    const opened = await window.webkit?.messageHandlers?.openVoiceMemoPrivacy?.postMessage({});
+    if (!opened) toast('시스템 설정에서 개인정보 보호 및 보안 → 전체 디스크 접근 권한을 열어 주세요.', true);
+  }
+  catch (error) { toast(error.message || '권한 설정을 열지 못했습니다.', true); }
+});
+window.addEventListener('cosmoss-voice-memo-permission-return', () => {
+  if ($('#voice-memo-dialog').open && !state.voiceMemoLoading) loadVoiceMemos();
+});
+$("#import-voice-memo").addEventListener('click', () => {
+  const item = state.voiceMemos.find(item => item.id === state.voiceMemoSelected && item.available);
+  if (!item || state.voiceMemoLoading) return;
+  fileInput.value = "";
+  $("#voice-memo-dialog").close();
+  showFile({ name: `${item.title}.m4a`, size: item.size }, item);
+});
 function resetDropZone() {
-  $("#drop-title").textContent = "파일을 선택하거나 여기에 놓으세요";
+  fileInput.required = true;
+  $("#drop-title").textContent = "파일 선택 또는 드래그";
   const limit = state.maxUploadBytes ? ` · 최대 ${+(state.maxUploadBytes / 1024 ** 3).toFixed(2)} GB` : "";
-  $("#drop-copy").textContent = `MP3, WAV, M4A, MP4 등 · 긴 녹음은 자동 분할${limit}`;
+  $("#drop-copy").textContent = "MP3, WAV, M4A, MP4 등";
+  $("#upload-limit").textContent = `긴 녹음은 자동 분할${limit}`;
   renderFilePreparation();
 }
 function validateFile(file) {
@@ -744,7 +852,100 @@ function cancelFilePreparation() {
   releaseFileMetadata(preparation);
   deletePreparedFile(preparation.id);
 }
+function uploadChunkDefaultMinutes() {
+  const device = executionDevice();
+  const value = device?.options?.chunk_minutes ?? state.modelMetadata[device?.id]?.options?.chunk_minutes ?? 30;
+  return Number.isFinite(value) && value >= 1 && value <= 90 ? value : 30;
+}
+function uploadChunkPlan() {
+  const duration = state.uploadPreparation?.duration;
+  if (!Number.isFinite(duration) || duration <= 0) return null;
+  const count = state.uploadChunkCount === null ? Math.ceil(duration / (uploadChunkDefaultMinutes() * 60)) : Number(state.uploadChunkCount);
+  if (!Number.isInteger(count) || count < 1 || count > 1000) return null;
+  return { count, seconds: duration / count };
+}
+function renderUploadChunks() {
+  const input = $("#upload-chunk-count");
+  const duration = state.uploadPreparation?.duration;
+  const hasDuration = Number.isFinite(duration) && duration > 0;
+  const plan = uploadChunkPlan();
+  const value = state.uploadChunkCount ?? (hasDuration ? String(Math.ceil(duration / (uploadChunkDefaultMinutes() * 60))) : "");
+  if (input.value !== value) input.value = value;
+  input.disabled = state.uploading || !hasDuration;
+  input.setCustomValidity("");
+  if (plan) {
+    if (plan.seconds > 90 * 60) input.setCustomValidity("구간당 90분 이하가 되도록 분할 개수를 늘려 주세요.");
+    else if (plan.count > Math.max(1, Math.floor(duration))) input.setCustomValidity("구간당 1초 이상이 되도록 분할 개수를 줄여 주세요.");
+  }
+  const total = plan ? Math.floor(plan.seconds) : 0;
+  const hours = Math.floor(total / 3600), minutes = Math.floor(total % 3600 / 60), seconds = total % 60;
+  $("#upload-chunk-preview").textContent = !plan ? "—" : total === 0 ? "1초 미만" :
+    [hours ? `${hours}시간` : "", minutes ? `${minutes}분` : "", seconds ? `${seconds}초` : ""].filter(Boolean).join(" ");
+  $("#increase-upload-chunks").disabled = input.disabled || input.valueAsNumber >= 1000;
+  $("#decrease-upload-chunks").disabled = input.disabled || input.valueAsNumber <= 1;
+  $("#upload-chunk-default").textContent = `이 장치 기본: ${uploadChunkDefaultMinutes()}분 이하 · 같은 길이로 나눕니다.`;
+  scheduleUploadEstimate(plan);
+}
+
+function clearUploadEstimate() {
+  clearTimeout(state.estimateTimer);
+  state.estimateController?.abort();
+  state.estimateKey = null;
+  $("#upload-estimates").classList.add('hidden');
+}
+function scheduleUploadEstimate(plan) {
+  if (!plan || !$('#upload-dialog').open || !executionDevice()) return clearUploadEstimate();
+  const device = executionDevice(), gpu = state.selectedGpu;
+  const duration = state.uploadPreparation.duration;
+  const key = JSON.stringify([device.id, device.model_key, device.options, duration, plan.count, gpu?.uuid, gpu?.memory_used_mib, gpu?.memory_free_mib]);
+  if (state.estimateKey === key) return;
+  clearTimeout(state.estimateTimer);
+  state.estimateController?.abort();
+  state.estimateKey = key;
+  const box = $('#upload-estimates');
+  box.classList.remove('hidden', 'is-over-capacity');
+  $('#upload-memory-warning').classList.add('hidden');
+  $('#upload-estimate-memory').textContent = '—';
+  $('#upload-estimate-time').textContent = '—';
+  $('#upload-estimate-note').textContent = '초기 추정 계산 중…';
+  state.estimateTimer = setTimeout(async () => {
+    const controller = new AbortController();
+    state.estimateController = controller;
+    const query = new URLSearchParams({duration, count:plan.count});
+    if (gpu?.uuid && device.backend === 'cuda') query.set('gpu_uuid', gpu.uuid);
+    try {
+      const estimate = await api(`/api/devices/${encodeURIComponent(device.id)}/estimate?${query}`, {signal:controller.signal});
+      if (state.estimateKey !== key) return;
+      const memory = estimate.memory_high_gib != null ? `${estimate.memory_low_gib.toFixed(1)}–${estimate.memory_high_gib.toFixed(1)} GiB` : '추정 불가';
+      $('#upload-estimate-memory').textContent = memory;
+      $('#upload-estimate-time').textContent = estimate.time_high_seconds != null ? `${clock(estimate.time_low_seconds)}–${clock(estimate.time_high_seconds)}` : '추정 불가';
+      $('#upload-estimate-note').textContent = estimate.note + (device.backend === 'cuda' && !gpu ? ' · GPU 선택 후 보정' : '');
+      box.classList.toggle('is-over-capacity', !!estimate.exceeds_capacity);
+      const warning = $('#upload-memory-warning');
+      warning.classList.toggle('hidden', !estimate.exceeds_capacity && !estimate.exceeds_free);
+      warning.textContent = estimate.exceeds_capacity
+        ? `예상 최대 ${estimate.memory_high_gib.toFixed(1)} GiB가 전체 ${estimate.capacity_kind} ${estimate.capacity_gib.toFixed(1)} GiB를 초과합니다. 분할 개수를 늘려 주세요.`
+        : estimate.exceeds_free ? `현재 여유 VRAM ${estimate.free_gib.toFixed(1)} GiB보다 클 수 있습니다. 다른 프로세스의 사용량을 확인하세요.` : '';
+    } catch (error) {
+      if (state.estimateKey === key && error.name !== 'AbortError') $('#upload-estimate-note').textContent = '예측값을 불러오지 못했습니다.';
+    }
+  }, 180);
+}
+$("#upload-chunk-count").addEventListener("input", event => {
+  state.uploadChunkCount = event.target.value;
+  renderUploadChunks();
+});
+for (const [selector, step] of [["#increase-upload-chunks", 1], ["#decrease-upload-chunks", -1]]) {
+  $(selector).addEventListener("click", () => {
+    const input = $("#upload-chunk-count");
+    if (input.disabled) return;
+    const current = Number.isInteger(input.valueAsNumber) ? input.valueAsNumber : Math.ceil(state.uploadPreparation.duration / (uploadChunkDefaultMinutes() * 60));
+    state.uploadChunkCount = String(Math.max(1, Math.min(1000, current + step)));
+    renderUploadChunks();
+  });
+}
 function renderFilePreparation() {
+  renderUploadChunks();
   const preparation = state.uploadPreparation;
   $("#upload-preparation").classList.toggle("hidden", !preparation);
   $("#upload-preparation").classList.toggle("failed", preparation?.status === "error");
@@ -775,8 +976,9 @@ async function pollFilePreparation(preparation) {
     renderFilePreparation();
   }
 }
-async function showFile(file) {
+async function showFile(file, voiceMemo = null) {
   cancelFilePreparation();
+  state.uploadChunkCount = null;
   if (!file) return resetDropZone();
   try { validateFile(file); } catch (error) {
     fileInput.value = "";
@@ -784,12 +986,14 @@ async function showFile(file) {
     return toast(error.message, true);
   }
   $("#drop-title").textContent = file.name;
+  fileInput.required = !voiceMemo;
   $("#drop-copy").textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB`;
-  const preparation = { file, id: null, status: "uploading", duration: null, controller: new AbortController() };
+  const preparation = { file, voiceMemo, id: null, status: "uploading", duration: voiceMemo?.duration ?? null, controller: new AbortController() };
   state.uploadPreparation = preparation;
   renderFilePreparation();
   // Browser metadata can show duration before the upload completes. ffprobe
   // supplies the authoritative duration for formats the browser cannot read.
+  if (!voiceMemo) {
   const audio = new Audio();
   preparation.audio = audio;
   preparation.objectUrl = URL.createObjectURL(file);
@@ -803,12 +1007,16 @@ async function showFile(file) {
   }, { once: true });
   audio.addEventListener("error", () => releaseFileMetadata(preparation), { once: true });
   audio.src = preparation.objectUrl;
+  }
   try {
     await refreshAppSetup(true);
     if (state.uploadPreparation !== preparation) return;
     const body = new FormData();
-    body.set("file", file);
-    const upload = await api("/api/uploads", { method: "POST", body, signal: preparation.controller.signal });
+    if (!voiceMemo) body.set("file", file);
+    const upload = await api(voiceMemo ? '/api/voice-memos/import' : '/api/uploads', {
+      method: 'POST', signal: preparation.controller.signal,
+      ...(voiceMemo ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: voiceMemo.id, version: voiceMemo.version }) } : { body }),
+    });
     if (state.uploadPreparation !== preparation) {
       deletePreparedFile(upload.id);
       return;
@@ -826,7 +1034,10 @@ async function showFile(file) {
     renderFilePreparation();
   }
 }
-$("#retry-preparation").addEventListener("click", () => showFile(fileInput.files[0]));
+$("#retry-preparation").addEventListener("click", () => {
+  const preparation = state.uploadPreparation;
+  showFile(preparation?.voiceMemo ? preparation.file : fileInput.files[0], preparation?.voiceMemo);
+});
 fileInput.addEventListener("change", () => showFile(fileInput.files[0]));
 ["dragenter", "dragover"].forEach(name => dropZone.addEventListener(name, event => { event.preventDefault(); if (!state.uploading) dropZone.classList.add("dragging"); }));
 ["dragleave", "drop"].forEach(name => dropZone.addEventListener(name, event => { event.preventDefault(); dropZone.classList.remove("dragging"); }));
@@ -841,7 +1052,7 @@ dropZone.addEventListener("drop", event => {
 $("#upload-form").addEventListener("submit", async event => {
   event.preventDefault();
   if (state.uploading) return;
-  try { validateFile(fileInput.files[0]); } catch (error) { return toast(error.message, true); }
+  try { validateFile(state.uploadPreparation?.file); } catch (error) { return toast(error.message, true); }
   const preparation = state.uploadPreparation;
   if (preparation?.status !== "ready") return toast("전처리가 완료된 후 전사를 시작해 주세요.", true);
   const form = event.target;
@@ -849,9 +1060,12 @@ $("#upload-form").addEventListener("submit", async event => {
   body.delete("selected-gpu");
   if (!executionDevice()) return toast("처리 장치를 다시 선택해 주세요.", true);
   body.set("device_id", executionDevice().id);
+  body.set("output_directory", state.saveDirectory || "~/Downloads");
   if (executionDevice()?.backend === "cuda") {
     if (!state.selectedGpu || state.gpuDeviceId !== executionDevice().id) return toast("이번 전사에 사용할 GPU를 선택해 주세요.", true);
     body.set("gpu_uuid", state.selectedGpu.uuid);
+    if (state.gpuApproval?.uuid === state.selectedGpu.uuid && state.gpuApproval.token === state.selectedGpu.busy_confirmation)
+      body.set("gpu_confirmation", state.gpuApproval.token);
   }
   body.delete("file");
   body.set("upload_id", preparation.id);
@@ -864,7 +1078,16 @@ $("#upload-form").addEventListener("submit", async event => {
   button.firstChild.textContent = "전사 시작 중… ";
   try {
     await flushSave();
-    const note = await api("/api/notes", { method: "POST", body });
+    let note;
+    while (!note) {
+      try { note = await api("/api/notes", { method: "POST", body }); }
+      catch (error) {
+        if (error.status !== 409 || error.detail?.code !== "gpu_confirmation_required") throw error;
+        const gpu = error.detail.gpu;
+        if (!(await confirmBusyGpu(gpu))) return;
+        body.set("gpu_confirmation", gpu.busy_confirmation);
+      }
+    }
     releaseFileMetadata(preparation);
     state.uploadPreparation = null;
     $("#upload-dialog").close();
@@ -907,32 +1130,6 @@ $("#media-player").addEventListener("timeupdate", event => {
   const time = event.target.currentTime;
   document.querySelectorAll(".segment").forEach(row => row.classList.toggle("active", time >= Number(row.dataset.start) && time < Number(row.dataset.end)));
 });
-
-function closeExport() {
-  $("#export-options").classList.remove("open");
-  $("#export-toggle").setAttribute("aria-expanded", "false");
-}
-$("#export-toggle").addEventListener("click", () => {
-  const open = $("#export-options").classList.toggle("open");
-  $("#export-toggle").setAttribute("aria-expanded", String(open));
-});
-document.addEventListener("click", event => { if (!event.target.closest(".export-menu")) closeExport(); });
-document.addEventListener("keydown", event => { if (event.key === "Escape") closeExport(); });
-document.querySelectorAll("[data-format]").forEach(button => button.addEventListener("click", async () => {
-  closeExport();
-  if (!state.current) return;
-  const id = state.current.id;
-  const version = state.transcriptView;
-  try {
-    await flushSave();
-    const link = document.createElement("a");
-    link.href = `/api/notes/${encodeURIComponent(id)}/export/${button.dataset.format}?version=${version}`;
-    link.download = "";
-    document.body.append(link);
-    link.click();
-    link.remove();
-  } catch (_) {}
-}));
 
 function bindConfirmationDialog(selector, close) {
   const dialog = $(selector);
@@ -1100,6 +1297,7 @@ function syncExecutionGpu() {
   if (state.gpuDeviceId !== device?.id) {
     stopGpuMonitor();
     state.selectedGpu = null;
+    state.gpuApproval = null;
     state.gpuInventory = [];
     state.gpuDeviceId = device?.id;
     $("#gpu-probe-result").textContent = "";
@@ -1129,6 +1327,7 @@ async function loadDevices() {
     const setup = device.id === "local" ? state.localModel : state.workerStates[device.id];
     if (!runtimeState(device.id) && !state.environments[device.id] && !modelBusy(setup) && setup?.phase !== "unknown") checkEnvironment(device.id);
   }
+  if ($('#upload-dialog').open) renderFilePreparation();
 }
 
 function runtimeState(id) {
@@ -1280,6 +1479,8 @@ function renderDevices() {
     const worker = state.workerStates[device.id];
     const presentation = devicePresentation(device);
     const managed = device.backend === "cuda";
+    const gpuActive = !!worker?.active_gpu_uuid || ["loading", "ready"].includes(worker?.phase);
+    const cleanupPending = gpuActive || device.worker_cleanup_pending || worker?.worker_cleanup_pending || (["prepare", "stop"].includes(worker?.action) && ["error", "interrupted"].includes(worker?.phase));
     const busy = worker && !["idle", "installed", "stopped", "error", "interrupted", "unknown"].includes(worker.phase);
     const detail = device.kind === "local" ? "이 기기 · Apple Silicon" : device.host;
     const icon = device.kind === "local" ? '<rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8m-4-5v5"/>' : '<rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M8 6.5h.01M8 17.5h.01M12 6.5h4M12 17.5h4"/>';
@@ -1298,7 +1499,7 @@ function renderDevices() {
           <span>노트 만들기</span>
           <svg class="create-note-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
         </button>
-        <div class="device-secondary-actions">${managed ? `<button class="ghost-button" data-device-action="install" type="button">모델 · 설정</button>${["ready", "interrupted", "error"].includes(worker?.phase) || worker?.active_gpu_uuid ? '<button class="ghost-button" data-device-action="stop" type="button">GPU 해제</button>' : ""}` : device.kind === "local" ? '<button class="ghost-button" data-device-action="local-model" type="button">모델 · 설정</button>' : '<button class="ghost-button" data-device-action="status" type="button">상태 확인</button>'}</div>
+        <div class="device-secondary-actions">${managed ? `<button class="ghost-button" data-device-action="install" type="button">모델 · 설정</button>${cleanupPending && !(worker?.phase === "stopped" && worker?.cleaned) ? `<button class="ghost-button" data-device-action="stop" type="button">${gpuActive ? "GPU 해제" : "작업 정리"}</button>` : ""}` : device.kind === "local" ? '<button class="ghost-button" data-device-action="local-model" type="button">모델 · 설정</button>' : '<button class="ghost-button" data-device-action="status" type="button">상태 확인</button>'}</div>
       </div></article>`;
   }).join("");
   renderEnvironment();
@@ -1431,7 +1632,9 @@ function renderLocalModel() {
   const local = state.modelDeviceId === "local";
   const source = $('#model-sources input:checked').value;
   const busy = modelBusy(model) || state.localModelSubmitting || state.modelLoading;
+  $('#save-chunk-default').disabled = busy || state.chunkDefaultSaving;
   for (const field of document.querySelectorAll('#model-options input, #model-options select, #model-choice, #model-custom-id, [data-apply-profile]')) field.disabled = busy;
+  document.querySelector('[data-knob=chunk_minutes]').disabled = busy || state.chunkDefaultSaving;
   $("#model-sources").disabled = busy;
   $("#model-folder-fields").classList.toggle("hidden", source !== "folder");
   $("#model-cache-info").classList.toggle("hidden", source !== "cache");
@@ -1440,7 +1643,7 @@ function renderLocalModel() {
   $("#model-folder-path").required = source === "folder";
   $("#choose-model-folder").disabled = busy;
   $("#choose-model-folder").classList.toggle("hidden", !local || !window.webkit?.messageHandlers?.chooseModelFolder);
-  $("#prepare-local-model").disabled = busy || !model || !!state.modelError;
+  $("#prepare-local-model").disabled = busy || state.chunkDefaultSaving || !model || !!state.modelError;
   $("#prepare-local-model").textContent = state.modelLoading ? "위치 확인 중…" : busy ? "준비 중…" : "모델 준비";
   const phase = state.modelError ? "error" : model?.phase;
   $("#model-preparation").classList.toggle("hidden", !localModelPhases[phase]);
@@ -1456,6 +1659,7 @@ async function openLocalModel(id = "local", preferredModel = "") {
   state.modelDeviceId = id;
   state.modelLoading = true;
   state.modelError = null;
+  $('#chunk-default-status').textContent = '';
   const local = id === "local";
   const device = state.devices.find(device => device.id === id);
   $("#model-choice").innerHTML = modelOptionsHtml(id, preferredModel || device?.model_key || (local ? 'mlx-8bit' : 'cuda-original'));
@@ -1518,6 +1722,24 @@ async function pollLocalModel() {
 }
 
 $("#close-local-model").addEventListener("click", () => $("#local-model-dialog").close());
+$('#save-chunk-default').addEventListener('click', async () => {
+  const input = document.querySelector('[data-knob=chunk_minutes]');
+  if (!input.reportValidity() || state.chunkDefaultSaving) return;
+  const id = state.modelDeviceId;
+  state.chunkDefaultSaving = true;
+  renderLocalModel();
+  try {
+    const saved = await api(`/api/devices/${encodeURIComponent(id)}/chunk-default`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({chunk_minutes:input.valueAsNumber})});
+    const device = state.devices.find(item => item.id === id);
+    if (device) Object.assign(device, saved);
+    if (state.modelMetadata[id]) state.modelMetadata[id].options = {...state.modelMetadata[id].options, chunk_minutes:saved.options.chunk_minutes};
+    if (id === state.modelDeviceId) $('#chunk-default-status').textContent = '저장됨 · 다음 노트부터 적용됩니다.';
+    renderDevices();
+    if ($('#upload-dialog').open) renderFilePreparation();
+  } catch (error) { toast(error.message, true); }
+  finally { state.chunkDefaultSaving = false; renderLocalModel(); }
+});
 $("#model-sources").addEventListener("change", renderLocalModel);
 $("#choose-model-folder").addEventListener("click", async () => {
   const request = state.modelRequest;
@@ -1601,7 +1823,7 @@ $("#ssh-host").addEventListener("change", () => {
   updateDeviceRegistration();
 });
 
-function gib(value) { return value == null ? "확인 불가" : `${(value / 1024).toFixed(1)} GB`; }
+function mib(value) { return value == null ? "확인 불가" : `${value.toFixed(0)} MiB`; }
 
 function updateDeviceRegistration() {
   $("#add-device").disabled = state.addingDevice || !$("#ssh-host").value;
@@ -1621,21 +1843,23 @@ async function refreshGpu() {
   try {
     const result = await api(`/api/devices/${encodeURIComponent(device.id)}/gpus`, { method: "POST", signal: controller.signal });
     if (request !== state.sshRequest || executionDevice()?.id !== device.id) return;
+    if (Number.isFinite(result.chunk_default_minutes)) device.options = {...device.options, chunk_minutes:result.chunk_default_minutes};
     state.gpuInventory = result.gpus;
-    state.selectedGpu = result.gpus.find(gpu => gpu.uuid === state.selectedGpu?.uuid && gpu.idle_candidate) || null;
+    state.selectedGpu = result.gpus.find(gpu => gpu.uuid === state.selectedGpu?.uuid) || null;
+    if (!state.selectedGpu || state.gpuApproval?.token !== state.selectedGpu.busy_confirmation || state.selectedGpu.idle_candidate) state.gpuApproval = null;
     const focused = $("#gpu-probe-result input:focus")?.value;
     const checked = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(result.checked_at));
     const rows = result.gpus.map(gpu => {
       const activity = gpu.utilization_percent == null ? "확인 불가" : `${gpu.utilization_percent}%`;
       const processes = gpu.process_info_known ? `${gpu.processes.length}개` : "확인 불가";
       const tooltip = gpu.processes.map(process => `${process.name} (PID ${process.pid})`).join(", ");
-      return `<tr><td><label title="${escapeHtml(gpu.name)}"><input type="radio" name="selected-gpu" value="${escapeHtml(gpu.uuid)}" ${state.selectedGpu?.uuid === gpu.uuid ? "checked" : ""} ${gpu.idle_candidate ? "" : "disabled"}>GPU #${gpu.index}</label><small>${escapeHtml(gpu.name.replace(/^NVIDIA (GeForce )?/, ""))}</small></td>
-        <td>${escapeHtml(gib(gpu.memory_free_mib))} / ${escapeHtml(gib(gpu.memory_total_mib))}</td>
+      return `<tr><td><label title="${escapeHtml(gpu.name)}"><input type="radio" name="selected-gpu" value="${escapeHtml(gpu.uuid)}" ${state.selectedGpu?.uuid === gpu.uuid ? "checked" : ""}>GPU #${gpu.index}</label><small>${escapeHtml(gpu.name.replace(/^NVIDIA (GeForce )?/, ""))}</small></td>
+        <td>${escapeHtml(mib(gpu.memory_used_mib))} / ${escapeHtml(mib(gpu.memory_total_mib))}</td>
         <td>${activity}</td><td title="${escapeHtml(tooltip)}">${processes}</td>
-        <td class="${gpu.idle_candidate ? "gpu-idle" : "gpu-occupied"}">${gpu.idle_candidate ? "여유" : "사용 중"}</td></tr>`;
+        <td class="${gpu.idle_candidate ? "gpu-idle" : "gpu-occupied"}">${gpu.idle_candidate ? "여유" : "사용 중 · 확인 필요"}</td></tr>`;
     }).join("");
     $("#gpu-probe-result").innerHTML = `<b>${escapeHtml(device.host)} · ${checked} 확인 · 3초마다 갱신</b>
-      ${rows ? `<div class="gpu-table-wrap"><table class="gpu-table"><thead><tr><th>GPU</th><th>여유 / 전체 VRAM</th><th>사용률</th><th>프로세스</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+      ${rows ? `<div class="gpu-table-wrap"><table class="gpu-table"><thead><tr><th>GPU</th><th>사용 / 전체 VRAM</th><th>사용률</th><th>프로세스</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
       <p>${escapeHtml(result.message)}</p>`;
     if (focused) [...$("#gpu-probe-result").querySelectorAll("input")].find(input => input.value === focused && !input.disabled)?.focus({ preventScroll: true });
   } catch (error) {
@@ -1652,11 +1876,48 @@ async function refreshGpu() {
 }
 
 $("#probe-ssh-host").addEventListener("click", refreshGpu);
-$("#gpu-probe-result").addEventListener("change", event => {
+$("#gpu-probe-result").addEventListener("change", async event => {
   if (event.target.name !== "selected-gpu") return;
-  state.selectedGpu = state.gpuInventory.find(gpu => gpu.uuid === event.target.value && gpu.idle_candidate) || null;
+  const deviceId = state.gpuDeviceId;
+  const previous = state.selectedGpu;
+  const gpu = state.gpuInventory.find(gpu => gpu.uuid === event.target.value);
+  if (!gpu) return;
+  if (!gpu.idle_candidate) {
+    stopGpuMonitor();
+    const allowed = await confirmBusyGpu(gpu);
+    if (state.gpuDeviceId !== deviceId || !$("#upload-dialog").open) return;
+    if (!allowed) {
+      state.selectedGpu = previous;
+      await refreshGpu();
+      return;
+    }
+    state.gpuApproval = { uuid: gpu.uuid, token: gpu.busy_confirmation };
+  } else state.gpuApproval = null;
+  state.selectedGpu = gpu;
   renderFilePreparation();
+  if (!gpu.idle_candidate) refreshGpu();
 });
+
+function confirmBusyGpu(gpu) {
+  if (state.gpuWarningResolve) return Promise.resolve(false);
+  $("#gpu-warning-description").textContent = `GPU #${gpu.index} · ${gpu.name} · VRAM ${mib(gpu.memory_used_mib)} / ${mib(gpu.memory_total_mib)} 사용 중`;
+  $("#gpu-warning-processes").innerHTML = gpu.processes?.length
+    ? '<p>다음 프로세스가 이 GPU를 사용 중입니다.</p>' + gpu.processes.map(process => `<p><strong>${escapeHtml(process.name || '이름 확인 불가')}</strong> · PID ${escapeHtml(process.pid || '확인 불가')} · ${escapeHtml(mib(process.memory_mib))}</p>`).join('')
+    : '<p>GPU 사용 프로세스를 확인할 수 없거나, 사용률·메모리가 여유 기준을 넘었습니다.</p>';
+  $("#gpu-warning-dialog").showModal();
+  $("#cancel-gpu-warning").focus({ preventScroll: true });
+  return new Promise(resolve => { state.gpuWarningResolve = resolve; });
+}
+function closeGpuWarning(allowed = false) {
+  const resolve = state.gpuWarningResolve;
+  state.gpuWarningResolve = null;
+  if ($("#gpu-warning-dialog").open) $("#gpu-warning-dialog").close();
+  resolve?.(allowed);
+}
+$("#confirm-gpu-warning").addEventListener("click", () => closeGpuWarning(true));
+$("#cancel-gpu-warning").addEventListener("click", () => closeGpuWarning(false));
+$("#close-gpu-warning").addEventListener("click", () => closeGpuWarning(false));
+bindConfirmationDialog("#gpu-warning-dialog", () => closeGpuWarning(false));
 
 $("#device-backend").addEventListener("change", () => {
   const managed = $("#device-backend").value === "cuda";
@@ -1761,7 +2022,7 @@ async function checkHealth() {
     if (Number.isInteger(defaultMinutes) && defaultMinutes >= 1 && defaultMinutes <= 90) {
       state.defaultChunkMinutes = defaultMinutes;
     }
-    if (!fileInput.files.length) resetDropZone();
+    if (!state.uploadPreparation && !fileInput.files.length) resetDropZone();
   } catch (_) { state.deviceStatus.local = { ok: false }; }
   finally { state.healthChecking = false; renderDevices(); }
 }
@@ -1789,7 +2050,7 @@ async function refreshDevicePanel(manual = false) {
   }
 }
 window.addEventListener("beforeunload", event => {
-  if (state.pendingChanges || state.savePromise || state.uploading) event.preventDefault();
+  if (state.pendingChanges || state.savePromise || state.uploading || window.cosmossVoiceProfiles?.busy) event.preventDefault();
 });
 const saveLocationReady = loadSaveLocation();
 refreshAppSetup();
@@ -1803,10 +2064,10 @@ setInterval(() => refreshDevicePanel(), 10000);
 
 function renderTextFileActions() {
   const note = state.current;
-  for (const selector of ["#save-txt", "#reveal-txt", "#edit-speakers"]) $(selector).disabled = note?.status !== "done";
+  for (const selector of ["#retry-result-save", "#reveal-txt", "#edit-speakers"]) $(selector).disabled = note?.status !== "done";
   if (note?.source_type === "text_file") $("#edit-speakers").disabled = !note.segments.length;
-  $("#save-txt").textContent = `${(note?.output_format || "txt").toUpperCase()} 저장`;
-  $("#text-file-location").textContent = note?.text_path ? note.text_path : "파일을 저장하면 선택한 기본 폴더에 보관됩니다.";
+  $("#retry-result-save").classList.toggle("hidden", note?.status !== "done" || !!note.text_path);
+  $("#text-file-location").textContent = note?.text_save_error || note?.text_path || "";
   $("#text-file-location").title = note?.text_path || "";
 }
 
@@ -1815,18 +2076,19 @@ async function ensureTextFile() {
   if (!id || state.current.status !== "done") throw new Error("전사가 완료된 노트를 선택해 주세요.");
   await flushSave();
   await saveLocationReady;
+  if (state.current?.id === id && state.current.text_path) return state.current;
   const note = await api(`/api/notes/${encodeURIComponent(id)}/text-file`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ directory: state.saveDirectory }),
   });
   if (state.current?.id === id) {
-    state.current = note.source_type === "text_file" ? note : { ...state.current, text_path: note.text_path, text_hash: note.text_hash };
+    state.current = note.source_type === "text_file" ? note : { ...state.current, text_path: note.text_path, text_hash: note.text_hash, text_save_error: null };
     if (note.source_type === "text_file") renderEditor();
     renderTextFileActions();
   }
   return note;
 }
 
-$("#save-txt").addEventListener("click", async event => {
+$("#retry-result-save").addEventListener("click", async event => {
   const button = event.currentTarget;
   button.disabled = true;
   try { await ensureTextFile(); toast("파일을 저장했습니다."); }
@@ -1848,7 +2110,25 @@ function renderSpeakerDialog() {
   $("#speaker-choices").innerHTML = draft.speakers.map(speaker => `<button type="button" class="speaker-choice" draggable="${draft.speakers.length > 1}" data-select-speaker="${escapeHtml(speaker)}" aria-pressed="${speaker === draft.selected}" aria-describedby="speaker-merge-help"><small>${escapeHtml(speaker)} · ${draft.segments.filter(s => s.speaker === speaker).length}개 발화</small><strong>${escapeHtml(draft.names[speaker] || speaker)}</strong></button>`).join("");
   $("#speaker-name-label").textContent = `${draft.selected} 이름`;
   $("#speaker-name").value = draft.names[draft.selected] || "";
-  $("#speaker-preview").innerHTML = draft.segments.map(segment => `<article class="speaker-preview-row ${segment.speaker === draft.selected ? "highlighted" : ""}" data-preview-speaker="${escapeHtml(segment.speaker)}"><div><span>${clock(segment.start)}</span><span>${escapeHtml(draft.names[segment.speaker] || segment.speaker)}</span></div><p>${escapeHtml(segment.text)}</p></article>`).join("");
+  draft.utterances = draft.segments.flatMap((segment, index) => segment.speaker === draft.selected ? [index] : []);
+  draft.utterancePosition = 0;
+  $("#speaker-navigation-help").textContent = "↑·↓로 선택한 화자의 발화 이동";
+  $("#speaker-preview").innerHTML = draft.segments.map((segment, index) => `<article class="speaker-preview-row ${segment.speaker === draft.selected ? "highlighted" : ""}" data-preview-index="${index}" data-preview-speaker="${escapeHtml(segment.speaker)}"><div><span>${clock(segment.start)}</span><span>${escapeHtml(draft.names[segment.speaker] || segment.speaker)}</span></div><p>${escapeHtml(segment.text)}</p></article>`).join("");
+}
+
+function goToSpeakerUtterance(position, focus = false) {
+  const draft = state.speakerDraft;
+  if (!draft?.utterances.length) return;
+  draft.utterancePosition = Math.max(0, Math.min(position, draft.utterances.length - 1));
+  const preview = $("#speaker-preview");
+  const row = preview.querySelector(`[data-preview-index="${draft.utterances[draft.utterancePosition]}"]`);
+  preview.querySelectorAll('.is-current').forEach(item => { item.classList.remove('is-current'); item.removeAttribute('aria-current'); });
+  row.classList.add('is-current');
+  row.setAttribute('aria-current', 'true');
+  if (focus) preview.focus({ preventScroll: true });
+  const top = preview.scrollTop + row.getBoundingClientRect().top - preview.getBoundingClientRect().top - 6;
+  preview.scrollTo({ top, behavior: 'instant' });
+  $("#speaker-navigation-help").textContent = `↑·↓로 선택한 화자의 발화 이동 · ${draft.utterancePosition + 1}/${draft.utterances.length}`;
 }
 
 async function openSpeakerDialog(selected) {
@@ -1863,9 +2143,35 @@ async function openSpeakerDialog(selected) {
     $("#speaker-save-error").classList.add("hidden");
     renderSpeakerDialog();
     $("#speaker-dialog").showModal();
+    $("#identify-voice-speakers").disabled = note.source_type === 'text_file';
+    $("#speaker-voice-status").textContent = note.voice_match_error || (note.voice_matches?.some(match => match.accepted) ? `등록한 목소리로 ${note.voice_matches.filter(match => match.accepted).length}명의 이름을 찾았습니다.` : '');
+    $("#speaker-voice-status").classList.toggle('hidden', !$("#speaker-voice-status").textContent);
+    goToSpeakerUtterance(0, true);
   } catch (error) { toast(error.message, true); }
 }
 $("#edit-speakers").addEventListener("click", () => openSpeakerDialog());
+$("#identify-voice-speakers").addEventListener('click', async () => {
+  const draft = state.speakerDraft;
+  if (!draft || state.speakerSaving || state.voiceIdentifying) return;
+  state.voiceIdentifying = true;
+  const button = $("#identify-voice-speakers");
+  button.disabled = true;
+  button.textContent = '목소리 비교 중…';
+  $('#save-speakers').disabled = true;
+  try {
+    const result = await api(`/api/notes/${encodeURIComponent(draft.id)}/identify-speakers`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({speaker_merges: draft.merges})});
+    if (state.speakerDraft !== draft) return;
+    let count = 0;
+    for (const [speaker, name] of Object.entries(result.speaker_names)) {
+      if (draft.speakers.includes(speaker) && (!draft.names[speaker] || draft.names[speaker] === speaker)) { draft.names[speaker] = name; count++; }
+    }
+    renderSpeakerDialog();
+    goToSpeakerUtterance(0, true);
+    $("#speaker-voice-status").textContent = count ? `${count}명의 이름을 채웠습니다. 저장하면 파일에 반영됩니다.` : '추가로 지정할 이름을 찾지 못했습니다. 등록한 프로필과 유사도 기준을 확인해 주세요.';
+    $("#speaker-voice-status").classList.remove('hidden');
+  } catch (error) { if (state.speakerDraft === draft) toast(error.message, true); }
+  finally { state.voiceIdentifying = false; $('#save-speakers').disabled = state.speakerSaving; button.disabled = state.current?.source_type === 'text_file'; button.textContent = '목소리로 이름 찾기'; }
+});
 let speakerDrag = null;
 let speakerMerge = null;
 function clearSpeakerDrag() {
@@ -1878,7 +2184,7 @@ function closeSpeakerMerge() {
 }
 function requestSpeakerMerge(source, target) {
   const draft = state.speakerDraft;
-  if (!draft || state.speakerSaving || source === target || !draft.speakers.includes(source) || !draft.speakers.includes(target)) return;
+  if (!draft || state.speakerSaving || state.voiceIdentifying || source === target || !draft.speakers.includes(source) || !draft.speakers.includes(target)) return;
   const label = speaker => {
     const name = draft.names[speaker]?.trim() || speaker;
     return name === speaker ? name : `${name} (${speaker})`;
@@ -1925,13 +2231,14 @@ $("#confirm-speaker-merge").addEventListener("click", () => {
   const pending = speakerMerge;
   const draft = state.speakerDraft;
   closeSpeakerMerge();
-  if (!pending || !draft || state.speakerSaving || pending.id !== draft.id || !draft.speakers.includes(pending.source) || !draft.speakers.includes(pending.target)) return;
+  if (!pending || !draft || state.speakerSaving || state.voiceIdentifying || pending.id !== draft.id || !draft.speakers.includes(pending.source) || !draft.speakers.includes(pending.target)) return;
   draft.merges[pending.source] = pending.target;
   for (const source of Object.keys(draft.merges)) if (draft.merges[source] === pending.source) draft.merges[source] = pending.target;
   draft.segments = draft.segments.map(segment => segment.speaker === pending.source ? { ...segment, speaker: pending.target } : segment);
   draft.speakers = draft.speakers.filter(speaker => speaker !== pending.source);
   draft.selected = pending.target;
   renderSpeakerDialog();
+  goToSpeakerUtterance(0);
   $("#speaker-name").focus({ preventScroll: true });
 });
 $("#speaker-choices").addEventListener("click", event => {
@@ -1939,6 +2246,13 @@ $("#speaker-choices").addEventListener("click", event => {
   if (!button || !state.speakerDraft || state.speakerSaving) return;
   state.speakerDraft.selected = button.dataset.selectSpeaker;
   renderSpeakerDialog();
+  goToSpeakerUtterance(0, true);
+});
+$("#speaker-dialog").addEventListener("keydown", event => {
+  if (!['ArrowUp', 'ArrowDown'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing || event.defaultPrevented) return;
+  if (!state.speakerDraft || state.speakerSaving || $("#speaker-merge-dialog").open || event.target.closest('input, textarea, select, [contenteditable]')) return;
+  event.preventDefault();
+  goToSpeakerUtterance(state.speakerDraft.utterancePosition + (event.key === 'ArrowDown' ? 1 : -1));
 });
 $("#speaker-name").addEventListener("input", event => {
   const draft = state.speakerDraft;
@@ -1952,7 +2266,7 @@ $("#speaker-dialog").addEventListener("cancel", event => { if (state.speakerSavi
 $("#speaker-dialog").addEventListener("close", () => { clearSpeakerDrag(); closeSpeakerMerge(); state.speakerDraft = null; });
 $("#save-speakers").addEventListener("click", async () => {
   const draft = state.speakerDraft;
-  if (!draft || state.speakerSaving) return;
+  if (!draft || state.speakerSaving || state.voiceIdentifying) return;
   state.speakerSaving = true;
   const controls = [...$("#speaker-dialog").querySelectorAll("button, input")];
   controls.forEach(control => control.disabled = true);

@@ -54,6 +54,7 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(self.python.read_text(),'installed interpreter')
         self.assertEqual(self.model.read_bytes(),b'model weights')
         self.assertEqual((other/'worker.log').read_text(),'other device')
+        self.assertFalse(bootstrap.job_cleanup_pending(self.root))
         bootstrap.cleanup_job_files(self.root,self.device)  # Idempotent retry.
 
     def test_cleanup_unlinks_transient_symlinks_without_following_them(self):
@@ -61,6 +62,7 @@ class CleanupTests(unittest.TestCase):
         external.mkdir()
         (external/'keep.wav').write_bytes(b'keep')
         (self.root/'tmp').symlink_to(external,target_is_directory=True)
+        self.assertTrue(bootstrap.job_cleanup_pending(self.root))
         bootstrap.cleanup_job_files(self.root,self.device)
         self.assertEqual((external/'keep.wav').read_bytes(),b'keep')
         self.assertFalse((self.root/'tmp').exists())
@@ -175,6 +177,19 @@ class CleanupTests(unittest.TestCase):
 
 
 class CleanupStateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_successful_stop_clears_gpu_identity_and_persists_confirmation(self):
+        confirmed = MagicMock()
+        workers = RemoteWorkers(on_stopped=confirmed)
+        device = {'id': 'a' * 32}
+        workers.states[device['id']] = {'phase': 'ready', 'action': 'stop', 'active_gpu_uuid': 'GPU-test', 'worker_cleanup_pending': True}
+        async def success(device, action, on_event):
+            on_event({'phase': 'stopped', 'cleaned': True})
+        with patch.object(workers, 'execute', new=success):
+            await workers.run(device, 'stop')
+        self.assertIsNone(workers.states[device['id']]['active_gpu_uuid'])
+        self.assertFalse(workers.states[device['id']]['worker_cleanup_pending'])
+        confirmed.assert_called_once_with(device['id'])
+
     async def test_cleanup_failure_is_reported_and_success_keeps_confirmation(self):
         workers=RemoteWorkers()
         device={'id':'a'*32}

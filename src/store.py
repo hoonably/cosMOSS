@@ -89,6 +89,10 @@ class NoteStore:
                 "text_hash": "TEXT",
                 "speaker_merges_json": "TEXT NOT NULL DEFAULT '{}'",
                 "output_format": "TEXT NOT NULL DEFAULT 'txt'",
+                "output_directory": "TEXT",
+                "text_save_error": "TEXT",
+                "voice_matches_json": "TEXT NOT NULL DEFAULT '[]'",
+                "voice_match_error": "TEXT",
             }
             for name, definition in migrations.items():
                 if name not in columns:
@@ -356,6 +360,7 @@ class NoteStore:
             "speaker_names": "speaker_names_json",
             "speaker_merges": "speaker_merges_json",
             "model_progress": "model_progress_json",
+            "voice_matches": "voice_matches_json",
         }
         normalized: dict[str, Any] = {}
         for key, value in changes.items():
@@ -396,4 +401,5 @@ class NoteStore:
         result["speaker_names"] = json.loads(result.pop("speaker_names_json") or "{}")
         result["speaker_merges"] = json.loads(result.pop("speaker_merges_json", "{}") or "{}")
         result["model_progress"] = json.loads(result.pop("model_progress_json", "{}") or "{}")
+        result["voice_matches"] = json.loads(result.pop("voice_matches_json", "[]") or "[]")
         return result

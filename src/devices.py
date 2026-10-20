@@ -55,6 +55,7 @@ class DeviceStore:
                   "model_cache": model_cache, "model_prepared": False}
         if backend == "cuda":
             device["api_key"] = secrets.token_urlsafe(32)
+            device["worker_cleanup_pending"] = False
         with self.lock, self._connect() as connection:
             for row in connection.execute("SELECT config FROM devices"):
                 previous = json.loads(row[0])
@@ -76,6 +77,23 @@ class DeviceStore:
             device = self.get(device_id)
             device.update(values)
             connection.execute("UPDATE devices SET config = ? WHERE id = ?", (json.dumps(device), device_id))
+        return device
+
+    def initialize_chunk_default(self, device_id: str, minutes: int, hardware: dict | None = None) -> dict[str, Any]:
+        with self.lock, self._connect() as connection:
+            device = self.get(device_id)
+            # A model/settings save may race the first hardware report.
+            device['options'] = {'chunk_minutes':minutes, **device.get('options', {})}
+            if hardware:
+                device['hardware'] = hardware
+            connection.execute('UPDATE devices SET config=? WHERE id=?', (json.dumps(device), device_id))
+        return device
+
+    def set_chunk_default(self, device_id: str, minutes: int) -> dict[str, Any]:
+        with self.lock, self._connect() as connection:
+            device = self.get(device_id)
+            device['options'] = {**device.get('options', {}), 'chunk_minutes':minutes}
+            connection.execute('UPDATE devices SET config=? WHERE id=?', (json.dumps(device), device_id))
         return device
 
     def delete(self, device_id: str) -> None:

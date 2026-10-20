@@ -29,6 +29,28 @@ readiness before using absolute tool paths; upload/transcription routes cannot
 start a software download around the protected setup endpoint. Source and release
 apps use the same resolver.
 `tests/test_media_tools.py` covers setup, offline reuse, recovery and isolation.
+`src/voice_memos.py` reads the Mac Voice Memos SQLite metadata in read-only mode
+only when its picker is opened. It falls back to local filenames for unfamiliar
+schemas and marks cloud-only recordings unavailable. Recognized deletion dates
+(`ZEVICTIONDATE`, the backing field for CloudRecording.deletionDate, or
+`ZDELETIONDATE`) retain hidden metadata tombstones so surviving Recently Deleted
+files cannot reappear through filename fallback. Import rescans that same state
+and rejects a selection deleted since the picker opened; restoring clears the
+exclusion. The current Mac's model accessor was inspected read-only to verify
+the eviction/deletion alias; no private API is linked or called by cosMOSS. Explicit imports use opaque
+IDs, file-version checks and the existing bounded upload/preparation pipeline;
+recordings and Apple's database are never edited. Opening the picker first
+probes the known Voice Memos directories from the native foreground process.
+The settings button opens Privacy_AllFiles alongside `FullDiskAccessAssistant`,
+a small floating native panel. Its `NSDraggingItem` writes the actual running
+bundle's file URL to the drag pasteboard; the user drops it into Settings and
+turns on the switch. It works with bundles outside Applications too. A completed
+file drag is never treated as permission approval. Done closes the panel and
+returns to the existing picker, which rescans access. No settings UI automation,
+TCC writes, resets or automatic grants occur. `tests/FullDiskAccessGuideChecks.swift`
+renders the real panel offscreen and checks the real app URL on a private
+pasteboard without opening Settings. The browser smoke checks the return event. `tests/test_voice_memos.py`
+covers metadata, isolation, stale files, limits and local-only access.
 `tests/setup_ui_smoke.py` checks common setup progress, retry, background polling,
 remote-only model preparation and the settings dialog at desktop/mobile widths.
 
@@ -42,8 +64,34 @@ node --check static/selects.js
 node --check static/panes.js
 ```
 
-Build the downloadable app and ZIP with `./scripts/build-mac-release.sh`.
-The output is `dist/cosMOSS-v<version>-macos-arm64.zip`.
+Build the downloadable app, DMG installer and updater ZIP with
+`./scripts/build-mac-release.sh`. The outputs are
+`dist/cosMOSS-v<version>-macos-arm64.dmg` and `.zip`.
+Normal development builds (`build-mac-app.sh`) do not generate either archive.
+Local signing uses `scripts/sign-mac-app.py`: it automatically uses the one
+available Apple Development certificate (or Developer ID Application certificate).
+Set `COSMOSS_CODESIGN_IDENTITY` to a certificate name or SHA-1 if several exist.
+An explicitly selected certificate that cannot sign fails the build; it never
+silently falls back to another identity. Without a certificate, the script warns
+and uses ad-hoc signing. Keep the same certificate and bundle ID across rebuilds
+so macOS can recognize the app's designated requirement and retain permissions.
+After switching from an old ad-hoc build, quit the app, remove its old Full Disk
+Access entry and add the current app once, then relaunch. Signing does not grant
+or reset permissions. See [Apple TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+
+Release builds deliberately default to ad-hoc signing rather than distributing
+an Apple Development build. `COSMOSS_RELEASE_CODESIGN_IDENTITY` explicitly selects
+a distribution identity; Developer ID signing and notarization require separate
+release setup. Sparkle's update signature is independent of Apple code signing.
+`tests/signing_smoke.py` changes a temporary bundle and verifies that both signed
+versions satisfy each other's designated requirements without touching TCC.
+To package an existing standalone app without rebuilding it, run
+`./scripts/build-mac-dmg.sh /path/to/cosMOSS.app`. Packaging uses pinned dmgbuild
+tools in uv's cache, creates the branded Finder layout without UI automation,
+and verifies the compressed image before replacing the previous DMG.
+The app icon uses the existing green waveform. Run `swift scripts/build-app-icon.swift`
+to regenerate `macos/Assets/AppIcon.icns` and its PNG/SVG previews after changing the artwork.
+Both development and release bundles include the same icon.
 
 ## Publishing updates
 
@@ -52,9 +100,9 @@ Both the app version and monotonic build number come from `pyproject.toml`
 (build = major × 1,000,000 + minor × 1,000 + patch). Update the matching project
 version in `uv.lock` when bumping the version; keep dependency pins unchanged.
 
-Run `UV_BIN=/path/to/uv ./scripts/prepare-release.sh` to test, build the ZIP, and
+Run `UV_BIN=/path/to/uv ./scripts/prepare-release.sh` to test, build the DMG/ZIP, and
 generate `appcast.xml`. This feed is served from the repository's `main` branch.
-Publish the ZIP on the matching GitHub release before pushing
+Publish the DMG and ZIP on the matching GitHub release before pushing
 the new feed, so installed apps only see downloadable updates. Publish a feed
 change as a separate follow-up commit if necessary. Release notes stay short.
 
@@ -69,6 +117,11 @@ installation; `scripts/setup-update-key.swift` checks that both keys match.
 embedded public key. An install/relaunch waits for transcription, uploads,
 model preparation and summaries to finish, and for pending editor saves.
 The updater is disabled in checkout-based development launchers.
+The native update-check window exposes Sparkle's persisted automatic-check setting.
+`SUEnableAutomaticChecks` enables it on first launch; user choices are never reset.
+Manual checks remain available when automatic notifications are off. Run
+`python tests/update_preferences_smoke.py` to verify the default, persistence,
+manual checks, update availability and signed-feed error handling in isolated apps.
 The original `0.1.0` build had no updater. Its replacement pre-release uses build
 1000 and must be installed manually once; subsequent versions update in-app.
 
@@ -158,6 +211,63 @@ remain separate. Use the
 `COSMOSS_DESKTOP_PORT` launch environment variable to override the port. `.env`
 continues to configure the Python application and transcription endpoint.
 
+## Startup file-access gate
+
+The native `FullDiskAccessGate` runs before `BackendController.start()`, updater
+startup and `WorkspaceView` construction. Without FDA only the native permission
+screen is presented: the backend cannot index the default Downloads directory
+and cause an earlier per-folder prompt. The drag assistant is shared with the
+Voice Memos flow. Activation/Done/recheck retries the check; a restart action is
+available only before authorization and backend startup, and launches a new app
+instance before terminating the old one. It never stops an active transcription.
+
+There is no public FDA status API. The check opens an FDA-protected system or
+per-user TCC database as a read-only, no-follow descriptor, verifies a regular
+file, then closes it without reading bytes, parsing records or writing anything.
+Both known locations are supported because the per-user database can be absent.
+Readable Downloads or Voice Memos folders alone are not treated as FDA.
+The grant is checked on every native process launch; successful startup is held
+for that process so a permission change does not abruptly interrupt an active
+job. Source/browser backend runs remain separate and use their caller's access.
+`tests/startup_access_smoke.py` covers denied/granted/retry/fresh-launch states,
+concurrent checks and no-follow descriptor probes, and renders the onboarding
+screen offscreen without changing permissions or launching the backend.
+
+## Voice profile pipeline
+
+`VoiceEngine` explicitly prepares an isolated uv venv (sherpa-onnx 1.13.8,
+numpy 2.2.6) and SHA-256-pinned 28MB CAM++ ONNX model under
+`.cache/voice-engine/`. The separate worker uses CPU only. Setup checks and
+repairs the environment; reads and transcription never initiate downloads.
+Recording requires an explicit click, WKWebView microphone permission and
+`NSMicrophoneUsageDescription`; camera access stays disabled.
+
+`VoiceProfiles` stores profiles in a private `data/voice-profiles/profiles.sqlite3`.
+The versioned `.mossvoice` format is bounded JSON containing a name, 16kHz mono
+PCM sample, hash, model ID and normalized 192-dimensional embedding. Imports
+validate size, schema, waveform, hash and vectors; they cannot supply executable
+code, paths or model URLs. Export includes the sample for portability.
+
+Enrollment normalizes a five-second excerpt with FFmpeg. Matching takes up to
+three non-overlapping excerpts per diarized speaker, averages normalized
+embeddings and compares cosine similarities by name. The provisional threshold
+is 0.75 with a 0.10 lead over the next distinct name; these are not calibrated
+probabilities. New transcriptions apply accepted names before automatic file
+saving; optional matching errors preserve the transcript. Existing managed audio
+notes preview suggested names in the speaker dialog and commit on Save.
+Original audio/text is never modified by registration, export, import or preview.
+Subprocesses, microphone tracks and temporary excerpts are cleaned up on finish,
+cancellation or shutdown. Registered profiles and the optional runtime persist.
+
+`tests/test_voice_profiles.py` covers format boundaries, persistence, ambiguity,
+origin checks and fallback on matching failure. `tests/voice_profiles_real_smoke.py`
+uses a supplied real recording and actual ONNX runtime in temporary storage to
+check registration, portable roundtrip, automatic naming and all result formats.
+`tests/voice_profiles_ui_smoke.py` checks the same enrollment/import/edit flow in
+WebKit with the supplied sample; it does not grant microphone permissions.
+Do functional QA with copies of existing Downloads files or the user's recordings;
+keep originals unchanged and do not send their contents to AI services.
+
 ## Transcription server contract
 
 Both modes call the same endpoints:
@@ -210,6 +320,20 @@ validation, dynamic device cards and control heights in Chromium and WebKit.
 speaker saves write the TXT before committing names; later note edits update the
 same file. External edits cause a conflict rather than an overwrite. Deleting a
 note removes its managed audio and summary, but preserves its exported TXT.
+
+New-note submissions pin `output_format` and `output_directory`. After inference,
+the backend atomically writes that file before publishing the completed note;
+no browser window or extra save/export action is required. Save failures preserve
+the completed transcript and expose a file-only retry. The review list merges
+completed jobs and indexed files by path and shows only one result card in the
+selected folder, without an audio player or separate export controls. Legacy
+manual exports with matching names and bytes are linked without rewriting them.
+`tests/test_automatic_output.py` verifies every format, pinned folders, collisions,
+edit synchronization, denied writes, recovery without inference and route origins.
+The speaker dialog scrolls its preview to the selected speaker's first utterance;
+Up/Down skips other speakers, clamps at the ends and preserves text-field keys.
+`tests/speaker_navigation_ui_smoke.py` exercises long TXT/SRT previews, focus,
+scrolling, reduced motion, merge resets and source preservation.
 
 `src/summaries.py` calls authenticated local Codex or Claude CLIs using argv and
 stdin, without a shell. The source is a fixed snapshot of the edited TXT. Codex
@@ -264,3 +388,35 @@ Application source was imported from ginjae/mac-moss commit
 recordings, model weights, environments, and caches were not copied.
 
 Device/GPU tests and a browser smoke test are documented in [DEVICES.md](DEVICES.md).
+
+## Initial processing estimates
+
+`src/processing_estimates.py` owns the versioned `initial-v1` heuristics. These are
+planning ranges, not measured device benchmarks. Tune coefficients here after
+real runs; the UI explicitly labels them as initial estimates.
+
+- The memory model uses the published MOSS configuration (28 decoder layers,
+  8 KV heads, head dimension 128), an approximate 12.5 audio tokens/second,
+  output-token allowance, weights, KV precision/cache settings and coarse audio
+  activation/runtime allowances. Eager attention adds a quadratic score-matrix
+  term. The displayed interval is 0.75–1.4 times the rough peak, not a statistical
+  confidence interval. Custom models return no estimate.
+- Time uses deliberately provisional real-time ratios in `TIME_RATIOS`, with
+  a mix of linear/context-length costs, bridge processing and per-chunk overhead.
+  The interval is 0.6–1.8 times this guess. It excludes model preparation and file
+  transfer; no benchmark numbers or historical measurements are claimed.
+- The capacity comparison uses the selected GPU's server-reported inventory.
+  Total-VRAM overflow is red; only free-VRAM overflow is informational. A zero
+  free-memory reading is preserved. Free-memory samples older than 10 seconds
+  are not used. Warnings do not block job submission.
+- Default chunk caps are 30 minutes on Mac and 30/60/90 on CUDA, with boundaries
+  at 40/72 GiB to accommodate reserved memory on nominal 48/80 GB GPUs. A server
+  with mixed GPUs starts from the smallest known VRAM; unknown inventories are
+  not persisted as automatic settings. Initial setup only queries nvidia-smi,
+  without selecting a GPU or loading the model onto one.
+- `PATCH /api/devices/{id}/chunk-default` saves a cap without preparing a model.
+  Automatic initialization preserves already configured caps. The note dialog
+  computes `ceil(duration / cap)` and submits only a count for equal splitting.
+
+Verification: `tests/test_processing_estimates.py`, `tests/setup_ui_smoke.py`,
+and `tests/chunk_selection_ui_smoke.py` (with an existing recording).
