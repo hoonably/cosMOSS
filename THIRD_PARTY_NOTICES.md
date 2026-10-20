@@ -88,11 +88,16 @@ Model weights, MLX/CUDA runtimes, and FFmpeg are not included in that ZIP.
 
 ## FFmpeg
 
-cosMOSS invokes `ffmpeg` and `ffprobe` as separate executables installed by the
-user through Homebrew. FFmpeg binaries are not included in this repository.
-FFmpeg is LGPL-2.1-or-later by default; enabling GPL components changes the
-applicable license, as described in [FFmpeg's licensing information](https://ffmpeg.org/legal.html).
-If distributing an FFmpeg binary, follow the terms of that specific build.
+cosMOSS invokes `ffmpeg` and `ffprobe` as separate executables. Working system
+installations are reused. Otherwise app setup downloads the Apple Silicon LGPL
+variant of [dfloresc/ffmpeg-macos-builds 9.0.1-1](https://github.com/dfloresc/ffmpeg-macos-builds/releases/tag/v9.0.1-1),
+verified against a pinned archive SHA-256 in `src/media_tools.py`.
+These binaries are not included in this repository or the cosMOSS release ZIP.
+The downloaded installation preserves its `LICENSES/`, `BUILDINFO.txt`, binaries
+and companion libraries together. Build sources and checksum-pinned upstream
+versions are available from the [build project](https://github.com/dfloresc/ffmpeg-macos-builds/tree/v9.0.1-1).
+The selected binaries are LGPL-2.1-or-later; individual bundled components retain
+their notices in `LICENSES/`. See also [FFmpeg's licensing information](https://ffmpeg.org/legal.html).
 
 
 ## Optional model variants and CUDA quantization

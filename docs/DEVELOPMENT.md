@@ -4,11 +4,11 @@
 
 ## Run from source
 
-Apple Silicon, macOS 13 or later, Xcode Command Line Tools, uv, and FFmpeg are
+Apple Silicon, macOS 13 or later, Xcode Command Line Tools, and uv are
 required to build and run the development app.
 
 ```bash
-brew install uv ffmpeg
+brew install uv
 git clone https://github.com/hoonably/cosMOSS.git
 cd cosMOSS
 cp .env.example .env
@@ -17,7 +17,22 @@ cp .env.example .env
 open dist/cosMOSS.app
 ```
 
-Prepare the model through the app after launching. For browser development,
+Prepare common file tools with **설정 → 준비하기** after launching. This reuses
+working `ffmpeg`/`ffprobe` executables or downloads a pinned, SHA-256-verified
+macOS arm64 LGPL build into the writable runtime's `.cache/media-tools/`.
+The archive retains `bin/`, `lib/`, `LICENSES/` and build metadata together. Setup
+is serialized, validates both executables before publishing an atomic pointer,
+and preserves the previous installation on failure. API reads do not download.
+`GET/POST /api/setup` is loopback/same-site protected and prepares no MLX packages
+or model weights. Upload preprocessing waits for any explicit setup and verifies
+readiness before using absolute tool paths; upload/transcription routes cannot
+start a software download around the protected setup endpoint. Source and release
+apps use the same resolver.
+`tests/test_media_tools.py` covers setup, offline reuse, recovery and isolation.
+`tests/setup_ui_smoke.py` checks common setup progress, retry, background polling,
+remote-only model preparation and the settings dialog at desktop/mobile widths.
+
+Prepare a model only on the device used for transcription. For browser development,
 run `./scripts/run-app.sh` instead of opening the Mac bundle.
 
 ```bash
@@ -28,7 +43,7 @@ node --check static/panes.js
 ```
 
 Build the downloadable app and ZIP with `./scripts/build-mac-release.sh`.
-The output is `dist/cosMOSS-v<version>-macos-arm64.zip` and its SHA-256 file.
+The output is `dist/cosMOSS-v<version>-macos-arm64.zip`.
 
 ## Publishing updates
 
@@ -39,7 +54,7 @@ version in `uv.lock` when bumping the version; keep dependency pins unchanged.
 
 Run `UV_BIN=/path/to/uv ./scripts/prepare-release.sh` to test, build the ZIP, and
 generate `appcast.xml`. This feed is served from the repository's `main` branch.
-Publish the ZIP and SHA-256 file on the matching GitHub release before pushing
+Publish the ZIP on the matching GitHub release before pushing
 the new feed, so installed apps only see downloadable updates. Publish a feed
 change as a separate follow-up commit if necessary. Release notes stay short.
 
@@ -120,7 +135,7 @@ relocatable Apple Silicon ZIP with the app sources, a standalone CPython 3.12.12
 locked web dependencies, and uv 0.9.25. Set `UV_BIN` to the build machine's uv
 executable when it is not on PATH. Dependency and interpreter license files remain
 inside the bundle. Models, MLX packages, FFmpeg, personal data, and credentials
-are excluded. FFmpeg is installed separately through Homebrew.
+are excluded. Common file tools are prepared separately through app settings.
 
 The release launcher uses `~/Library/Application Support/cosMOSS/` for writable
 data, the MLX venv, caches and logs. `MOSS_RUNTIME_DIR` separates these writable

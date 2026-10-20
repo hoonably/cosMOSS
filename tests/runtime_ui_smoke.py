@@ -64,24 +64,24 @@ async def main():
         await page.route('**/api/text-library**', lambda route: route.fulfill(json=[]))
         await page.goto(base)
         await page.locator('[data-device-id=test] [data-device-action=environment]').click()
-        await page.wait_for_function("document.querySelectorAll('.environment-component-status').length===3")
-        assert await page.locator('.environment-component-status').nth(1).inner_text() == '설치 필요'
+        await page.wait_for_function("document.querySelectorAll('#environment-components .environment-component-status').length===3")
+        assert await page.locator('#environment-components .environment-component-status').nth(1).inner_text() == '설치 필요'
         if output: await page.screenshot(path=str(output))
         await page.click('#install-environment')
-        await page.wait_for_function("[...document.querySelectorAll('.environment-component-status')].every(el=>el.textContent==='준비됨')")
+        await page.wait_for_function("[...document.querySelectorAll('#environment-components .environment-component-status')].every(el=>el.textContent==='준비됨')")
         assert installed == ['test']
         assert '모델 준비 필요' in await page.locator('[data-device-id=test] .device-card-state').inner_text()
         await page.click('#close-environment')
         assert 'uv · venv ✓' in await page.locator('[data-device-id=test] .device-environment-link').inner_text()
         runtimes['test']['ready'] = runtimes['test']['venv']['ready'] = runtimes['test']['packages']['ready'] = False
         await page.locator('[data-device-id=test] [data-device-action=environment]').click()
-        await page.wait_for_function("document.querySelectorAll('.environment-component-status')[1].textContent==='설치 필요'")
+        await page.wait_for_function("document.querySelectorAll('#environment-components .environment-component-status')[1].textContent==='설치 필요'")
         await page.click('#install-environment')
-        await page.wait_for_function("[...document.querySelectorAll('.environment-component-status')].every(el=>el.textContent==='준비됨')")
+        await page.wait_for_function("[...document.querySelectorAll('#environment-components .environment-component-status')].every(el=>el.textContent==='준비됨')")
         await page.click('#close-environment')
         await page.locator('[data-device-id=local] [data-device-action=environment]').click()
         await page.click('#install-environment')
-        await page.wait_for_function("[...document.querySelectorAll('.environment-component-status')].every(el=>el.textContent==='준비됨')")
+        await page.wait_for_function("[...document.querySelectorAll('#environment-components .environment-component-status')].every(el=>el.textContent==='준비됨')")
         assert installed == ['test', 'test', 'local']
         assert not any('/gpus' in url or '/model/prepare' in url for url in requests)
         assert not errors, errors

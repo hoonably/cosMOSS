@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.config import TranscriptionConfig
 from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
 from src.local_models import LocalModels
+from src.media_tools import MediaTools
 from src.model_catalog import catalog, model_selection, recommendation, DEFAULT_OPTIONS
 from src.remote_workers import RemoteWorkers
 from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host
@@ -41,6 +42,7 @@ from src.transcript import json_text, parse_transcript, plain_text, srt_text, vt
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = Path(os.getenv("MOSS_RUNTIME_DIR", ROOT)).expanduser().resolve()
+MEDIA_TOOLS = MediaTools(RUNTIME_DIR / ".cache" / "media-tools")
 DATA_DIR = Path(os.getenv("MOSS_DATA_DIR", ROOT / "data")).resolve()
 UPLOAD_DIR = DATA_DIR / "uploads"
 STATIC_DIR = ROOT / "static"
@@ -170,6 +172,8 @@ def public_note(note: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    if arguments and arguments[0] in {"ffmpeg", "ffprobe"}:
+        arguments = [MEDIA_TOOLS.executable(arguments[0]), *arguments[1:]]
     cancelled = AUDIO_CANCELLATION.get()
     if cancelled is None:
         return subprocess.run(arguments, check=True, capture_output=True, text=True)
@@ -301,8 +305,9 @@ async def prepare_upload(upload_id: str) -> None:
     started = time.monotonic()
     process = None
     try:
+        await MEDIA_TOOLS.require_ready()
         process = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+            MEDIA_TOOLS.executable("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
             "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(normalized),
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
         )
@@ -671,6 +676,7 @@ async def transcribe(note_id: str) -> None:
     managed_device = None
     preprocessing_seconds = note.get("preprocessing_seconds") or 0
     try:
+        await MEDIA_TOOLS.require_ready()
         target = None
         if snapshot := note.get("device_snapshot_json"):
             # The snapshot fixes this job's destination. Removal must never cause
@@ -873,6 +879,7 @@ async def lifespan(_: FastAPI):
         await REMOTE_WORKERS.close()
         await LOCAL_MODELS.close()
         await SUMMARIES.close()
+        await MEDIA_TOOLS.close()
 
 
 app = FastAPI(
@@ -901,7 +908,7 @@ def valid_basic_auth(header: str | None) -> bool:
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    local_action = request.url.path.startswith(("/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/")) or (
+    local_action = request.url.path.startswith(("/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/")) or (
         request.url.path.startswith("/api/notes/") and any(part in {"text-file", "speakers", "summary"} for part in request.url.path.split("/")[4:])
     )
     if local_action:
@@ -990,11 +997,22 @@ def liveness() -> dict[str, Any]:
     return {"ok": True, "app": "cosMOSS"}
 
 
+@app.get("/api/setup")
+def app_setup_status() -> dict[str, Any]:
+    return MEDIA_TOOLS.status()
+
+
+@app.post("/api/setup", status_code=202)
+async def prepare_app_tools() -> dict[str, Any]:
+    # Common preprocessing only. Never install or load a Mac transcription model.
+    return MEDIA_TOOLS.start()
+
+
 @app.get("/api/update-status")
 async def update_status() -> dict[str, bool]:
     """Do not relaunch during owned work; loaded, idle models can be stopped."""
     tasks = [*PREPARATION_TASKS.values(), *TRANSCRIPTION_TASKS.values(),
-             *SUMMARIES.tasks.values(), *REMOTE_WORKERS.tasks.values(), LOCAL_MODELS.task]
+             *SUMMARIES.tasks.values(), *REMOTE_WORKERS.tasks.values(), LOCAL_MODELS.task, MEDIA_TOOLS.task]
     return {"busy": any(task is not None and not task.done() for task in tasks)
             or any(note["status"] in {"queued", "processing"} for note in STORE.list())}
 
@@ -1260,6 +1278,11 @@ async def control_worker(device_id: str, action: Literal["install", "prepare", "
 
 @app.post("/api/uploads", status_code=202)
 async def upload_audio(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    try:
+        await MEDIA_TOOLS.require_ready()
+    except RuntimeError as error:
+        await file.close()
+        raise HTTPException(503, str(error)) from None
     await clean_expired_uploads()
     upload_id = uuid.uuid4().hex
     saved = await save_audio_upload(file, upload_id)

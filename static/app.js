@@ -1,5 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const state = {
+  appSetup: null, appSetupRequest: 0, appSetupChecking: false, appSetupTimer: null,
   libraryRequest: 0, libraryLoading: false, executionDeviceId: "local",
   environmentDeviceId: null, environments: {}, environmentRequests: new Set(), environmentSubmitting: false,
   saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false,
@@ -803,6 +804,8 @@ async function showFile(file) {
   audio.addEventListener("error", () => releaseFileMetadata(preparation), { once: true });
   audio.src = preparation.objectUrl;
   try {
+    await refreshAppSetup(true);
+    if (state.uploadPreparation !== preparation) return;
     const body = new FormData();
     body.set("file", file);
     const upload = await api("/api/uploads", { method: "POST", body, signal: preparation.controller.signal });
@@ -1132,6 +1135,53 @@ function runtimeState(id) {
   return (id === "local" ? state.localModel : state.workerStates[id])?.runtime || state.environments[id];
 }
 
+function renderAppSetup() {
+  const setup = state.appSetup;
+  const busy = !!setup?.busy || state.appSetupChecking;
+  $("#open-app-settings").textContent = setup?.busy ? "설정 · 준비 중" : state.appSetupChecking ? "설정 · 확인 중" : "설정";
+  $("#open-app-settings").classList.toggle("is-busy", busy);
+  $("#app-settings-components").innerHTML = [["ffmpeg", "FFmpeg · 음성 변환"], ["ffprobe", "FFprobe · 파일 정보 확인"]].map(([key, title]) => {
+    const item = setup?.components?.[key];
+    const detail = item?.ready ? `${item.version} · ${item.source === "app" ? "앱에서 준비됨" : "이미 설치된 도구 사용"}` : "준비하기를 누르면 자동으로 설치합니다.";
+    return `<div class="environment-component"><div><strong>${title}</strong><span class="environment-component-status${item?.ready ? " is-ready" : ""}">${item ? item.ready ? "준비됨" : "준비 필요" : "확인 중"}</span></div><p>${escapeHtml(detail)}</p></div>`;
+  }).join("");
+  const phases = { checking: "설치된 도구를 확인하고 있습니다…", downloading: "파일 처리 도구를 다운로드하고 있습니다…", installing: "다운로드한 도구를 확인하고 있습니다…" };
+  $("#app-settings-status").textContent = setup?.error || (busy ? phases[setup?.phase] || "준비 상태를 확인하고 있습니다…" : setup?.ready ? "파일 처리 도구가 준비됐습니다." : "처음 한 번 준비하면 다음 실행부터 다시 사용할 수 있습니다.");
+  $("#app-settings-status").classList.toggle("is-ready", !!setup?.ready && !busy);
+  $("#app-settings-progress").innerHTML = downloadProgressHtml(setup, "파일 처리 도구 다운로드 진행률");
+  $("#check-app-settings").disabled = busy;
+  $("#prepare-app-settings").disabled = busy;
+  $("#prepare-app-settings").textContent = busy ? "준비 중…" : setup?.ready ? "다시 확인·복구" : "준비하기";
+}
+
+async function refreshAppSetup(start = false) {
+  const request = ++state.appSetupRequest;
+  clearTimeout(state.appSetupTimer);
+  state.appSetupChecking = true;
+  renderAppSetup();
+  try {
+    const setup = await api("/api/setup", start ? { method: "POST" } : {});
+    if (request === state.appSetupRequest) state.appSetup = start ? { components: state.appSetup?.components, ...setup } : setup;
+  } catch (error) {
+    if (request === state.appSetupRequest) state.appSetup = { ...state.appSetup, busy: false, phase: "error", error: error.message };
+    if (start) throw error;
+  } finally {
+    if (request === state.appSetupRequest) {
+      state.appSetupChecking = false;
+      renderAppSetup();
+      if (state.appSetup?.busy) state.appSetupTimer = setTimeout(refreshAppSetup, 800);
+    }
+  }
+}
+
+$("#open-app-settings").addEventListener("click", () => {
+  $("#app-settings-dialog").showModal();
+  refreshAppSetup();
+});
+$("#close-app-settings").addEventListener("click", () => $("#app-settings-dialog").close());
+$("#check-app-settings").addEventListener("click", () => refreshAppSetup());
+$("#prepare-app-settings").addEventListener("click", () => refreshAppSetup(true).catch(error => toast(error.message, true)));
+
 async function checkEnvironment(id) {
   if (state.environmentRequests.has(id)) return;
   state.environmentRequests.add(id);
@@ -1187,6 +1237,7 @@ $("#install-environment").addEventListener("click", async () => {
   state.environmentSubmitting = true;
   renderEnvironment();
   try {
+    await refreshAppSetup(true);
     const result = await api(`/api/devices/${encodeURIComponent(id)}/environment`, { method: "POST" });
     if (id === "local") { state.localModel = result; scheduleLocalModelPoll(); }
     else { state.workerStates[id] = { ...state.workerStates[id], ...result }; pollWorker(id); }
@@ -1367,12 +1418,12 @@ function modelBytes(bytes) {
   const gib = bytes / (1024 ** 3);
   return gib >= 1 ? `${gib.toFixed(2)} GB` : `${(bytes / (1024 ** 2)).toFixed(1)} MB`;
 }
-function downloadProgressHtml(model) {
+function downloadProgressHtml(model, label = "모델 다운로드 진행률") {
   if (model?.phase !== "downloading") return "";
   const download = model.download;
   const percent = Number.isFinite(download?.percent) ? Math.max(0, Math.min(100, download.percent)) : null;
   const amount = download?.total_bytes > 0 ? `${modelBytes(download.downloaded_bytes)} / ${modelBytes(download.total_bytes)}` : "전체 용량 확인 중…";
-  return `<div class="model-download"><div><strong>${percent == null ? "다운로드 준비 중" : `${percent.toFixed(1)}%`}</strong><span>${amount}</span></div><progress max="100" ${percent == null ? "" : `value="${percent}"`} aria-label="모델 다운로드 진행률"></progress></div>`;
+  return `<div class="model-download"><div><strong>${percent == null ? "다운로드 준비 중" : `${percent.toFixed(1)}%`}</strong><span>${amount}</span></div><progress max="100" ${percent == null ? "" : `value="${percent}"`} aria-label="${escapeHtml(label)}"></progress></div>`;
 }
 
 function renderLocalModel() {
@@ -1484,6 +1535,7 @@ $("#local-model-form").addEventListener("submit", async event => {
   const local = id === "local";
   try {
     renderLocalModel();
+    await refreshAppSetup(true);
     const result = await api(local ? "/api/local-model/prepare" : `/api/devices/${encodeURIComponent(id)}/model/prepare`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source, path: source === "folder" ? $("#model-folder-path").value.trim() : "", model_key: $("#model-choice").value, model_id: $("#model-custom-id").value.trim(), options: readModelKnobs() }),
@@ -1627,6 +1679,7 @@ $("#add-device-form").addEventListener("submit", async event => {
   state.addingDevice = true;
   updateDeviceRegistration();
   try {
+    await refreshAppSetup(true);
     const device = await api("/api/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
     await loadDevices();
     $("#device-dialog").close();
@@ -1739,6 +1792,7 @@ window.addEventListener("beforeunload", event => {
   if (state.pendingChanges || state.savePromise || state.uploading) event.preventDefault();
 });
 const saveLocationReady = loadSaveLocation();
+refreshAppSetup();
 loadModelCatalog().catch(error => toast(error.message, true));
 loadNotes();
 setInterval(() => { if (!document.hidden && !state.libraryLoading) loadNotes(); }, 5000);

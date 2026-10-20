@@ -606,6 +606,10 @@ dialog::backdrop { background: rgba(11,25,17,.62); backdrop-filter: blur(4px); }
 .workflow-trail { display: flex; gap: 12px; align-items: center; margin-left: 36px; color: #819084; font-size: 11px; }
 .workflow-trail i { font-style: normal; color: #b0beb2; }
 .topbar-actions { display: flex; align-items: center; gap: 10px; min-width: 0; margin-left: auto; }
+.app-settings-button { flex-shrink: 0; padding: 7px 11px; border: 1px solid #dce6d7; border-radius: 9px; color: #52765c; background: #f5f8f1; font-size: 12px; font-weight: 600; }
+.app-settings-button.is-busy { color: #987438; border-color: #e3d8bd; }
+.app-settings-button:focus-visible { outline: 2px solid #92b89b; outline-offset: 3px; }
+#app-settings-status.is-ready { color: #4b9466; }
 .developer-info-button { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 9px; color: #93a192; background: transparent; transition: color .15s, border-color .15s, background .15s; }
 .developer-info-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 .developer-info-button:hover { color: #52765c; border-color: #dce6d7; background: #f0f5ec; }
@@ -669,7 +673,7 @@ body.resizing-stages, body.resizing-stages * { cursor: col-resize !important; us
 .environment-dialog { width: min(550px, calc(100vw - 40px)); }
 .environment-dialog .dialog-head h2 { margin-bottom: 5px; }
 .environment-dialog .eyebrow { margin: 0 0 8px; font-size: 10px; color: #8a9d87; }
-#environment-components { display: grid; gap: 10px; }
+#environment-components, #app-settings-components { display: grid; gap: 10px; }
 .environment-component { padding: 14px; border: 1px solid #e0e8dc; border-radius: 11px; background: #f8faf5; }
 .environment-component > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .environment-component strong { font-size: 13px; font-weight: 600; }
