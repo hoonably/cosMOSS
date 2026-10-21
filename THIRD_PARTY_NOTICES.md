@@ -54,6 +54,21 @@ vendored in the application repository. Their shipped licenses continue to apply
 - [torchaudio source and license](https://github.com/pytorch/audio)
 - [Pinned OpenMOSS helper source](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize/tree/e3bdd93f8ad58418e04659818efd5fd87a0bc486)
 
+## Batched CUDA speech pipelines
+
+The separately installed speech runtime also downloads
+[Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf) and
+[Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B-hf),
+both under Apache-2.0, and the Nemotron model listed below. Revisions are pinned
+in `src/speech_pipeline.py`. No weights are included in the Mac application.
+The quiet-boundary splitting approach follows the official
+[Qwen3-ASR implementation](https://github.com/QwenLM/Qwen3-ASR) (Apache-2.0);
+cosMOSS implements sample-preserving cuts in `src/speech_worker.py`.
+Korean forced alignment uses the separately installed
+[soynlp](https://github.com/lovit/soynlp) package ([LGPL-3.0](https://github.com/lovit/soynlp/blob/master/LICENSE)); its license is retained with the
+server installation. Transformers, Accelerate, PyTorch, torchaudio, librosa,
+NumPy, SoundFile and their transitive dependencies retain their own notices.
+
 ## Web application dependencies
 
 The following direct runtime dependencies are installed from PyPI rather than
@@ -100,15 +115,18 @@ The selected binaries are LGPL-2.1-or-later; individual bundled components retai
 their notices in `LICENSES/`. See also [FFmpeg's licensing information](https://ffmpeg.org/legal.html).
 
 
-## Optional model variants and CUDA quantization
+## Optional model variants and retired CUDA quantization
 
 Additional Mac weights use vanch007's
 [MLX 4-bit](https://huggingface.co/vanch007/mlx-MOSS-Transcribe-Diarize-4bit) and
 [original 16-bit](https://huggingface.co/vanch007/mlx-MOSS-Transcribe-Diarize)
 conversions of the same Apache-2.0 MOSS-Transcribe-Diarize model.
-Optional NVIDIA quantization installs [bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes)
+Earlier NVIDIA quantization support installed [bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes)
 (MIT) and [Accelerate](https://github.com/huggingface/accelerate) (Apache-2.0)
-into the selected SSH user's runtime. Model weights are not redistributed in this repository.
+into the selected SSH user's runtime. This support and its installer have been removed;
+existing installations retain their package licenses. Historical KV experiments used
+[HQQ](https://github.com/mobiusml/hqq) (Apache-2.0) in an isolated dependency overlay.
+Model weights are not redistributed in this repository.
 
 
 ## Optional voice profiles
@@ -120,3 +138,16 @@ license files remain with the installation. The CPU speaker embedding model is
 from sherpa-onnx's [speaker recognition model release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models).
 The ONNX model is SHA-256 pinned in `src/voice_engine.py`; neither the weights nor
 personal voice profiles are bundled in the application or this repository.
+
+## Optional speaker re-diarization
+
+The separately installed SSH runtime uses NVIDIA's
+[Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)
+under OpenMDW-1.1 and
+[pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
+under CC-BY-4.0. Community-1 requires each downloading user's Hugging Face
+access agreement. User credentials are not bundled or forwarded by cosMOSS.
+Model revisions are pinned in `src/diarization_worker.py`; weights are downloaded
+on the selected server and are not redistributed with the app.
+PyTorch, torchaudio, torchcodec, Transformers, pyannote.audio, librosa, SoundFile
+and their dependencies retain the license files in that runtime.

@@ -156,22 +156,30 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         self.spec = {"name": "Lab", "host": "gpu-a", "remote_port": 18400,
                      "model": "moss-model", "backend": "cuda"}
 
-    async def add(self):
+    async def add(self, select_model=True):
         response = await self.client.post("/api/devices", json=self.spec)
         self.assertEqual(response.status_code, 201, response.text)
         await asyncio.sleep(0)
         self.registration_calls = list(self.worker_run.await_args_list)
+        self.registration_probe_calls = self.probe.await_count
         self.worker_run.reset_mock()
+        self.probe.reset_mock()
+        if select_model:
+            response = await self.client.post(f"/api/devices/{response.json()['id']}/model/selection", json={'pipeline':'moss-original'})
+            self.assertEqual(response.status_code,200,response.text)
         return response.json()
 
-    async def test_registration_prepares_environment_and_model_without_selecting_a_gpu(self):
+    async def test_registration_only_connects_then_model_preparation_is_explicit(self):
         self.assertEqual([device["id"] for device in (await self.client.get("/api/devices")).json()], ["local"])
-        added = await self.add()
+        added = await self.add(select_model=False)
         self.assertNotIn("gpu_uuid", added)
         self.assertNotIn("gpu_uuid", self.devices.get(added["id"]))
         self.worker_run.assert_not_awaited()
-        self.assertEqual([call.args[1] for call in self.registration_calls], ["install"])
-        self.assertEqual(self.devices.get(added["id"])["model_source"], "cache")
+        self.assertEqual(self.registration_calls, [])
+        self.assertEqual(self.registration_probe_calls,1)
+        self.assertFalse(added['model_selected'])
+        self.assertFalse(added['model_prepared'])
+        self.assertEqual(added['setup']['phase'],'unselected')
         prepared = await self.client.post(f"/api/devices/{added['id']}/model/prepare", json={"source": "cache"})
         self.assertEqual(prepared.status_code, 202, prepared.text)
         await asyncio.sleep(0)
@@ -185,18 +193,55 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
 
     async def test_model_variants_and_knobs_are_persisted_and_validated(self):
         device=await self.add()
-        response=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'source':'cache','model_key':'cuda-4bit','options':{'chunk_minutes':10,'bridge_seconds':0,'max_tokens':4096,'attention':'eager','use_cache':False}})
+        response=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'source':'cache','model_key':'cuda-original','options':{'precision':'fp16','chunk_minutes':10,'bridge_seconds':0,'max_tokens':4096,'attention':'eager','use_cache':False}})
         self.assertEqual(response.status_code,202,response.text)
         await asyncio.sleep(0)
         saved=self.devices.get(device['id'])
-        self.assertEqual(saved['options']['precision'],'int4')
+        self.assertEqual(saved['options']['precision'],'fp16')
         self.assertEqual(saved['options']['chunk_minutes'],10)
         self.assertFalse(saved['options']['use_cache'])
         self.assertEqual(saved['model'],'OpenMOSS-Team/MOSS-Transcribe-Diarize')
         invalid=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'model_key':'mlx-8bit'})
         self.assertEqual(invalid.status_code,400)
+
         invalid=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'options':{'chunk_minutes':91}})
         self.assertEqual(invalid.status_code,422)
+        for options in ({'precision':'int4'}, {'precision':'int8'}, {'cuda_kv_bits':8}):
+            invalid=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'options':options})
+            self.assertEqual(invalid.status_code,422)
+        invalid=await self.client.post(f"/api/devices/{device['id']}/model/prepare",json={'model_key':'cuda-8bit'})
+        self.assertEqual(invalid.status_code,400)
+
+    async def test_fast_selection_is_persistent_and_read_only_until_download(self):
+        device=await self.add(select_model=False)
+        with patch.object(self.main.SPEECH,'execute',new=AsyncMock(return_value={'phase':'idle'})) as inspect, \
+             patch.object(self.main.SPEECH,'install',return_value={'phase':'connecting'}) as install:
+            blocked=await self.client.post(f"/api/devices/{device['id']}/speech-setup",json={'pipeline':'qwen-batch'})
+            self.assertEqual(blocked.status_code,409)
+            for pipeline in ('moss-batch','qwen-batch'):
+                response=await self.client.post(f"/api/devices/{device['id']}/model/selection",json={'pipeline':pipeline})
+                self.assertEqual(response.status_code,200,response.text)
+                self.assertTrue(response.json()['model_selected'])
+                install.assert_not_called()
+                self.worker_run.assert_not_awaited()
+                response=await self.client.post(f"/api/devices/{device['id']}/status")
+                self.assertEqual(response.json()['setup']['phase'],'idle')
+                self.assertEqual(inspect.call_args.args[2],'inspect')
+            saved=self.devices.get(device['id'])
+            self.assertEqual(saved['options']['speech_pipeline'],'qwen-batch')
+            mismatch=await self.client.post('/api/notes',data={'device_id':device['id'],'speech_pipeline':'moss-original'},files={'file':('a.wav',b'audio')})
+            self.assertEqual(mismatch.status_code,409,mismatch.text)
+            self.assertFalse(self.store.list())
+            response=await self.client.post(f"/api/devices/{device['id']}/speech-setup",json={'pipeline':'qwen-batch'})
+            self.assertEqual(response.status_code,202,response.text)
+            install.assert_called_once_with('gpu-a','qwen-batch')
+
+    async def test_no_model_selected_rejects_note_without_consuming_upload(self):
+        device=await self.add(select_model=False)
+        response=await self.client.post('/api/notes',data={'device_id':device['id']},files={'file':('a.wav',b'audio')})
+        self.assertEqual(response.status_code,409,response.text)
+        self.assertFalse(self.store.list())
+        self.worker_run.assert_not_awaited()
 
     async def test_environment_status_does_not_install_and_manual_install_preserves_model_settings(self):
         device = await self.add()
@@ -240,7 +285,7 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
             note = self.store.get(response.json()['id'])
             self.assertEqual(note['chunk_seconds'], expected * 60)
             self.assertEqual(json.loads(note['device_snapshot_json'])['options']['chunk_minutes'], expected)
-        self.assertNotIn('options', self.devices.get(device['id']))
+            self.assertNotIn('chunk_minutes', self.devices.get(device['id']).get('options', {}))
         self.devices.configure(device['id'], options={"chunk_minutes": 20})
         for override, expected in (({}, 20), ({"chunk_minutes": "10"}, 10)):
             response = await self.client.post("/api/notes", data={"device_id": device['id'], "gpu_uuid": large['uuid'], **override},
@@ -600,19 +645,24 @@ class BootstrapTests(unittest.TestCase):
             fake_socket = MagicMock()
             fake_socket.__enter__.return_value.connect_ex.return_value = 1
             with patch.object(bootstrap.Path, "home", return_value=Path(temporary)), \
-                 patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "source": "# worker", "action": "prepare"}))), \
+                 patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "source": "# worker", "action": "prepare", "lease_protocol": 1, "lifecycle_source": "# guard"}))), \
                  patch.object(bootstrap.sys, "stdout", io.StringIO()), \
-                 patch.object(bootstrap.urllib.request, "urlopen", side_effect=[urllib.error.URLError("not running"), io.BytesIO(json.dumps(identity).encode())]), \
+                 patch.object(bootstrap.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(identity).encode())), \
                  patch.object(bootstrap.socket, "socket", return_value=fake_socket), \
                  patch.object(bootstrap.subprocess, "check_output", return_value=xml.encode()), \
                  patch.object(bootstrap.subprocess, "run") as install, \
                  patch.object(bootstrap, "prepare_model", return_value={"model_path": "/cache/model", "model_cache": "/cache"}), \
-                 patch.object(bootstrap.subprocess, "Popen", return_value=worker) as launch:
+                 patch.object(bootstrap, "WorkerLease") as lease, \
+                 patch.object(bootstrap.subprocess, "Popen", return_value=worker) as launch, \
+                 self.assertRaisesRegex(RuntimeError, 'test lease ended'):
+                lease.return_value.check.side_effect = [None, None, None, RuntimeError('test lease ended')]
                 bootstrap.main()
             self.assertEqual(launch.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"], GPU_UUID)
             self.assertEqual(launch.call_args.kwargs["env"]["COSMOSS_WORKER_TOKEN"], "private-test-token")
             self.assertEqual(launch.call_args.kwargs["env"]["MOSS_MODEL_PATH"], "/cache/model")
             self.assertEqual(launch.call_args.kwargs["env"]["HF_HUB_OFFLINE"], "1")
+            self.assertEqual(launch.call_args.kwargs["env"]["COSMOSS_WORKER_PARENT_PID"], str(os.getpid()))
+            worker.terminate.assert_called_once()
             command = launch.call_args.args[0]
             self.assertEqual(command[command.index("--port") + 1], "18400")
             self.assertIn("127.0.0.1", launch.call_args.args[0])
@@ -625,7 +675,7 @@ class BootstrapTests(unittest.TestCase):
         busy = GPU_XML.replace("<processes/>", "<processes><process_info><type>C</type><pid>42</pid></process_info></processes>")
         fake_socket = MagicMock()
         fake_socket.__enter__.return_value.connect_ex.return_value = 1
-        with patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "source": "# worker", "action": "prepare"}))), \
+        with patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "source": "# worker", "action": "prepare", "lease_protocol": 1}))), \
              patch.object(bootstrap.urllib.request, "urlopen", side_effect=urllib.error.URLError("not running")), \
              patch.object(bootstrap.socket, "socket", return_value=fake_socket), \
              patch.object(bootstrap.subprocess, "check_output", return_value=busy.encode()), \

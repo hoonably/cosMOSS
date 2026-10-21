@@ -150,12 +150,13 @@ class CleanupTests(unittest.TestCase):
         process.poll.return_value=1
         port=MagicMock()
         port.__enter__.return_value.connect_ex.return_value=1
-        request={'device':self.device,'action':'prepare','source':'# generated worker'}
+        request={'device':self.device,'action':'prepare','source':'# generated worker','lease_protocol':1,'lifecycle_source':'# guard'}
         gpu=b'<nvidia_smi_log><gpu><uuid>GPU-test</uuid><processes/></gpu></nvidia_smi_log>'
         with patch.object(bootstrap.sys,'stdin',io.StringIO(json.dumps(request))),patch.object(bootstrap.sys,'stdout',io.StringIO()), \
              patch.object(bootstrap.urllib.request,'urlopen',side_effect=urllib.error.URLError('not running')), \
              patch.object(bootstrap.socket,'socket',return_value=port),patch.object(bootstrap.subprocess,'check_output',return_value=gpu), \
              patch.object(bootstrap,'prepare_runtime',return_value=self.python), \
+             patch.object(bootstrap,'WorkerLease'), \
              patch.object(bootstrap,'prepare_model',return_value={'model_path':str(self.model.parent),'model_cache':str(self.home/'hf/hub')}), \
              patch.object(bootstrap.subprocess,'Popen',return_value=process),self.assertRaisesRegex(RuntimeError,'Worker exited'):
             bootstrap.main()

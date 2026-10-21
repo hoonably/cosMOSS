@@ -140,7 +140,7 @@ async def main():
         await page.locator('#reveal-summary').click()
         await page.wait_for_function('window.__revealed?.endsWith("-요약.md")')
         assert calls[-1][1]['directory'] == '/Users/tester/Downloads'
-        assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 전사 파일을 불러옵니다.'
+        assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.'
         assert await page.locator('#summary-path-note').text_content() == '기본 경로에 AI 요약 md파일을 저장합니다.'
         if output:
             await page.locator('#toast').evaluate("el => el.className = 'toast'")

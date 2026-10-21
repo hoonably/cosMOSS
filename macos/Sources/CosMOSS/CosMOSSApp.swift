@@ -41,6 +41,7 @@ struct CosMOSSApp: App {
                 }
             }
             .frame(minWidth: 1100, minHeight: 720)
+            .background(WindowLifecycleView(activeWork: { await backend.hasActiveWork() }))
             .task { await startAfterPermission() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 if !fileAccess.isReady { Task { await startAfterPermission() } }
@@ -69,7 +70,12 @@ struct CosMOSSApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag, WindowLifecycleView.restoreWindows(in: sender.windows) { return false }
+        return true
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         BackendController.shared.stop()
@@ -86,6 +92,20 @@ final class BackendController: ObservableObject {
     private var log: FileHandle?
     private var starting = false
     weak var webView: WKWebView?
+
+    func hasActiveWork() async -> Bool? {
+        guard let url else { return false }
+        var request = URLRequest(url: url.appendingPathComponent("api/update-status"))
+        request.timeoutInterval = 3
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let status = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            return status["busy"] as? Bool
+        } catch { return nil }
+    }
 
     func prepareForUpdate() async -> Bool {
         guard let url else { return !starting }
@@ -110,7 +130,7 @@ final class BackendController: ObservableObject {
         } catch { return false }
     }
 
-    private enum Health { case ready, occupied, unavailable }
+    private enum Health { case ready, retiring, occupied, unavailable }
 
     private func health(at url: URL) async -> Health {
         var request = URLRequest(url: url.appendingPathComponent("healthz"))
@@ -122,7 +142,8 @@ final class BackendController: ObservableObject {
                   let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   payload["app"] as? String == "cosMOSS", payload["ok"] as? Bool == true
             else { return .occupied }
-            return .ready
+            guard let owner = payload["desktop_parent_pid"] as? String else { return .occupied }
+            return owner == String(ProcessInfo.processInfo.processIdentifier) ? .ready : .retiring
         } catch { return .unavailable }
     }
 
@@ -178,6 +199,18 @@ final class BackendController: ObservableObject {
         case .occupied:
             error = "포트 \(port)를 다른 앱이 사용 중입니다. COSMOSS_DESKTOP_PORT를 바꿔 실행해 주세요."
             return
+        case .retiring:
+            // A rapid relaunch after force quit must wait for the old app's
+            // backend to finish cleanup, rather than adopt a dying process.
+            var released = false
+            for _ in 0..<40 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if await health(at: address) == .unavailable { released = true; break }
+            }
+            guard released else {
+                error = "이전 cosMOSS 작업을 정리 중이거나 다른 앱이 실행 중입니다. 잠시 후 다시 시도해 주세요."
+                return
+            }
         case .unavailable: break
         }
 
@@ -201,6 +234,7 @@ final class BackendController: ObservableObject {
                 + ":/opt/homebrew/bin:/usr/local/bin"
             environment["COSMOSS_DESKTOP_HOST"] = "127.0.0.1"
             environment["COSMOSS_DESKTOP_PORT"] = String(port)
+            environment["COSMOSS_DESKTOP_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
             if bundled, let resources = Bundle.main.resourceURL {
                 environment.removeValue(forKey: "PYTHONHOME")
                 environment["PYTHONPATH"] = projectURL.path

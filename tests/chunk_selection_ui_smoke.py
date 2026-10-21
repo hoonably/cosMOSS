@@ -14,6 +14,7 @@ from email.policy import default
 from pathlib import Path
 
 from playwright.async_api import async_playwright
+from ui_helpers import choose_option
 
 
 async def main():
@@ -43,7 +44,7 @@ async def main():
         query=parse_qs(urlsplit(route.request.url).query)
         high=40 if int(query['count'][0])==1 else 10
         selected='gpu_uuid' in query
-        await route.fulfill(json=dict(memory_low_gib=8,memory_high_gib=high,time_low_seconds=20,time_high_seconds=60,
+        await route.fulfill(json=dict(memory_expected_gib=high,memory_low_gib=8,memory_high_gib=high,time_seconds=40,
                                      capacity_gib=24,free_gib=4,capacity_kind='VRAM',exceeds_capacity=selected and high>24,
                                      exceeds_free=selected and high>4,note='초기 추정 · 모델 준비·파일 전송 제외'))
 
@@ -137,12 +138,15 @@ async def main():
         await page.evaluate('state.selectedGpu={uuid:"GPU-estimate-test", memory_total_mib:24*1024}; renderFilePreparation();')
         await page.locator('#upload-estimates.is-over-capacity').wait_for()
         assert '전체 VRAM 24.0' in await page.locator('#upload-memory-warning').inner_text()
-        assert '초기 추정' in await page.locator('#upload-estimate-note').inner_text()
+        assert await page.locator('#upload-estimate-note').is_hidden()
+        assert await page.locator('#upload-estimate-time').inner_text() == '약 00:40'
+        assert await page.locator('#upload-estimate-memory').inner_text() == '약 40.0 GiB'
         await page.locator('#upload-dialog').screenshot(path=screenshot.replace('.png','-memory-warning.png'))
         await count_field.fill('2')
         await page.wait_for_function('!document.querySelector("#upload-estimates").classList.contains("is-over-capacity") && document.querySelector("#upload-estimate-memory").textContent.includes("10.0")')
         assert '현재 여유 VRAM' in await page.locator('#upload-memory-warning').inner_text()
-        await page.click('#probe-ssh-host')
+        async with page.expect_response('**/api/devices/*/gpus'):
+            pass
         assert await count_field.input_value() == '2'
         # GPU memory and device settings must not replace per-note input.
         await page.evaluate('state.selectedGpu={memory_total_mib:96*1024}; renderFilePreparation();')

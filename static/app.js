@@ -13,6 +13,7 @@ const state = {
   estimateKey: null, estimateTimer: null, estimateController: null, chunkDefaultSaving: false,
   voiceMemos: [], voiceMemoSelected: null, voiceMemoRequest: 0, voiceMemoLoading: false, voiceMemoController: null,
   devices: [], deviceStatus: {}, sshProbeHost: null, sshRequest: 0, healthChecking: false,
+  deviceModelRevisions: {}, modelSelectingId: null,
   gpuTimer: null, gpuAbort: null, gpuInventory: [], selectedGpu: null, gpuApproval: null, gpuWarningResolve: null, workerStates: {}, workerTimers: {},
   addingDevice: false, gpuDeviceId: null, workerPolling: new Set(),
   sshHosts: [], panelRefreshing: false, localModel: null, localModelTimer: null, localModelSubmitting: false, modelDeviceId: "local", modelLoading: false, modelError: null, modelRequest: 0, catalog: null, modelMetadata: {},
@@ -175,7 +176,8 @@ function renderElapsedClock() {
   const anchor = state.elapsedAnchor;
   if (!anchor) return;
   const seconds = elapsedSeconds(anchor);
-  $("#progress-elapsed").textContent = `${anchor.total ? "총 경과" : "현재 구간 경과"} ${clock(seconds)}`;
+  $("#progress-elapsed").textContent = `경과 ${clock(seconds)}`;
+  renderProgressValues(anchor.note, seconds);
   if (anchor.running) {
     // Schedule the next displayed second, independently of HTTP polling.
     const delay = Math.max(16, Math.ceil((Math.floor(seconds) + 1 - seconds) * 1000));
@@ -184,9 +186,7 @@ function renderElapsedClock() {
 }
 
 function syncElapsedClock(note) {
-  const model = note.model_progress || {};
-  const total = note.processing_elapsed_seconds != null || note.processing_seconds != null;
-  const sample = total ? (note.processing_elapsed_seconds ?? note.processing_seconds) : model.elapsed_seconds;
+  const sample = note.inference_elapsed_seconds;
   const element = $("#progress-elapsed");
   if (sample == null || note.status === "queued") {
     stopElapsedClock();
@@ -198,14 +198,13 @@ function syncElapsedClock(note) {
   const previous = state.elapsedAnchor;
   if (previous?.note !== note) {
     const now = performance.now();
-    const key = total ? `${note.id}:${note.processing_started_at}`
-      : `${note.id}:${model.kind}:${model.chunk_index}`;
-    const running = note.status === "processing";
+    const key = `${note.id}:${note.inference_started_at}`;
+    const running = note.status === "processing" && !note.inference_finished_at
+      && ["transcribing", "linking"].includes(note.progress_phase);
     const at = note._elapsedReceivedAt ?? now;
-    // Avoid stepping backward by a few milliseconds when a new snapshot arrives.
     const seconds = running && previous?.key === key
       ? Math.max(Number(sample), elapsedSeconds(previous, at)) : Number(sample);
-    state.elapsedAnchor = { note, key, total, seconds, at, running };
+    state.elapsedAnchor = {note, key, seconds, at, running};
   }
   renderElapsedClock();
 }
@@ -222,21 +221,25 @@ function statusText(status) {
   return { queued: "대기 중", processing: "전사 중", done: "완료", error: "오류", cancelled: "취소됨" }[status] || status;
 }
 
-function transcriptionProgress(note) {
+function transcriptionProgress(note, elapsed) {
   const phase = note.progress_phase || (note.status === "processing" ? "normalizing" : note.status);
-  const total = Math.max(0, note.progress_total_steps || 0);
-  const completed = Math.max(0, Math.min(note.progress_completed_steps || 0, total));
-  const indeterminate = ["queued", "preparing_model", "normalizing"].includes(phase) || (!total && note.status === "processing");
-  const fraction = note.duration > 0
-    ? (note.processed_audio_seconds || 0) / note.duration
-    : total ? completed / total : 0;
-  const percent = note.status === "done" ? 100 : Math.max(0, Math.min(99, Math.floor(fraction * 100)));
-  return { phase, total, completed, indeterminate, percent };
+  const waiting = ["queued", "preparing_model", "normalizing"].includes(phase);
+  const stopped = ["error", "cancelled"].includes(note.status);
+  const complete = note.status === "done" || (!stopped && !!note.inference_finished_at);
+  const estimate = Number(note.estimated_inference_seconds);
+  const hasEstimate = Number.isFinite(estimate) && estimate > 0;
+  const anchor = state.elapsedAnchor;
+  const seconds = elapsed ?? (anchor?.note === note ? elapsedSeconds(anchor) : note.inference_elapsed_seconds ?? 0);
+  const percent = complete ? 100 : Math.max(0, Math.min(99, Math.floor((hasEstimate ? seconds / estimate : 0) * 100)));
+  return {phase, waiting, stopped, complete, estimate: hasEstimate ? estimate : null,
+    indeterminate: waiting || (!hasEstimate && !complete), percent};
 }
 
 function noteStatus(note) {
   const progress = transcriptionProgress(note);
-  return note.status === "processing" && !progress.indeterminate ? `전사 중 ${progress.percent}%` : statusText(note.status);
+  if (note.status !== "processing") return statusText(note.status);
+  if (progress.complete) return "전사 완료";
+  return !progress.indeterminate ? `전사 중 약 ${progress.percent}%` : "전사 중";
 }
 
 function escapeHtml(value = "") {
@@ -244,7 +247,6 @@ function escapeHtml(value = "") {
 }
 
 function renderList() {
-  $("#show-devices").disabled = !state.current;
   const query = $("#note-search").value.trim().toLowerCase();
   const notes = state.notes.filter(note => note.title.toLowerCase().includes(query));
   $("#note-count").textContent = state.notes.length;
@@ -370,7 +372,7 @@ function renderTranscriptionControls(note) {
   const cancelling = state.cancellingId === note.id;
   const restarting = state.restartingId === note.id;
   const busy = Boolean(state.cancellingId || state.restartingId);
-  button.classList.toggle("hidden", !["queued", "processing"].includes(note.status));
+  button.classList.toggle("hidden", !["queued", "processing"].includes(note.status) || !!note.inference_finished_at);
   button.disabled = busy;
   button.textContent = cancelling ? "취소 중…" : "전사 취소";
   const restart = $("#restart-transcription");
@@ -404,14 +406,23 @@ function renderWorkspace() {
     const phase = transcriptionProgress(note).phase;
     $("#processing-title").textContent = {
       queued: "전사 순서를 기다리고 있어요",
-      normalizing: "녹음 파일을 준비하고 있어요",
+      normalizing: "모델 전사를 준비하고 있어요",
       preparing_model: "전사 모델을 준비하고 있어요",
-      transcribing: "음성을 기록으로 옮기고 있어요",
-      linking: "같은 화자의 발화를 연결하고 있어요",
-      finalizing: "전사 결과를 저장하고 있어요",
-      identifying_speakers: "등록된 목소리와 화자를 비교하고 있어요",
+      transcribing: "음성을 전사하고 있어요",
+      linking: "음성을 전사하고 있어요",
+      finalizing: "모델 전사가 끝났어요",
+      identifying_speakers: "모델 전사가 끝났어요",
     }[phase] || "음성을 읽고 있어요";
-    $("#processing-copy").textContent = phase === "queued" ? "앞선 작업이 끝나면 자동으로 시작됩니다." : "페이지를 닫아도 앱이 실행 중이면 작업은 계속됩니다.";
+    if (phase === 'transcribing') {
+      const modelPhase = note.model_progress?.pipeline_phase;
+      if (modelPhase === 'aligning') $("#processing-title").textContent = '단어의 시간을 맞추고 있어요';
+      if (modelPhase === 'diarizing') $("#processing-title").textContent = 'Nemotron이 목소리를 구분하고 있어요';
+    }
+    $("#processing-copy").textContent = phase === "queued" ? "앞선 작업이 끝나면 자동으로 시작됩니다."
+      : ["finalizing", "identifying_speakers"].includes(phase) ? "전사 결과를 불러오고 있습니다."
+      : "모델이 녹음을 읽고 전사문을 생성합니다.";
+    if (note.model_progress?.pipeline_phase === 'aligning') $("#processing-copy").textContent = '전사된 단어를 원본 음성 시간에 맞춥니다.';
+    if (note.model_progress?.pipeline_phase === 'diarizing') $("#processing-copy").textContent = '원본 녹음에서 서로 다른 목소리를 찾습니다.';
   } else if (note.status === "error") {
     $("#processing-title").textContent = "전사하지 못했습니다";
     $("#processing-copy").textContent = note.error || "처리 장치와 녹음 파일을 확인한 뒤 ‘전사 다시 시작’을 눌러 주세요.";
@@ -423,71 +434,35 @@ function renderWorkspace() {
   }
 }
 
-function renderProgress(note) {
-  syncElapsedClock(note);
-  const { phase, total, indeterminate, percent } = transcriptionProgress(note);
-  const failed = note.status === "error";
-  const stopped = failed || note.status === "cancelled";
-  const waiting = ["queued", "preparing_model", "normalizing"].includes(phase);
-  const model = note.model_progress || {};
+function renderProgressValues(note, elapsed) {
+  const progress = transcriptionProgress(note, elapsed);
+  const {phase, waiting, stopped, complete, indeterminate, percent, estimate} = progress;
   $("#processing-card").classList.toggle("waiting", waiting);
-  $("#processing-progress").classList.toggle("hidden", stopped && !total);
-  $("#progress-stage").textContent = {
-    queued: "대기열에 등록됨", preparing_model: "모델 준비", normalizing: "음성 파일 준비", transcribing: "음성 전사",
-    linking: "화자 연결", finalizing: "결과 저장", done: "전사 완료", error: "작업 중단", cancelled: "전사 취소됨",
-  }[phase] || "음성 전사";
-  $("#progress-percent").textContent = waiting ? (phase === "queued" ? "대기 중" : "준비 중") : `${percent}%`;
+  $("#processing-progress").classList.toggle("hidden", stopped && !note.inference_started_at);
+  $("#progress-stage").textContent = complete ? "모델 전사 완료" : "예상 진행률";
+  $("#progress-percent").textContent = waiting ? (phase === "queued" ? "대기 중" : "준비 중")
+    : indeterminate ? "전사 중" : `${percent}%`;
   const track = $("#progress-track");
   track.classList.toggle("indeterminate", indeterminate && !stopped);
   if (indeterminate && !stopped) {
     track.removeAttribute("aria-valuenow");
-    track.setAttribute("aria-valuetext", phase === "queued" ? "전사 순서를 기다리는 중" : phase === "preparing_model" ? "선택한 GPU에 모델을 준비하는 중" : "음성 파일을 준비하는 중");
+    track.setAttribute("aria-valuetext", waiting ? "모델 전사 시작을 기다리는 중" : "모델 전사 중");
   } else {
     track.setAttribute("aria-valuenow", String(percent));
-    track.setAttribute("aria-valuetext", `${percent}%${stopped ? ", 작업 중단" : " 완료"}`);
+    track.setAttribute("aria-valuetext", complete ? "모델 전사 완료" : `예상 ${percent}%${stopped ? ", 작업 중단" : " 진행"}`);
   }
   $("#progress-fill").style.width = indeterminate && !stopped ? "" : `${percent}%`;
-  const count = $("#progress-count");
-  if (note.status === "cancelled") count.textContent = "전사 작업이 중단되었습니다.";
-  else if (phase === "queued") count.textContent = "순서가 되면 자동으로 시작합니다.";
-  else if (phase === "preparing_model") count.textContent = "모델 캐시 확인과 선택한 GPU 로딩 중";
-  else if (phase === "normalizing") count.textContent = "음성 추출과 파일 정규화 중";
-  else if (phase === "linking") count.textContent = `${note.processed_bridges || 0}/${note.bridge_count || 0}개 경계 화자 연결 완료`;
-  else if (phase === "identifying_speakers") count.textContent = "등록된 목소리와 화자 이름을 비교 중";
-  else if (phase === "finalizing") count.textContent = "화자와 문장을 정리해 노트에 저장 중";
-  else if (model.chunk_index && model.kind === "main") count.textContent = `${model.chunk_index}/${note.chunk_count || 1}번째 구간 전사 중`;
-  else count.textContent = `${note.processed_chunks || 0}/${note.chunk_count || 1}개 구간 전사 완료`;
-  $("#progress-audio").textContent = !waiting && note.duration
-    ? `${clock(note.processed_audio_seconds || 0)} / ${clock(note.duration)} 전사`
-    : "";
-  const hasModelProgress = !!model.stage && !waiting && !stopped;
-  $("#model-progress").classList.toggle("hidden", !hasModelProgress);
-  const inputPercent = model.prompt_total > 0
-    ? Math.min(100, Math.floor((model.prompt_processed || 0) / model.prompt_total * 100)) : 0;
-  const modelText = {
-    waiting: "전사를 시작할 준비를 하고 있습니다",
-    encoding: "음성의 특징을 분석하고 있습니다",
-    prefill: `음성 입력 처리 ${inputPercent}%`,
-    decoding: `전사 문장 생성 중 · ${(model.generation_tokens || 0).toLocaleString("ko-KR")}토큰 생성`,
-    complete: "현재 구간 전사 완료",
-  }[model.stage] || "";
-  $("#model-progress-text").textContent = modelText;
-  $("#prefill-track").classList.toggle("hidden", model.stage !== "prefill");
-  $("#prefill-track").setAttribute("aria-valuenow", String(inputPercent));
-  $("#prefill-track").setAttribute("aria-valuetext", `음성 입력 ${inputPercent}% 처리`);
-  $("#prefill-fill").style.width = `${inputPercent}%`;
-  const stage = { queued: -1, preparing_model: 0, normalizing: 0, transcribing: 1, linking: 2, finalizing: 2, identifying_speakers: 2, done: 3, error: -1, cancelled: -1 }[phase] ?? 1;
-  document.querySelectorAll("[data-step]").forEach(element => {
-    const index = Number(element.dataset.step);
-    element.classList.toggle("completed", phase === "done" || index < stage);
-    element.classList.toggle("current", index === stage && phase !== "done");
-    if (index === stage && phase !== "done") element.setAttribute("aria-current", "step");
-    else element.removeAttribute("aria-current");
-  });
-  $("#progress-detail").textContent = phase === "queued" ? "이 페이지를 열어 두지 않아도 작업은 시작됩니다."
-    : ["normalizing", "preparing_model"].includes(phase) ? "준비가 끝나면 전사 진행률을 표시합니다."
-    : stopped ? "작업을 중단한 시점의 진행률입니다."
-    : "생성된 전사의 시간표시를 기준으로 갱신합니다. 화자 정리와 저장이 끝나면 100%가 됩니다.";
+  $("#progress-estimate").textContent = estimate ? `예상 소요 ${clock(estimate)}` : "";
+  $("#progress-detail").textContent = waiting ? "모델 전사가 시작되면 진행률을 표시합니다."
+    : stopped ? "전사가 중단되었습니다."
+    : complete ? "모델의 전사 응답을 모두 받았습니다."
+    : percent >= 99 ? "모델의 전사 완료를 기다리고 있어요."
+    : "예상 소요 시간 기준으로 표시하며, 모델 응답이 끝나면 100%가 됩니다.";
+}
+
+function renderProgress(note) {
+  syncElapsedClock(note);
+  renderProgressValues(note);
 }
 
 function displayedSegments() {
@@ -537,6 +512,14 @@ function renderEditor() {
   });
   $("#chunk-notice").classList.toggle("hidden", note.chunk_count <= 1);
   $("#chunk-notice").textContent = `긴 녹음을 ${note.chunk_count}개 구간으로 나누어 전사했습니다. 경계에서 확인되지 않은 화자는 여러 이름으로 표시될 수 있습니다. 화자 이름을 수정해 정리할 수 있습니다.`;
+  const speechResult = note.pipeline_result;
+  $("#speech-result").classList.toggle('hidden', !speechResult?.pipeline);
+  if (speechResult?.pipeline) {
+    $("#chunk-notice").classList.add('hidden');
+    const peak = speechResult.peak_process_mib ? ` · Peak ${(speechResult.peak_process_mib / 1024).toFixed(1)} GiB` : '';
+    const uncertain = note.segments.filter(segment => segment.speaker === '미확인' || segment.speaker_uncertain).length;
+    $("#speech-result").textContent = `${speechResult.pipeline === 'qwen-batch' ? 'Qwen3-ASR' : 'MOSS'} + Nemotron · 모델 처리 ${clock(speechResult.inference_seconds)}${peak} · ${speechResult.chunk_count}청크 / 동시 ${speechResult.batch}개${uncertain ? ` · 화자 미확인 ${uncertain}개 발화` : ''}`;
+  }
   $("#speaker-panel").classList.toggle("hidden", !speakers.length);
   $("#speaker-panel").innerHTML = speakers.map(speaker => `
     <button type="button" class="speaker-chip" data-open-speaker="${escapeHtml(speaker)}" style="--speaker-color:${colors[speakerIndex[speaker] % colors.length]}">
@@ -679,8 +662,6 @@ $("#go-home").addEventListener("click", event => {
   event.preventDefault();
   openHome();
 });
-
-$("#show-devices").addEventListener("click", openHome);
 
 function openUpload(deviceId) {
   if (state.deletingId || $("#upload-dialog").open) return;
@@ -865,17 +846,20 @@ function uploadChunkPlan() {
   return { count, seconds: duration / count };
 }
 function renderUploadChunks() {
+  window.cosmossSpeech?.sync();
+  const fastSpeech = !!window.cosmossSpeech?.active();
   const input = $("#upload-chunk-count");
   const duration = state.uploadPreparation?.duration;
   const hasDuration = Number.isFinite(duration) && duration > 0;
   const plan = uploadChunkPlan();
   const value = state.uploadChunkCount ?? (hasDuration ? String(Math.ceil(duration / (uploadChunkDefaultMinutes() * 60))) : "");
   if (input.value !== value) input.value = value;
-  input.disabled = state.uploading || !hasDuration;
+  const needsGpu = executionDevice()?.backend === 'cuda' && !state.selectedGpu;
+  input.disabled = state.uploading || !hasDuration || needsGpu || fastSpeech;
   input.setCustomValidity("");
-  if (plan) {
-    if (plan.seconds > 90 * 60) input.setCustomValidity("구간당 90분 이하가 되도록 분할 개수를 늘려 주세요.");
-    else if (plan.count > Math.max(1, Math.floor(duration))) input.setCustomValidity("구간당 1초 이상이 되도록 분할 개수를 줄여 주세요.");
+  if (plan && !fastSpeech) {
+    if (plan.seconds > 90 * 60) input.setCustomValidity("구간당 90분 이하가 되도록 청크 분할 개수를 늘려 주세요.");
+    else if (plan.count > Math.max(1, Math.floor(duration))) input.setCustomValidity("구간당 1초 이상이 되도록 청크 분할 개수를 줄여 주세요.");
   }
   const total = plan ? Math.floor(plan.seconds) : 0;
   const hours = Math.floor(total / 3600), minutes = Math.floor(total % 3600 / 60), seconds = total % 60;
@@ -883,7 +867,10 @@ function renderUploadChunks() {
     [hours ? `${hours}시간` : "", minutes ? `${minutes}분` : "", seconds ? `${seconds}초` : ""].filter(Boolean).join(" ");
   $("#increase-upload-chunks").disabled = input.disabled || input.valueAsNumber >= 1000;
   $("#decrease-upload-chunks").disabled = input.disabled || input.valueAsNumber <= 1;
-  $("#upload-chunk-default").textContent = `이 장치 기본: ${uploadChunkDefaultMinutes()}분 이하 · 같은 길이로 나눕니다.`;
+  const needsInput = executionDevice()?.backend === 'cuda' && (needsGpu || !hasDuration);
+  const help = $("#upload-chunk-default");
+  help.textContent = needsInput ? '파일을 올리고 GPU 번호를 선택하면 청크 분할 개수에 따른 예상값을 확인할 수 있습니다.' : `이 장치 기본: ${uploadChunkDefaultMinutes()}분 이하 · 같은 길이로 나눕니다.`;
+  help.classList.toggle('needs-input', needsInput);
   scheduleUploadEstimate(plan);
 }
 
@@ -892,22 +879,48 @@ function clearUploadEstimate() {
   state.estimateController?.abort();
   state.estimateKey = null;
   $("#upload-estimates").classList.add('hidden');
+  $("#upload-estimates").classList.remove('needs-gpu-selection', 'is-pending');
 }
 function scheduleUploadEstimate(plan) {
-  if (!plan || !$('#upload-dialog').open || !executionDevice()) return clearUploadEstimate();
+  if (!$('#upload-dialog').open || !executionDevice()) return clearUploadEstimate();
   const device = executionDevice(), gpu = state.selectedGpu;
+  if (device.backend === 'mlx') {
+    clearUploadEstimate();
+    const box = $('#upload-estimates');
+    box.classList.remove('hidden', 'is-over-capacity');
+    box.classList.add('is-pending');
+    $('#upload-estimate-memory').textContent = '업데이트 예정입니다.';
+    $('#upload-estimate-time').textContent = '업데이트 예정입니다.';
+    $('#upload-estimate-note').textContent = '';
+    $('#upload-memory-warning').classList.add('hidden');
+    return;
+  }
+  if (device.backend === 'cuda' && !gpu) {
+    clearUploadEstimate();
+    const box = $('#upload-estimates');
+    box.classList.remove('hidden', 'is-over-capacity');
+    box.classList.add('needs-gpu-selection');
+    $('#upload-estimate-memory').textContent = '-';
+    $('#upload-estimate-time').textContent = '-';
+    $('#upload-estimate-note').textContent = '';
+    $('#upload-memory-warning').classList.add('hidden');
+    return;
+  }
+  if (!plan) return clearUploadEstimate();
+  if (window.cosmossSpeech?.active()) return window.cosmossSpeech.estimate();
   const duration = state.uploadPreparation.duration;
-  const key = JSON.stringify([device.id, device.model_key, device.options, duration, plan.count, gpu?.uuid, gpu?.memory_used_mib, gpu?.memory_free_mib]);
+  const hardware = state.gpuDeviceId === device.id ? state.gpuInventory.map(item => [item.name, item.memory_total_mib]) : [];
+  const key = JSON.stringify([device.id, device.model_key, device.options, device.hardware, hardware, duration, plan.count, gpu?.uuid, gpu?.name, gpu?.memory_total_mib, gpu?.memory_used_mib, gpu?.memory_free_mib]);
   if (state.estimateKey === key) return;
   clearTimeout(state.estimateTimer);
   state.estimateController?.abort();
   state.estimateKey = key;
   const box = $('#upload-estimates');
-  box.classList.remove('hidden', 'is-over-capacity');
+  box.classList.remove('hidden', 'is-over-capacity', 'needs-gpu-selection', 'is-pending');
   $('#upload-memory-warning').classList.add('hidden');
   $('#upload-estimate-memory').textContent = '—';
   $('#upload-estimate-time').textContent = '—';
-  $('#upload-estimate-note').textContent = '초기 추정 계산 중…';
+  $('#upload-estimate-note').textContent = '예상값 계산 중…';
   state.estimateTimer = setTimeout(async () => {
     const controller = new AbortController();
     state.estimateController = controller;
@@ -916,15 +929,15 @@ function scheduleUploadEstimate(plan) {
     try {
       const estimate = await api(`/api/devices/${encodeURIComponent(device.id)}/estimate?${query}`, {signal:controller.signal});
       if (state.estimateKey !== key) return;
-      const memory = estimate.memory_high_gib != null ? `${estimate.memory_low_gib.toFixed(1)}–${estimate.memory_high_gib.toFixed(1)} GiB` : '추정 불가';
+      const memory = estimate.memory_expected_gib != null ? `약 ${estimate.memory_expected_gib.toFixed(1)} GiB` : '추정 불가';
       $('#upload-estimate-memory').textContent = memory;
-      $('#upload-estimate-time').textContent = estimate.time_high_seconds != null ? `${clock(estimate.time_low_seconds)}–${clock(estimate.time_high_seconds)}` : '추정 불가';
-      $('#upload-estimate-note').textContent = estimate.note + (device.backend === 'cuda' && !gpu ? ' · GPU 선택 후 보정' : '');
+      $('#upload-estimate-time').textContent = estimate.time_seconds != null ? `약 ${clock(estimate.time_seconds)}` : '추정 불가';
+      $('#upload-estimate-note').textContent = '';
       box.classList.toggle('is-over-capacity', !!estimate.exceeds_capacity);
       const warning = $('#upload-memory-warning');
       warning.classList.toggle('hidden', !estimate.exceeds_capacity && !estimate.exceeds_free);
       warning.textContent = estimate.exceeds_capacity
-        ? `예상 최대 ${estimate.memory_high_gib.toFixed(1)} GiB가 전체 ${estimate.capacity_kind} ${estimate.capacity_gib.toFixed(1)} GiB를 초과합니다. 분할 개수를 늘려 주세요.`
+        ? `여유를 포함한 ${estimate.memory_high_gib.toFixed(1)} GiB가 전체 ${estimate.capacity_kind} ${estimate.capacity_gib.toFixed(1)} GiB를 초과합니다. 청크 분할 개수를 늘려 주세요.`
         : estimate.exceeds_free ? `현재 여유 VRAM ${estimate.free_gib.toFixed(1)} GiB보다 클 수 있습니다. 다른 프로세스의 사용량을 확인하세요.` : '';
     } catch (error) {
       if (state.estimateKey === key && error.name !== 'AbortError') $('#upload-estimate-note').textContent = '예측값을 불러오지 못했습니다.';
@@ -1060,6 +1073,7 @@ $("#upload-form").addEventListener("submit", async event => {
   body.delete("selected-gpu");
   if (!executionDevice()) return toast("처리 장치를 다시 선택해 주세요.", true);
   body.set("device_id", executionDevice().id);
+  window.cosmossSpeech?.form(body);
   body.set("output_directory", state.saveDirectory || "~/Downloads");
   if (executionDevice()?.backend === "cuda") {
     if (!state.selectedGpu || state.gpuDeviceId !== executionDevice().id) return toast("이번 전사에 사용할 GPU를 선택해 주세요.", true);
@@ -1293,6 +1307,7 @@ function stopGpuMonitor() {
 function syncExecutionGpu() {
   const device = executionDevice();
   const managed = device?.backend === "cuda";
+  $('#upload-dialog').classList.toggle('has-execution-gpu', managed);
   $("#execution-gpu").classList.toggle("hidden", !managed);
   if (state.gpuDeviceId !== device?.id) {
     stopGpuMonitor();
@@ -1300,6 +1315,7 @@ function syncExecutionGpu() {
     state.gpuApproval = null;
     state.gpuInventory = [];
     state.gpuDeviceId = device?.id;
+    $("#execution-gpu-meta").textContent = "";
     $("#gpu-probe-result").textContent = "";
   }
   if (managed && $("#upload-dialog").open && !$("#device-dialog").open) refreshGpu();
@@ -1325,6 +1341,7 @@ async function loadDevices() {
   for (const device of state.devices) {
     if (device.kind !== "local" && device.backend !== "cuda") continue;
     const setup = device.id === "local" ? state.localModel : state.workerStates[device.id];
+    if (device.model_selected === false || device.options?.speech_pipeline && device.options.speech_pipeline !== 'moss-original') continue;
     if (!runtimeState(device.id) && !state.environments[device.id] && !modelBusy(setup) && setup?.phase !== "unknown") checkEnvironment(device.id);
   }
   if ($('#upload-dialog').open) renderFilePreparation();
@@ -1448,9 +1465,12 @@ $("#install-environment").addEventListener("click", async () => {
 function devicePresentation(device) {
   const worker = state.workerStates[device.id];
   const status = state.deviceStatus[device.id];
+  if (device.model_selected === false) return {label:'모델을 선택해 주세요',tone:'',ready:false};
+  if (device.kind === 'local' && state.localModel?.phase === 'ready') return {label:'모델 준비됨',tone:'ready',ready:true};
   if (device.kind === "local" && localModelBusy()) return {
     label: "모델 준비 중", tone: "busy", ready: false,
   };
+  if (device.kind === 'local') return {label:'모델 다운로드 필요',tone:'',ready:false};
   if (device.backend !== "cuda") return {
     label: status?.ok ? "사용 가능" : status ? "모델 준비 필요" : "확인 중",
     tone: status?.ok ? "ready" : "",
@@ -1458,7 +1478,7 @@ function devicePresentation(device) {
   };
   const phases = {
     connecting: "연결 중", checking_environment: "기존 환경 확인 중", waiting_environment: "다른 장치의 환경 준비 대기 중",
-    installing_uv: "uv 설치 중", installing: "환경 설치 중",
+    installing_uv: "uv 설치 중", installing: "환경 설치 중", unselected:'모델을 선택해 주세요',
     checking_model: "모델 확인 중", downloading: "다운로드 중",
     idle: "모델 준비 필요", installed: "모델 준비됨", stopped: "모델 준비됨",
     loading: "GPU 준비 중", ready: "GPU 사용 중", stopping: "정리 중",
@@ -1471,6 +1491,18 @@ function devicePresentation(device) {
     tone: ready ? "ready" : busy ? "busy" : "", ready };
 }
 
+function cardModelOptions(device) {
+  const selected = device.model_selected !== false;
+  const placeholder = `<option value="" disabled ${selected ? '' : 'selected'}>모델 선택…</option>`;
+  if (device.backend === 'cuda') {
+    const current = device.options?.speech_pipeline || 'moss-original';
+    const presets = state.catalog?.speech_presets || [{key:'moss-batch',name:'MOSS + Nemotron · 기본 추천'}, {key:'qwen-batch',name:'Qwen3-ASR + Nemotron'}, {key:'moss-original',name:'MOSS · 긴 문맥'}];
+    return placeholder + presets.map(item => `<option value="speech:${item.key}" ${selected && device.model_key !== 'custom' && item.key === current ? 'selected' : ''}>${escapeHtml(item.key === 'moss-batch' ? 'MOSS + Nemotron · 추천' : item.key === 'qwen-batch' ? 'Qwen3-ASR + Nemotron · 속도 우선' : item.name)}</option>`).join('') + `<option value="custom" ${selected && device.model_key === 'custom' ? 'selected' : ''}>다른 MOSS 저장소…</option>`;
+  }
+  return placeholder + modelOptionsHtml(device.id, selected ? device.model_key || state.localModel?.model_key || 'mlx-8bit' : '', false)
+    + '<option disabled>Qwen3-ASR + Nemotron · NVIDIA 서버에서 지원</option>';
+}
+
 function renderDevices() {
   $("#device-count").textContent = state.devices.length;
   $("#device-panel-summary").textContent = "";
@@ -1479,9 +1511,10 @@ function renderDevices() {
     const worker = state.workerStates[device.id];
     const presentation = devicePresentation(device);
     const managed = device.backend === "cuda";
+    const fast = managed && ['moss-batch','qwen-batch'].includes(device.options?.speech_pipeline);
     const gpuActive = !!worker?.active_gpu_uuid || ["loading", "ready"].includes(worker?.phase);
     const cleanupPending = gpuActive || device.worker_cleanup_pending || worker?.worker_cleanup_pending || (["prepare", "stop"].includes(worker?.action) && ["error", "interrupted"].includes(worker?.phase));
-    const busy = worker && !["idle", "installed", "stopped", "error", "interrupted", "unknown"].includes(worker.phase);
+    const busy = modelBusy(device.kind === 'local' ? state.localModel : worker) || state.modelSelectingId === device.id;
     const detail = device.kind === "local" ? "이 기기 · Apple Silicon" : device.host;
     const icon = device.kind === "local" ? '<rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8m-4-5v5"/>' : '<rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M8 6.5h.01M8 17.5h.01M12 6.5h4M12 17.5h4"/>';
     return `<article class="registered-device ${device.kind === "local" ? "is-local" : ""}" data-device-id="${escapeHtml(device.id)}" aria-label="${escapeHtml(device.name)}">
@@ -1489,17 +1522,18 @@ function renderDevices() {
         <div class="device-card-name"><div class="device-card-title"><b title="${escapeHtml(device.name)}">${escapeHtml(device.name)}</b>${device.kind === "local" ? '<span class="default-device">기본</span>' : ""}</div><small>${escapeHtml(detail)}</small></div>
         ${device.kind === "ssh" ? `<button class="icon-button danger" data-device-action="remove" type="button" aria-label="${escapeHtml(device.name)} 제거" title="장치 제거" ${busy ? "disabled" : ""}><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg></button>` : ""}
       </div>
-      <div class="device-card-state ${presentation.tone}"><i aria-hidden="true"></i><span>${escapeHtml(presentation.label)}</span>${device.kind === "local" || managed ? `<button class="device-environment-link${runtimeState(device.id)?.ready ? " is-ready" : ""}" data-device-action="environment" type="button" aria-haspopup="dialog" title="uv · Python venv · 필수 패키지 확인 및 설치">${runtimeState(device.id)?.ready ? "uv · venv ✓" : "실행 환경"}</button>` : ""}</div>
-      ${device.kind === "local" || managed ? `<label class="field device-model-field"><span>전사 모델 <small class="device-chunk-size">${escapeHtml(deviceKnobSummary(device))}</small></span><select data-device-model="${escapeHtml(device.id)}" ${modelBusy(device.kind === "local" ? state.localModel : worker) ? "disabled" : ""}>${modelOptionsHtml(device.id, device.model_key || (device.kind === "local" ? state.localModel?.model_key || "mlx-8bit" : "cuda-original"), false)}</select></label>` : ""}
+      <div class="device-card-state ${presentation.tone}"><i aria-hidden="true"></i><span>${escapeHtml(presentation.label)}</span>${(device.kind === "local" || managed) && !fast && device.model_selected !== false ? `<button class="device-environment-link${runtimeState(device.id)?.ready ? " is-ready" : ""}" data-device-action="environment" type="button" aria-haspopup="dialog" title="uv · Python venv · 필수 패키지 확인 및 설치">${runtimeState(device.id)?.ready ? "uv · venv ✓" : "실행 환경"}</button>` : ""}</div>
+      ${device.kind === "local" || managed ? `<label class="field device-model-field"><span>전사 모델 <small class="device-chunk-size">${device.model_selected === false ? '선택 후 다운로드' : fast ? '화자 구분 · Nemotron' : escapeHtml(deviceKnobSummary(device))}</small></span><select data-device-model="${escapeHtml(device.id)}" ${busy ? "disabled" : ""}>${cardModelOptions(device)}</select></label>
+      <button class="device-model-download" data-device-action="download" type="button" ${busy || device.model_selected === false || worker?.phase === 'unknown' || presentation.ready ? 'disabled' : ''}>${busy ? '모델 준비 중…' : presentation.ready ? '모델 준비 완료' : '선택한 모델 다운로드'}</button>` : ""}
       ${downloadProgressHtml(device.kind === "local" ? state.localModel : worker)}
       ${worker?.error ? `<details class="device-diagnostics"><summary>준비 상세 보기</summary><p>${escapeHtml(worker.error)}</p></details>` : ""}
       <div class="device-actions">
-        <button class="device-create-note use-device" data-device-action="use" type="button" title="${escapeHtml(device.name)}에서 노트 만들기">
+        <button class="device-create-note use-device" data-device-action="use" type="button" title="${escapeHtml(device.name)}에서 노트 만들기" ${device.model_selected === false || ((managed || device.kind === 'local') && !presentation.ready) ? 'disabled' : ''}>
           <span class="create-note-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
           <span>노트 만들기</span>
           <svg class="create-note-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
         </button>
-        <div class="device-secondary-actions">${managed ? `<button class="ghost-button" data-device-action="install" type="button">모델 · 설정</button>${cleanupPending && !(worker?.phase === "stopped" && worker?.cleaned) ? `<button class="ghost-button" data-device-action="stop" type="button">${gpuActive ? "GPU 해제" : "작업 정리"}</button>` : ""}` : device.kind === "local" ? '<button class="ghost-button" data-device-action="local-model" type="button">모델 · 설정</button>' : '<button class="ghost-button" data-device-action="status" type="button">상태 확인</button>'}</div>
+        <div class="device-secondary-actions">${managed ? `${!fast ? '<button class="ghost-button" data-device-action="install" type="button">고급 설정</button>' : ''}${cleanupPending && !(worker?.phase === "stopped" && worker?.cleaned) ? `<button class="ghost-button" data-device-action="stop" type="button">${gpuActive ? "GPU 해제" : "작업 정리"}</button>` : ""}` : device.kind === "local" ? '<button class="ghost-button" data-device-action="local-model" type="button">고급 설정</button>' : '<button class="ghost-button" data-device-action="status" type="button">상태 확인</button>'}</div>
       </div></article>`;
   }).join("");
   renderEnvironment();
@@ -1527,7 +1561,8 @@ async function loadModelCatalog() {
 }
 function fillModelKnobs(options) {
   for (const field of document.querySelectorAll('[data-knob]')) {
-    if (options?.[field.dataset.knob] !== undefined) field.value = String(options[field.dataset.knob]);
+    const value = options?.[field.dataset.knob];
+    if (value !== undefined) field.value = String(value);
   }
 }
 function readModelKnobs() {
@@ -1579,20 +1614,30 @@ $("#model-profiles").addEventListener("click", event => {
   const button = event.target.closest('[data-apply-profile]');
   if (button) applyModelProfile(button.dataset.applyProfile);
 });
-document.querySelector('[data-knob=precision]').addEventListener('change', event => {
+document.querySelector('[data-knob=precision]').addEventListener('change', () => {
   if (state.modelDeviceId === 'local') return;
-  const precision = event.target.value;
-  if ($("#model-choice").value !== 'custom') $("#model-choice").value = precision === 'int8' ? 'cuda-8bit' : precision === 'int4' ? 'cuda-4bit' : 'cuda-original';
+  if ($("#model-choice").value !== 'custom') $("#model-choice").value = 'cuda-original';
   updateModelChoice();
 });
-$("#registered-devices").addEventListener('change', event => {
+$("#registered-devices").addEventListener('change', async event => {
   const select = event.target.closest('[data-device-model]');
   if (select) {
     const requested = select.value;
     const id = select.dataset.deviceModel;
     const device = state.devices.find(device => device.id === id);
-    select.value = device?.model_key || (id === 'local' ? state.localModel?.model_key || 'mlx-8bit' : 'cuda-original');
-    openLocalModel(id, requested);
+    if (requested === 'custom') return openLocalModel(id, requested);
+    state.modelSelectingId = id;
+    renderDevices();
+    try {
+      const payload = requested.startsWith('speech:') ? {pipeline:requested.slice(7)} : {model_key:requested};
+      const result = await api(`/api/devices/${encodeURIComponent(id)}/model/selection`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      state.deviceModelRevisions[id] = (state.deviceModelRevisions[id] || 0) + 1;
+      Object.assign(device,result);
+      if (id === 'local') { state.localModel = result.setup; delete state.deviceStatus.local; }
+      else { state.workerStates[id] = result.setup; pollWorker(id); }
+      toast('모델을 선택했습니다. 왼쪽에서 다운로드해 주세요.');
+    } catch (error) { toast(error.message,true); }
+    finally { state.modelSelectingId = null; renderDevices(); }
   }
 });
 
@@ -1624,7 +1669,7 @@ function downloadProgressHtml(model, label = "모델 다운로드 진행률") {
   const download = model.download;
   const percent = Number.isFinite(download?.percent) ? Math.max(0, Math.min(100, download.percent)) : null;
   const amount = download?.total_bytes > 0 ? `${modelBytes(download.downloaded_bytes)} / ${modelBytes(download.total_bytes)}` : "전체 용량 확인 중…";
-  return `<div class="model-download"><div><strong>${percent == null ? "다운로드 준비 중" : `${percent.toFixed(1)}%`}</strong><span>${amount}</span></div><progress max="100" ${percent == null ? "" : `value="${percent}"`} aria-label="${escapeHtml(label)}"></progress></div>`;
+  return `<div class="model-download"><div><strong>${percent == null ? "모델 다운로드 중…" : `${percent.toFixed(1)}%`}</strong><span>${amount}</span></div><progress max="100" ${percent == null ? "" : `value="${percent}"`} aria-label="${escapeHtml(label)}"></progress></div>`;
 }
 
 function renderLocalModel() {
@@ -1763,7 +1808,7 @@ $("#local-model-form").addEventListener("submit", async event => {
       body: JSON.stringify({ source, path: source === "folder" ? $("#model-folder-path").value.trim() : "", model_key: $("#model-choice").value, model_id: $("#model-custom-id").value.trim(), options: readModelKnobs() }),
     });
     const device = state.devices.find(device => device.id === id);
-    if (device) { device.model_key = $("#model-choice").value; device.options = readModelKnobs(); }
+    if (device) { device.model_key = $("#model-choice").value; device.options = readModelKnobs(); device.model_selected = true; }
     if (local) { state.localModel = result; scheduleLocalModelPoll(); }
     else { state.workerStates[id] = { ...state.workerStates[id], ...result }; pollWorker(id); }
     renderDevices();
@@ -1837,9 +1882,7 @@ async function refreshGpu() {
   const controller = new AbortController();
   state.gpuAbort = controller;
   const request = ++state.sshRequest;
-  const button = $("#probe-ssh-host");
-  button.disabled = true;
-  if (!state.gpuInventory.length) $("#gpu-probe-result").textContent = `${device.host}의 GPU 확인 중…`;
+  if (!state.gpuInventory.length) $("#execution-gpu-meta").textContent = `${device.host} · GPU 확인 중…`;
   try {
     const result = await api(`/api/devices/${encodeURIComponent(device.id)}/gpus`, { method: "POST", signal: controller.signal });
     if (request !== state.sshRequest || executionDevice()?.id !== device.id) return;
@@ -1858,24 +1901,23 @@ async function refreshGpu() {
         <td>${activity}</td><td title="${escapeHtml(tooltip)}">${processes}</td>
         <td class="${gpu.idle_candidate ? "gpu-idle" : "gpu-occupied"}">${gpu.idle_candidate ? "여유" : "사용 중 · 확인 필요"}</td></tr>`;
     }).join("");
-    $("#gpu-probe-result").innerHTML = `<b>${escapeHtml(device.host)} · ${checked} 확인 · 3초마다 갱신</b>
-      ${rows ? `<div class="gpu-table-wrap"><table class="gpu-table"><thead><tr><th>GPU</th><th>사용 / 전체 VRAM</th><th>사용률</th><th>프로세스</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+    $("#execution-gpu-meta").textContent = `${device.host} · ${checked} 확인 · 3초마다 갱신`;
+    $("#gpu-probe-result").innerHTML = `${rows ? `<div class="gpu-table-wrap"><table class="gpu-table"><thead><tr><th>GPU</th><th>사용 / 전체 VRAM</th><th>사용률</th><th>프로세스</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
       <p>${escapeHtml(result.message)}</p>`;
     if (focused) [...$("#gpu-probe-result").querySelectorAll("input")].find(input => input.value === focused && !input.disabled)?.focus({ preventScroll: true });
   } catch (error) {
     if (request !== state.sshRequest || error.name === "AbortError") return;
     state.selectedGpu = null;
+    $("#execution-gpu-meta").textContent = `${device.host} · 갱신 재시도 중`;
     $("#gpu-probe-result").textContent = error.message;
   } finally {
     if (request === state.sshRequest) {
-      button.disabled = state.uploading;
       renderFilePreparation();
       if ($("#upload-dialog").open && !$("#device-dialog").open && executionDevice()?.id === device.id && !state.uploading) state.gpuTimer = setTimeout(refreshGpu, 3000);
     }
   }
 }
 
-$("#probe-ssh-host").addEventListener("click", refreshGpu);
 $("#gpu-probe-result").addEventListener("change", async event => {
   if (event.target.name !== "selected-gpu") return;
   const deviceId = state.gpuDeviceId;
@@ -1922,10 +1964,13 @@ bindConfirmationDialog("#gpu-warning-dialog", () => closeGpuWarning(false));
 $("#device-backend").addEventListener("change", () => {
   const managed = $("#device-backend").value === "cuda";
   $("#device-model").value = $("#device-backend").value === "mlx" ? "moss-mtd" : "OpenMOSS-Team/MOSS-Transcribe-Diarize";
-  $("#device-cache-field").classList.toggle("hidden", !managed);
-  $("#device-cache").disabled = !managed;
+  $("#device-cache-field").classList.toggle("hidden", managed);
+  $("#device-cache").disabled = managed;
+  $("#device-model-field").classList.toggle('hidden', managed);
+  $("#device-model").disabled = managed;
+  $("#device-model").required = !managed;
   $("#worker-setup-help").textContent = managed
-    ? "연결하면 실행 환경과 모델을 자동으로 준비합니다. 이미 설치된 항목은 재사용합니다."
+    ? "장치만 연결합니다. 연결 후 왼쪽에서 전사 모델을 선택하고 다운로드하세요."
     : "이 기기에서 직접 실행한 모델에 연결합니다. 처리 장치는 해당 기기의 설정을 따릅니다.";
 });
 
@@ -1940,11 +1985,10 @@ $("#add-device-form").addEventListener("submit", async event => {
   state.addingDevice = true;
   updateDeviceRegistration();
   try {
-    await refreshAppSetup(true);
     const device = await api("/api/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
     await loadDevices();
     $("#device-dialog").close();
-    toast("장치를 추가했습니다.");
+    toast("장치를 연결했습니다. 왼쪽에서 모델을 선택해 주세요.");
   } catch (error) { toast(error.message, true); }
   finally { state.addingDevice = false; updateDeviceRegistration(); }
 });
@@ -1958,7 +2002,22 @@ $("#registered-devices").addEventListener("click", async event => {
   if (["local-model", "install"].includes(button.dataset.deviceAction)) return openLocalModel(id);
   button.disabled = true;
   try {
-    if (button.dataset.deviceAction === "stop") {
+    if (button.dataset.deviceAction === 'download') {
+      const device = state.devices.find(item => item.id === id);
+      if (device.model_selected === false) return toast('모델을 먼저 선택해 주세요.',true);
+      const key = device.options?.speech_pipeline;
+      let result;
+      if (device.backend === 'cuda' && ['moss-batch','qwen-batch'].includes(key)) {
+        result = await api(`/api/devices/${encodeURIComponent(id)}/speech-setup`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pipeline:key})});
+      } else {
+        const source = id === 'local' ? state.localModel : device;
+        result = await api(id === 'local' ? '/api/local-model/prepare' : `/api/devices/${encodeURIComponent(id)}/model/prepare`,
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_key:device.model_key || (id === 'local' ? 'mlx-8bit' : 'cuda-original'),source:source?.source || source?.model_source || 'cache',path:source?.model_path || ''})});
+      }
+      if (id === 'local') { state.localModel = result; scheduleLocalModelPoll(); }
+      else { state.workerStates[id] = result; pollWorker(id); }
+      renderDevices();
+    } else if (button.dataset.deviceAction === "stop") {
       state.workerStates[id] = await api(`/api/devices/${encodeURIComponent(id)}/worker/${button.dataset.deviceAction}`, { method: "POST" });
       renderDevices();
       pollWorker(id);
@@ -1982,6 +2041,7 @@ $("#registered-devices").addEventListener("click", async event => {
 async function pollWorker(id) {
   if (state.workerPolling.has(id)) return;
   state.workerPolling.add(id);
+  const revision = state.deviceModelRevisions[id] || 0;
   const started = performance.now();
   clearTimeout(state.workerTimers[id]);
   delete state.workerTimers[id];
@@ -1991,10 +2051,11 @@ async function pollWorker(id) {
       const status = await api(`/api/devices/${encodeURIComponent(id)}/status`, { method: "POST" });
       worker = status.setup || { phase: "error", error: status.error };
     }
+    if (revision !== (state.deviceModelRevisions[id] || 0)) return;
     state.workerStates[id] = { ...state.workerStates[id], ...worker };
     renderDevices();
     if (state.modelDeviceId === id) renderLocalModel();
-    if (["idle", "installed", "stopped", "error", "interrupted"].includes(worker.phase)) {
+    if (["unselected", "idle", "installed", "stopped", "error", "interrupted"].includes(worker.phase)) {
       delete state.workerTimers[id];
       return;
     }
@@ -2004,7 +2065,10 @@ async function pollWorker(id) {
     state.workerStates[id] = { ...state.workerStates[id], phase: "error", error: error.message };
     renderDevices();
     if (state.modelDeviceId === id) renderLocalModel();
-  } finally { state.workerPolling.delete(id); }
+  } finally {
+    state.workerPolling.delete(id);
+    if (revision !== (state.deviceModelRevisions[id] || 0)) pollWorker(id);
+  }
 }
 
 $("#output-format").addEventListener("change", () => {
@@ -2064,6 +2128,8 @@ setInterval(() => refreshDevicePanel(), 10000);
 
 function renderTextFileActions() {
   const note = state.current;
+  $('#open-diarization').disabled = note?.status !== 'done' || note?.source_type === 'text_file';
+  $('#open-diarization').title = note?.source_type === 'text_file' ? '원본 녹음이 보관된 노트에서 사용할 수 있습니다.' : '';
   for (const selector of ["#retry-result-save", "#reveal-txt", "#edit-speakers"]) $(selector).disabled = note?.status !== "done";
   if (note?.source_type === "text_file") $("#edit-speakers").disabled = !note.segments.length;
   $("#retry-result-save").classList.toggle("hidden", note?.status !== "done" || !!note.text_path);
@@ -2104,16 +2170,100 @@ $("#reveal-txt").addEventListener("click", async () => {
   } catch (error) { toast(error.message, true); }
 });
 
+const speakerPreviewPlayback = (() => {
+  const player = $('#speaker-preview-player');
+  const playIcon = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>';
+  const stopIcon = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1"/></svg>';
+  let active = null, request = 0, timer = null;
+  function render() {
+    for (const button of $('#speaker-preview').querySelectorAll('[data-speaker-play]')) {
+      const selected = active?.index === Number(button.dataset.speakerPlay);
+      button.setAttribute('aria-pressed', String(selected));
+      button.setAttribute('aria-label', `${button.dataset.playbackTime} 발화 ${selected ? '재생 정지' : '재생'}`);
+      button.innerHTML = `${selected ? stopIcon : playIcon}<span>${selected ? (active.loading ? '로딩…' : '정지') : '재생'}</span>`;
+    }
+  }
+  function stop(release = false) {
+    ++request;
+    active = null;
+    clearTimeout(timer);
+    player.onloadedmetadata = null;
+    player.pause();
+    render();
+    if (release) { player.removeAttribute('src'); player.load(); }
+  }
+  function fail(token) {
+    if (token !== request || !active) return;
+    stop(true);
+    toast('이 발화를 재생하지 못했습니다. 녹음 파일과 발화 시간을 확인해 주세요.', true);
+  }
+  function checkEnd() {
+    clearTimeout(timer);
+    if (!active || player.paused) return;
+    const remaining = active.end - player.currentTime;
+    if (remaining <= .015) return stop();
+    timer = setTimeout(checkEnd, Math.min(80, Math.max(10, remaining * 1000)));
+  }
+  function play(index) {
+    const draft = state.speakerDraft, segment = draft?.segments[index];
+    if (!draft?.hasAudio || state.speakerSaving || !segment || !Number.isFinite(segment.start)
+        || !Number.isFinite(segment.end) || segment.start < 0 || segment.end <= segment.start) return;
+    if (active?.index === index) return stop();
+    stop();
+    for (const media of document.querySelectorAll('audio, video')) if (media !== player) media.pause();
+    const token = request;
+    active = {index, start: segment.start, end: segment.end, loading: true};
+    render();
+    const seek = () => {
+      if (token !== request || !active) return;
+      if (Number.isFinite(player.duration)) active.end = Math.min(active.end, player.duration);
+      if (active.end <= active.start) return fail(token);
+      try { player.currentTime = active.start; } catch (_) { fail(token); }
+    };
+    player.onloadedmetadata = seek;
+    const url = `/api/notes/${encodeURIComponent(draft.id)}/media?playback=true`;
+    if (player.getAttribute('src') !== url) { player.src = url; player.load(); }
+    else if (player.readyState >= 1) seek();
+    if (token !== request) return;
+    // Keep play() in the button's user gesture for native WebKit. Metadata
+    // positions the recording before it can play; opening/navigating never plays.
+    player.play().catch(() => fail(token));
+  }
+  player.addEventListener('playing', () => {
+    if (!active) return;
+    active.loading = false;
+    render();
+    checkEnd();
+  });
+  player.addEventListener('timeupdate', () => {
+    if (active && player.currentTime >= active.end) stop();
+  });
+  player.addEventListener('ended', () => { if (player.ended) stop(); });
+  player.addEventListener('pause', () => { if (active && player.paused) stop(); });
+  player.addEventListener('error', () => { if (player.error) fail(request); });
+  document.addEventListener('play', event => { if (event.target !== player && active) stop(); }, true);
+  $('#speaker-preview').addEventListener('click', event => {
+    const button = event.target.closest('[data-speaker-play]');
+    if (button && !button.disabled) play(Number(button.dataset.speakerPlay));
+  });
+  return {stop, render, play};
+})();
+
 function renderSpeakerDialog() {
   const draft = state.speakerDraft;
   if (!draft) return;
+  speakerPreviewPlayback.stop(true);
   $("#speaker-choices").innerHTML = draft.speakers.map(speaker => `<button type="button" class="speaker-choice" draggable="${draft.speakers.length > 1}" data-select-speaker="${escapeHtml(speaker)}" aria-pressed="${speaker === draft.selected}" aria-describedby="speaker-merge-help"><small>${escapeHtml(speaker)} · ${draft.segments.filter(s => s.speaker === speaker).length}개 발화</small><strong>${escapeHtml(draft.names[speaker] || speaker)}</strong></button>`).join("");
   $("#speaker-name-label").textContent = `${draft.selected} 이름`;
   $("#speaker-name").value = draft.names[draft.selected] || "";
   draft.utterances = draft.segments.flatMap((segment, index) => segment.speaker === draft.selected ? [index] : []);
   draft.utterancePosition = 0;
-  $("#speaker-navigation-help").textContent = "↑·↓로 선택한 화자의 발화 이동";
-  $("#speaker-preview").innerHTML = draft.segments.map((segment, index) => `<article class="speaker-preview-row ${segment.speaker === draft.selected ? "highlighted" : ""}" data-preview-index="${index}" data-preview-speaker="${escapeHtml(segment.speaker)}"><div><span>${clock(segment.start)}</span><span>${escapeHtml(draft.names[segment.speaker] || segment.speaker)}</span></div><p>${escapeHtml(segment.text)}</p></article>`).join("");
+  $("#speaker-navigation-help").textContent = "↑·↓ 발화 이동 · Space 재생·정지";
+  $("#speaker-preview").innerHTML = draft.segments.map((segment, index) => {
+    const playable = draft.hasAudio && Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.start >= 0 && segment.end > segment.start;
+    return `<article class="speaker-preview-row ${segment.speaker === draft.selected ? "highlighted" : ""}" data-preview-index="${index}" data-preview-speaker="${escapeHtml(segment.speaker)}"><div><span>${clock(segment.start)}</span><span data-preview-name>${escapeHtml(draft.names[segment.speaker] || segment.speaker)}</span><button class="speaker-preview-play" type="button" data-speaker-play="${index}" data-playback-time="${clock(segment.start)}" title="${playable ? '이 발화만 재생' : draft.hasAudio ? '재생할 발화 시간이 없습니다.' : '원본 녹음이 없는 텍스트 파일은 재생할 수 없습니다.'}" ${playable ? '' : 'disabled'}></button></div><p>${escapeHtml(segment.text)}</p></article>`;
+  }).join("");
+  speakerPreviewPlayback.render();
 }
 
 function goToSpeakerUtterance(position, focus = false) {
@@ -2128,7 +2278,7 @@ function goToSpeakerUtterance(position, focus = false) {
   if (focus) preview.focus({ preventScroll: true });
   const top = preview.scrollTop + row.getBoundingClientRect().top - preview.getBoundingClientRect().top - 6;
   preview.scrollTo({ top, behavior: 'instant' });
-  $("#speaker-navigation-help").textContent = `↑·↓로 선택한 화자의 발화 이동 · ${draft.utterancePosition + 1}/${draft.utterances.length}`;
+  $("#speaker-navigation-help").textContent = `↑·↓ 발화 이동 · Space 재생·정지 · ${draft.utterancePosition + 1}/${draft.utterances.length}`;
 }
 
 async function openSpeakerDialog(selected) {
@@ -2139,20 +2289,26 @@ async function openSpeakerDialog(selected) {
     if (note?.status !== "done") return;
     const speakers = [...new Set([...note.segments, ...(note.raw_segments || [])].map(s => note.speaker_merges?.[s.speaker] || s.speaker))];
     if (!speakers.length) return toast("지정할 화자가 없습니다.");
-    state.speakerDraft = { id: note.id, speakers, selected: speakers.includes(selected) ? selected : speakers[0], names: structuredClone(note.speaker_names), segments: structuredClone(note.segments), merges: {} };
+    const voiceResult = note.voice_matches?.length || note.voice_merge_candidates?.length
+      ? {matches: note.voice_matches || [], merge_candidates: note.voice_merge_candidates || []} : null;
+    state.speakerDraft = { id: note.id, hasAudio: note.source_type !== 'text_file', speakers, selected: speakers.includes(selected) ? selected : speakers[0], names: structuredClone(note.speaker_names), segments: structuredClone(note.segments), merges: {}, voiceResult };
+    $('#media-player').pause();
     $("#speaker-save-error").classList.add("hidden");
     renderSpeakerDialog();
     $("#speaker-dialog").showModal();
     $("#identify-voice-speakers").disabled = note.source_type === 'text_file';
-    $("#speaker-voice-status").textContent = note.voice_match_error || (note.voice_matches?.some(match => match.accepted) ? `등록한 목소리로 ${note.voice_matches.filter(match => match.accepted).length}명의 이름을 찾았습니다.` : '');
+    $("#identify-voice-speakers").textContent = voiceResult ? '목소리 추천 검토' : '목소리 비교·추천';
+    $("#speaker-voice-status").textContent = note.voice_match_error || (voiceResult ? '목소리 비교 결과가 있습니다. 추천을 검토하고 승인해 주세요.' : '');
     $("#speaker-voice-status").classList.toggle('hidden', !$("#speaker-voice-status").textContent);
     goToSpeakerUtterance(0, true);
   } catch (error) { toast(error.message, true); }
 }
 $("#edit-speakers").addEventListener("click", () => openSpeakerDialog());
-$("#identify-voice-speakers").addEventListener('click', async () => {
+async function compareSpeakerVoices(refresh = false) {
   const draft = state.speakerDraft;
   if (!draft || state.speakerSaving || state.voiceIdentifying) return;
+  speakerPreviewPlayback.stop(true);
+  if (draft.voiceResult && !refresh) return voiceReview.open(draft.voiceResult);
   state.voiceIdentifying = true;
   const button = $("#identify-voice-speakers");
   button.disabled = true;
@@ -2161,17 +2317,15 @@ $("#identify-voice-speakers").addEventListener('click', async () => {
   try {
     const result = await api(`/api/notes/${encodeURIComponent(draft.id)}/identify-speakers`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({speaker_merges: draft.merges})});
     if (state.speakerDraft !== draft) return;
-    let count = 0;
-    for (const [speaker, name] of Object.entries(result.speaker_names)) {
-      if (draft.speakers.includes(speaker) && (!draft.names[speaker] || draft.names[speaker] === speaker)) { draft.names[speaker] = name; count++; }
-    }
-    renderSpeakerDialog();
-    goToSpeakerUtterance(0, true);
-    $("#speaker-voice-status").textContent = count ? `${count}명의 이름을 채웠습니다. 저장하면 파일에 반영됩니다.` : '추가로 지정할 이름을 찾지 못했습니다. 등록한 프로필과 유사도 기준을 확인해 주세요.';
+    draft.voiceResult = result;
+    $("#speaker-voice-status").textContent = '비교가 완료되었습니다. 승인할 추천을 선택해 주세요.';
     $("#speaker-voice-status").classList.remove('hidden');
+    state.voiceIdentifying = false;
+    voiceReview.open(result);
   } catch (error) { if (state.speakerDraft === draft) toast(error.message, true); }
-  finally { state.voiceIdentifying = false; $('#save-speakers').disabled = state.speakerSaving; button.disabled = state.current?.source_type === 'text_file'; button.textContent = '목소리로 이름 찾기'; }
-});
+  finally { state.voiceIdentifying = false; $('#save-speakers').disabled = state.speakerSaving; button.disabled = state.current?.source_type === 'text_file'; button.textContent = state.speakerDraft?.voiceResult ? '목소리 추천 검토' : '목소리 비교·추천'; }
+}
+$("#identify-voice-speakers").addEventListener('click', () => compareSpeakerVoices());
 let speakerDrag = null;
 let speakerMerge = null;
 function clearSpeakerDrag() {
@@ -2185,6 +2339,7 @@ function closeSpeakerMerge() {
 function requestSpeakerMerge(source, target) {
   const draft = state.speakerDraft;
   if (!draft || state.speakerSaving || state.voiceIdentifying || source === target || !draft.speakers.includes(source) || !draft.speakers.includes(target)) return;
+  speakerPreviewPlayback.stop();
   const label = speaker => {
     const name = draft.names[speaker]?.trim() || speaker;
     return name === speaker ? name : `${name} (${speaker})`;
@@ -2237,6 +2392,8 @@ $("#confirm-speaker-merge").addEventListener("click", () => {
   draft.segments = draft.segments.map(segment => segment.speaker === pending.source ? { ...segment, speaker: pending.target } : segment);
   draft.speakers = draft.speakers.filter(speaker => speaker !== pending.source);
   draft.selected = pending.target;
+  draft.voiceResult = null;
+  $('#identify-voice-speakers').textContent = '목소리 비교·추천';
   renderSpeakerDialog();
   goToSpeakerUtterance(0);
   $("#speaker-name").focus({ preventScroll: true });
@@ -2249,26 +2406,37 @@ $("#speaker-choices").addEventListener("click", event => {
   goToSpeakerUtterance(0, true);
 });
 $("#speaker-dialog").addEventListener("keydown", event => {
-  if (!['ArrowUp', 'ArrowDown'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing || event.defaultPrevented) return;
+  if (!['ArrowUp', 'ArrowDown', ' '].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing || event.defaultPrevented) return;
   if (!state.speakerDraft || state.speakerSaving || $("#speaker-merge-dialog").open || event.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (event.key === ' ') {
+    // Let focused buttons retain their normal Space activation. Preview focus
+    // follows arrow navigation, so Space always plays the current utterance.
+    if (event.target.closest('button') || !event.target.closest('#speaker-preview')) return;
+    event.preventDefault();
+    if (!event.repeat) speakerPreviewPlayback.play(state.speakerDraft.utterances[state.speakerDraft.utterancePosition]);
+    return;
+  }
   event.preventDefault();
-  goToSpeakerUtterance(state.speakerDraft.utterancePosition + (event.key === 'ArrowDown' ? 1 : -1));
+  speakerPreviewPlayback.stop();
+  goToSpeakerUtterance(state.speakerDraft.utterancePosition + (event.key === 'ArrowDown' ? 1 : -1), true);
 });
 $("#speaker-name").addEventListener("input", event => {
   const draft = state.speakerDraft;
   if (!draft || state.speakerSaving) return;
   draft.names[draft.selected] = event.target.value;
   for (const choice of document.querySelectorAll("[data-select-speaker]")) if (choice.dataset.selectSpeaker === draft.selected) choice.querySelector("strong").textContent = event.target.value.trim() || draft.selected;
-  for (const row of document.querySelectorAll("[data-preview-speaker]")) if (row.dataset.previewSpeaker === draft.selected) row.querySelector("div span:last-child").textContent = event.target.value.trim() || draft.selected;
+  for (const row of document.querySelectorAll("[data-preview-speaker]")) if (row.dataset.previewSpeaker === draft.selected) row.querySelector("[data-preview-name]").textContent = event.target.value.trim() || draft.selected;
 });
 for (const id of ["#cancel-speakers", "#close-speakers"]) $(id).addEventListener("click", () => { if (!state.speakerSaving) $("#speaker-dialog").close(); });
 $("#speaker-dialog").addEventListener("cancel", event => { if (state.speakerSaving) event.preventDefault(); });
-$("#speaker-dialog").addEventListener("close", () => { clearSpeakerDrag(); closeSpeakerMerge(); state.speakerDraft = null; });
+$("#speaker-dialog").addEventListener("close", () => { speakerPreviewPlayback.stop(true); clearSpeakerDrag(); closeSpeakerMerge(); voiceReview.close(); state.speakerDraft = null; });
 $("#save-speakers").addEventListener("click", async () => {
   const draft = state.speakerDraft;
   if (!draft || state.speakerSaving || state.voiceIdentifying) return;
+  speakerPreviewPlayback.stop(true);
   state.speakerSaving = true;
   const controls = [...$("#speaker-dialog").querySelectorAll("button, input")];
+  const disabledBeforeSave = new Map(controls.map(control => [control, control.disabled]));
   controls.forEach(control => control.disabled = true);
   $("#save-speakers").textContent = "저장 중…";
   $("#speaker-save-error").classList.add("hidden");
@@ -2280,7 +2448,7 @@ $("#save-speakers").addEventListener("click", async () => {
     toast("화자 설정과 파일을 저장했습니다.");
     await loadNotes();
   } catch (error) { $("#speaker-save-error").textContent = error.message; $("#speaker-save-error").classList.remove("hidden"); }
-  finally { state.speakerSaving = false; controls.forEach(control => control.disabled = false); $("#save-speakers").textContent = "저장"; }
+  finally { state.speakerSaving = false; controls.forEach(control => control.disabled = disabledBeforeSave.get(control)); $("#save-speakers").textContent = "저장"; }
 });
 
 async function loadSummaryProviders() {

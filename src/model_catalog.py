@@ -1,9 +1,10 @@
-"""Compatible MOSS transcription variants and conservative memory profiles."""
+"""Mac model variants, CUDA speech presets and conservative memory profiles."""
 from __future__ import annotations
 import re
 import platform
 import subprocess
 from functools import lru_cache
+from src.speech_pipeline import PIPELINES
 
 ORIGINAL = 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
 MLX_8BIT = 'vanch007/mlx-MOSS-Transcribe-Diarize-8bit'
@@ -12,11 +13,15 @@ MODELS = [
     dict(key='mlx-4bit', name='MOSS 0.9B · MLX 4bit', backend='mlx', repo='vanch007/mlx-MOSS-Transcribe-Diarize-4bit', bytes=960434705, precision='auto', description='더 적은 메모리 · 양자화에 따른 결과 차이 가능'),
     dict(key='mlx-16bit', name='MOSS 0.9B · MLX 원본 16bit', backend='mlx', repo='vanch007/mlx-MOSS-Transcribe-Diarize', bytes=1817113512, precision='auto', description='원본 정밀도 · 메모리 사용량 증가'),
     dict(key='cuda-original', name='MOSS 0.9B · 원본 BF16 / FP16', backend='cuda', repo=ORIGINAL, bytes=1817113576, precision='auto', description='GPU가 지원하면 BF16, 그 외 FP16'),
-    dict(key='cuda-8bit', name='MOSS 0.9B · NVIDIA 8bit', backend='cuda', repo=ORIGINAL, bytes=1817113576, precision='int8', experimental=True, description='텍스트 디코더 양자화 · 실험적 · 원본 캐시 재사용'),
-    dict(key='cuda-4bit', name='MOSS 0.9B · NVIDIA 4bit', backend='cuda', repo=ORIGINAL, bytes=1817113576, precision='int4', experimental=True, description='NF4 양자화 · 실험적 · 원본 캐시 재사용'),
 ]
 DEFAULT_OPTIONS = dict(chunk_minutes=30, bridge_seconds=30, max_tokens=32768,
                        kv_bits=8, prefill_step_size=512, precision='auto', attention='sdpa', use_cache=True)
+
+
+def has_model_selection(device):
+    # Old registrations automatically chose MOSS without a model_key. Keep
+    # explicit legacy choices, but don't count registration as model selection.
+    return device.get('model_selected', bool(device.get('model_key') or device.get('options', {}).get('speech_pipeline')))
 
 
 def default_chunk_minutes(backend, memory_gib=None):
@@ -47,12 +52,6 @@ def recommendation(backend, memory_gib=None):
         options.update(prefill_step_size=256 if low else 512)
     else:
         key = 'cuda-original'
-        if memory_gib is not None and memory_gib < 8:
-            key = 'cuda-4bit'
-            options.update(precision='int4')
-        elif memory_gib is not None and memory_gib < 12:
-            key = 'cuda-8bit'
-            options.update(precision='int8')
     options['chunk_minutes'] = default_chunk_minutes(backend, memory_gib)
     return dict(model_key=key, options=options)
 
@@ -80,7 +79,7 @@ def catalog(backend, hardware=None):
         memory = min(memories) if memories else None
     else:
         memory = hardware.get('memory_gib')
-    return dict(models=[{**m, 'supported': m['backend'] == backend} for m in MODELS],
+    return dict(models=[{**m, 'supported': m['backend'] == backend} for m in MODELS], speech_presets=PIPELINES,
                 hardware=hardware, profiles=profiles, recommendation=recommendation(backend, memory),
                 unavailable=[dict(name='MOSS-Transcribe-preview-2B', reason='영어 ASR 전용 · 화자 분리 어댑터 미지원'),
                              dict(name='GGUF / CoreML / ONNX 변환본', reason='별도 실행 엔진 필요')])

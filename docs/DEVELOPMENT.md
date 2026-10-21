@@ -2,6 +2,34 @@
 
 [← cosMOSS](../README.md)
 
+## CUDA speech presets
+
+`speech_pipeline.py` defines the ordered presets and conservative memory plans;
+`speech_jobs.py` owns a finite SSH request and numeric-only performance history.
+`speech_bootstrap.py` installs the versioned server runtime, serializes setup,
+acquires the selected GPU UUID lock, monitors the lease and samples only its
+child's process VRAM. `speech_worker.py` runs native-precision MOSS or Qwen ASR,
+Qwen forced alignment where needed, and one continuous Nemotron speaker cache.
+The classic single-chunk server and Mac MLX installation remain independent.
+
+The app takes a per-note snapshot of the preset and requested batch. Automatic
+batch plans budget for quiet-boundary cuts up to five seconds early, avoiding an
+unexpected final GPU wave. H200 reference latency is not used for other GPUs;
+successful jobs calibrate the same GPU name, VRAM class, runtime, preset and
+effective batch. The history contains no audio, transcript, filename or host.
+Per-note `speech-result.json` is private and preserves original ASR chunks,
+aligned words, speaker turns and metrics. The normal API exposes concise metrics.
+
+Zero-duration Qwen words are assigned only to a unique active speaker at that
+point. Overlapping or missing evidence stays `미확인`; this label is neither a
+speaker embedding candidate nor an identity to preserve during re-diarization.
+Native ASR text and timing are never rewritten to fabricate a confident match.
+Reviewing another diarization model still requires explicit subset approval.
+
+Validation: `tests/test_speech_pipeline.py`, `tests/speech_pipeline_ui_smoke.py`,
+the existing transcription/progress/diarization checks, and the
+[actual H200 integration run](performance/2026-10-21-app-pipelines.md).
+
 ## Run from source
 
 Apple Silicon, macOS 13 or later, Xcode Command Line Tools, and uv are
@@ -139,6 +167,37 @@ Hugging Face uses `~/.cache/huggingface/hub` by default and honors `HF_HOME` and
 
 ## Boundaries
 
+Speaker re-diarization lives in `src/diarization*.py`, `src/local_diarization.py` and `static/diarization.js`.
+Nemotron FP32 is the default. The other two UI presets use Community-1 with
+automatic or explicit speaker count; they are one model, not two checkpoints.
+The optional Mac Nemotron runtime is isolated under the configured runtime root,
+uses MPS when available (otherwise CPU), and does not install a transcription
+model. Its child watches the backend parent and is reaped on cancellation.
+Mac process peak RSS is reported as RAM, never as CUDA VRAM.
+It has a separate, versioned per-SSH-user runtime and pinned model revisions,
+and never changes the active MOSS runtime. Setup explicitly downloads on the
+server, reuses that user's Hugging Face login, and returns `auth_required` for
+missing credentials or a gated-model agreement. No tokens cross the app API.
+Finite jobs bind a GPU UUID, transfer mono 16 kHz PCM16 over SSH into a private
+temporary folder, retain a 5-second heartbeat, and revoke the worker on EOF or
+a 60-second silent lease. The Linux worker arms the parent-death guard before
+loading Torch. Only its owned process group is stopped; other GPU work is never
+signalled. Model/runtime caches survive job cleanup.
+
+Whole utterances are matched by overlapping speech time; mixed-speaker
+utterances are flagged rather than heuristically splitting their text. A
+fingerprinted proposal snapshot permits only selected server-generated speaker
+changes, rejects edited/stale notes, and preserves ASR text/times/raw segments.
+Saving retains external-file conflict protection. Model timelines and private
+audio stay in the user's data/cache or temporary directory, outside benchmark
+documentation. `tests/test_diarization.py` exercises approval, stale snapshots,
+cross-origin protection and a real subprocess lease. The Chromium/WebKit
+`tests/diarization_ui_smoke.py` covers setup, agreement help, model/GPU/count
+selection, unchecked review, cancellation of review and partial persistence.
+The fixture tests do not measure model accuracy. `scripts/benchmark-diarization.py`
+runs four actual CUDA configurations, storing audio-derived timelines only in
+an explicitly chosen private output folder.
+
 cosMOSS is a local-first Mac application. Its default device is This Mac; connecting
 another device is optional. Keep infrastructure terms out of the default user
 interface and remote-only controls behind the other-device connection flow.
@@ -252,9 +311,16 @@ Enrollment normalizes a five-second excerpt with FFmpeg. Matching takes up to
 three non-overlapping excerpts per diarized speaker, averages normalized
 embeddings and compares cosine similarities by name. The provisional threshold
 is 0.75 with a 0.10 lead over the next distinct name; these are not calibrated
-probabilities. New transcriptions apply accepted names before automatic file
-saving; optional matching errors preserve the transcript. Existing managed audio
-notes preview suggested names in the speaker dialog and commit on Save.
+probabilities. New transcriptions only store name/merge proposals, leaving names,
+speaker IDs and automatic output files unchanged. Optional matching errors
+preserve the transcript. Pairwise speaker comparisons can propose merges without
+enrolled profiles; overlapping speakers are excluded and inconsistent excerpts
+are marked for review. `static/voice-review.js` shows before/after identities and
+counts, similarity scores and playable excerpts. Every checkbox starts unchecked.
+Approval changes only the speaker-dialog draft; only its Save action updates the
+note and output file. Cancel/Escape discard review selections or the dialog draft.
+Manual identification returns the same read-only proposal format. Existing names
+from older app versions are preserved, not reverted.
 Original audio/text is never modified by registration, export, import or preview.
 Subprocesses, microphone tracks and temporary excerpts are cleaned up on finish,
 cancellation or shutdown. Registered profiles and the optional runtime persist.
@@ -262,9 +328,12 @@ cancellation or shutdown. Registered profiles and the optional runtime persist.
 `tests/test_voice_profiles.py` covers format boundaries, persistence, ambiguity,
 origin checks and fallback on matching failure. `tests/voice_profiles_real_smoke.py`
 uses a supplied real recording and actual ONNX runtime in temporary storage to
-check registration, portable roundtrip, automatic naming and all result formats.
+check registration, portable roundtrip, proposal-only completion and all result formats.
 `tests/voice_profiles_ui_smoke.py` checks the same enrollment/import/edit flow in
 WebKit with the supplied sample; it does not grant microphone permissions.
+`tests/voice_review_ui_smoke.py` uses isolated note/file APIs and fixture scores
+to check partial approval, before/after counts, sample playback, cancellation,
+explicit saving and speaker merges in Chromium/WebKit at desktop/mobile widths.
 Do functional QA with copies of existing Downloads files or the user's recordings;
 keep originals unchanged and do not send their contents to AI services.
 
@@ -389,22 +458,110 @@ recordings, model weights, environments, and caches were not copied.
 
 Device/GPU tests and a browser smoke test are documented in [DEVICES.md](DEVICES.md).
 
-## Initial processing estimates
+## Processing estimates
 
-`src/processing_estimates.py` owns the versioned `initial-v1` heuristics. These are
-planning ranges, not measured device benchmarks. Tune coefficients here after
-real runs; the UI explicitly labels them as initial estimates.
+The note dialog has a wide two-column layout: audio and note/chunk settings on
+the left, GPU selection on the right with the start button directly below it.
+Below 850px it stacks GPU selection, settings and the start button.
+CUDA chunk controls and estimate requests wait for a GPU number, so an unknown
+hardware guess cannot appear as the selected server's expected latency.
+The MLX dialog displays `업데이트 예정입니다.` for both estimates and does not
+request numerical predictions until local measurements are ready to calibrate it.
+
+The running-job card shows one estimated model progress bar instead of pipeline
+steps, token/prefill sub-bars or timestamp/chunk counters. At job start, the
+selected GPU name/capacity is captured in the private device snapshot. After
+normalization/splitting and model preparation, `estimate_note_inference` freezes
+the profile estimate for the actual chunk count in `estimated_inference_seconds`.
+The request window is persisted as `inference_started_at`/`inference_finished_at`.
+It includes transcription-request transport and waiting, all main chunks and
+model-generated boundary bridges, and ends before CPU merge, optional voice
+recommendations or file saving. It is a client request timer, not a GPU profiler.
+MLX can use the estimator's rough backend fallback for this running-job bar;
+its pre-upload estimate fields still say that measurements are pending.
+The UI advances once per second using the elapsed/estimated ratio, caps it at
+99% until the final model response, and then shows 100% even while the note is
+being finalized. Request timing can exceed the inference-only reference estimate.
+Cancellation/failure freeze the clock. Restart and queue recovery reset its
+timestamps and estimate. Unknown estimates retain an indeterminate indicator.
+`tests/test_inference_progress.py` checks timing and estimation boundaries;
+`tests/transcription_progress_ui_smoke.py` checks live ticks, the 99% plateau,
+completion before postprocessing, stop/retry/error states and responsive layout.
+
+`src/processing_estimates.py` returns point estimates: `time_seconds` and
+`memory_expected_gib`. GPU names no longer select fixed timing coefficients.
+`src/performance_seeds.json` holds reference observations; the existing four H200
+cases are the first dataset, not a separate algorithm. Completed CUDA requests
+add local numerical measurements to `data/performance.sqlite3` through
+`src/performance_history.py`. No extra inference, background benchmarking or
+model installation is started to collect them.
+
+The worker synchronizes CUDA, resets peak counters before each request, measures
+inference/feature preparation/decode and returns peaks and generated-token counts.
+Model loading, client upload, network/queue time and final speaker merge are
+excluded. The first request is marked cold; cold/language/load variation remains
+in the measured distribution. Cancelled, failed, empty/unparseable transcripts and
+runs hitting the output cap do not become calibration samples. Older workers
+without telemetry still transcribe successfully and keep the initial estimate.
+Only GPU type/memory class, model, settings, runtime versions, durations, token
+counts, cold-start flag and reserved peak are retained; no audio, transcript,
+filename, note ID, GPU UUID, host or credentials are saved in this history.
+
+Profiles separate GPU name and 8-GiB VRAM class, model/revision, effective and
+requested precision, attention, cache use, output cap and engine/software versions.
+Automatic precision only uses observations made in automatic mode. The newest
+matching software environment is used; different environments are never pooled.
+Each profile retains its latest 200 local observations across app restarts and
+device re-registration. Known hardware before selection can also supply a
+provisional profile through the API when every server GPU has the same type;
+mixed GPU types wait for an explicit UUID. The UI always requires that selection.
+
+For duration D, count N and bridge length B, the common model is
+`T(D,N,B) = N*f(D/N) + (N-1)*g(min(B,D/N))`.
+Main chunks and boundary bridges have separate points. Minute buckets take
+median duration/time and the largest observed reserved footprint; monotone
+interpolation retains context-length effects. Below the shortest point, or with
+only one main observation, time scales proportionally. Above the last point it
+uses the final measured slope. Extrapolation is recorded in the API metadata. The UI displays values and capacity
+warnings without the permanent source/scope sentence. A bridge
+without direct measurements falls back to the main chunk model. This empirical
+model does not infer attention's asymptotic complexity or claim accuracy from a
+single recording. Memory follows the main chunk context (bridges are capped to that length),
+adds 1 GiB context/execution headroom, and uses `1.25*reserved+1 GiB` internally for
+capacity warnings. A lone memory observation supports only coarse extrapolation;
+more varied durations are needed to learn context growth. Bridge reserved counters
+can retain blocks from preceding long chunks, so they do not inflate the
+prediction of a new short job.
+
+The H200 seed preserves all four measured totals by subtracting the mean observed
+30-second bridge cost (2.674s) from two-chunk totals before dividing by two. Its
+main points are 15, 30, 32.81 and 65.62 minutes. The existing original BF16/auto,
+SDPA, KV-enabled, 32768-token settings match that data. Unsupported settings or
+new GPUs begin with a generic initial estimate and acquire their
+own measurements on ordinary successful transcriptions. No H200 performance is
+assigned to an unmeasured different GPU. Changing speech density, prompts, shared
+GPU load, power limits or software can still change real latency and memory.
+
+`scripts/benchmark-cuda.py` runs one explicitly UUID-bound case in a prepared
+offline runtime. It verifies the observed cache class, excludes load/warmup from
+inference latency, records per-chunk first-token/decode timing and CUDA peak
+allocated/reserved memory, and keeps transcripts in a private output directory.
+`scripts/summarize-cuda-benchmark.py` (optional `rapidfuzz==3.14.3`) applies the
+app's parser and boundary-bridge speaker merger and exports only metrics. Relative
+character edits and speaker agreement are comparisons to the original-KV result,
+not accuracy/CER/DER against human annotations. Never commit the private audio or
+transcripts.
 
 - The memory model uses the published MOSS configuration (28 decoder layers,
   8 KV heads, head dimension 128), an approximate 12.5 audio tokens/second,
   output-token allowance, weights, KV precision/cache settings and coarse audio
   activation/runtime allowances. Eager attention adds a quadratic score-matrix
-  term. The displayed interval is 0.75–1.4 times the rough peak, not a statistical
-  confidence interval. Custom models return no estimate.
-- Time uses deliberately provisional real-time ratios in `TIME_RATIOS`, with
+  term. Outside H200 calibration, the displayed point is this rough peak and
+  capacity warnings use 1.4 times the peak. Custom models return no estimate.
+- Without a matching measured profile, time uses one generic backend ratio, with
   a mix of linear/context-length costs, bridge processing and per-chunk overhead.
-  The interval is 0.6–1.8 times this guess. It excludes model preparation and file
-  transfer; no benchmark numbers or historical measurements are claimed.
+  It returns one rounded guess and excludes model preparation and file transfer;
+  this fallback does not claim measured hardware performance.
 - The capacity comparison uses the selected GPU's server-reported inventory.
   Total-VRAM overflow is red; only free-VRAM overflow is informational. A zero
   free-memory reading is preserved. Free-memory samples older than 10 seconds

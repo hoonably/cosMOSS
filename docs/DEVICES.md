@@ -42,7 +42,7 @@ Actual connections use OpenSSH, so its identity, proxy, user and port configurat
 continue to apply.
 
 Selecting a managed device in the new-note dialog starts read-only `nvidia-smi -q -x`
-probes. Registration does not probe or select GPUs. The browser polls again
+probes. Registration makes one read-only SSH/GPU capability probe; it neither selects a GPU nor starts a model download. The browser polls again
 three seconds after each result and cancels its polling on dialog close or host
 change. Parse XML rather than the aligned terminal table. Missing utilization,
 memory or process data is unknown, not idle. The idle indication is a heuristic:
@@ -77,15 +77,23 @@ opens a component list for uv, Python venv and required packages. The read-only
 checks isolation, module presence, distribution versions and the runtime stamp.
 It does not import models, download packages or initialize CUDA. The matching
 POST endpoint repairs only the environment, preserving model-location settings
-and avoiding model downloads. Both automatic setup and manual repair detect a
+and avoiding model downloads. Explicit model preparation and manual repair detect a
 deleted venv or missing packages even when an old version stamp remains.
 Active transcription/setup blocks concurrent environment installation.
 New remote tools and managed interpreters remain alongside the retained venv;
 temporary installer files and job caches are cleaned normally.
 
-Registering a managed SSH device immediately prepares its execution environment
-and model without selecting, loading or probing a GPU. Existing installations
-are reused; the default model location is the SSH user's Hugging Face cache.
+Registering a managed SSH device records the connection with no model selected.
+The left device card offers MOSS + Nemotron, Qwen3-ASR + Nemotron, and classic
+long-context MOSS. A selection is persisted by `POST /api/devices/{id}/model/selection`
+and does not install, download or load anything. An explicit download button
+starts the selected runtime/model preparation. Read-only readiness checks reuse
+an already prepared server cache. Mac cards offer supported MLX variants and
+identify Qwen as requiring a NVIDIA server. The new-note dialog displays the
+selected model and does not independently choose or download another one.
+Existing installations are reused; model weights remain in the SSH account's
+Hugging Face cache. Fast presets use the separate `speech_jobs.py` runtime;
+classic MOSS uses the managed worker described below.
 Model settings can later select a different cache or an existing model folder
 using an absolute or `~/...` path on that host.
 Failed initial setup can be removed from the local device list even while the
@@ -146,6 +154,17 @@ and offline Hub access, while serving the original model ID. The worker loads th
 MOSS model using SDPA and BF16 when supported, otherwise FP16. This is distinct
 from the Mac MLX weight/KV quantization settings. There is no CPU fallback.
 
+CUDA supports original BF16/FP16 weights and original KV only. Server weight
+and cache quantization controls and their dependency installers have been removed.
+Persisted `cuda-4bit`/`cuda-8bit` choices migrate to `cuda-original`, legacy int4/int8
+precision becomes auto, and `cuda_kv_bits` is discarded. Chunk, token, model-path
+and account settings are preserved. A stale queued job requesting quantization
+fails explicitly before GPU loading; quantized custom snapshots are also rejected.
+Mac MLX quantization is unchanged. Existing server runtimes/caches are left intact.
+The historical H200 ablation in
+`docs/performance/2026-10-20-h200-kv-ablation.md` explains the measured HQQ cost;
+it is not a test of fused FP8 cache kernels in other inference engines.
+
 Preparation rechecks the selected UUID and rejects an existing compute process.
 The spawned worker receives `CUDA_VISIBLE_DEVICES=<GPU UUID>`; its only visible
 CUDA device is `cuda:0`. A per-user GPU file lock prevents another cosMOSS worker
@@ -179,9 +198,34 @@ model/job paths. Cleanup failure is shown on the device and can be retried with
 **GPU 해제**. These guarantees apply to the CUDA workers managed by cosMOSS;
 user-managed MLX/compatible services retain their own lifecycle and storage rules.
 
-Closing the app attempts to stop the active job's GPU worker before closing SSH
-tunnels. A force quit or failed SSH connection can leave a remote process running;
-the owned-worker cleanup action is available for recovery. In-progress jobs block
+The macOS window's red close button checks active work, including queued notes,
+upload preparation, model setup, voice comparison and summaries. During work it
+hides the existing window and keeps the app/backend running; clicking the Dock
+icon restores that window and its drafts. When idle, the button quits the app.
+An unavailable work-status response preserves the app. Cmd+Q explicitly quits and
+attempts to stop the active GPU worker before closing SSH tunnels.
+
+Each managed GPU job retains a private SSH supervisor. The backend sends a
+heartbeat every 5 seconds, including during model loading and long inference.
+EOF stops the worker; a silent connection loss expires after 60 seconds without a
+heartbeat. The supervisor signals only the child it launched, waits up to 10
+seconds, then kills/reaps that child before cleaning job files. A per-device session
+lock prevents overlapping supervisor launches. Existing workers without a lease
+are never adopted. The GPU child arms Linux's parent-death SIGKILL before loading
+the model, so killing the supervisor itself also releases the GPU. Model/runtime
+preparation rechecks the lease before starting a GPU child.
+
+The desktop backend watches the native app's parent PID: after a crash/force quit
+it requests normal backend shutdown, with a 15-second fallback exit if cleanup
+hangs. This stops orphan backends from renewing remote leases. A rapid relaunch
+waits for that old backend to leave rather than attaching to it. Window hiding
+does not stop the parent or heartbeats. These timeouts run while the remote OS is
+scheduling normally; a server/kernel failure can delay cleanup. Abrupt supervisor
+death may leave private job files for the owned-worker cleanup action; the next
+inspection/cleanup recovers stale job records. Installed environments and model
+snapshots are preserved.
+
+In-progress jobs block
 manual setup/stop/removal. Installed environments/model caches remain after
 stopping or removing a device. The current app transcription queue is serial, even when
 multiple devices are registered; automatic scheduling and parallel dispatch are
@@ -218,6 +262,16 @@ fixture SSH responses. Actual nvidia-smi inventory was also read from a 6x RTX 3
 host. Live package installation, model downloads and GPU inference have not been
 validated by these fixtures; those still need a run on the target hardware.
 
+`tests/test_worker_lifecycle.py` also runs actual local child processes to verify
+that heartbeats keep a session alive, silence expires it, EOF during model loading
+stops it, stubborn children are killed, and private artifacts are removed without
+deleting model files. It force-kills a stand-in native parent and checks backend
+exit. Linux parent-death setup/race checks are mocked on macOS;
+`tests/linux_parent_guard_smoke.py juyu-h200` additionally verified the kernel
+behavior on Linux with a disposable Python child. No real GPU job is force-killed
+by these tests. `tests/window_lifecycle_smoke.py` exercises native
+busy/idle/unknown close behavior, view preservation, reopen and delegate forwarding.
+
 
 ## Model variants and device tuning
 
@@ -227,13 +281,9 @@ actions; the right stage runs optional Codex or Claude summaries. Each stage
 scrolls independently, so devices remain accessible while reviewing a note.
 
 `model_catalog.py` lists compatible MLX 4/8/16-bit snapshots and the original
-CUDA model with optional bitsandbytes 8-bit/NF4 decoder quantization. The audio
-encoder, adaptor and output head remain unquantized. Quantized CUDA loading uses
-a pinned device map and avoids casting quantized weights with `.to(dtype)`.
-These CUDA quantization paths are experimental and have not been validated for
-transcription accuracy on hardware. The optional runtime dependency is installed
-only when that variant is prepared. Other MOSS formats requiring different
-engines are listed as unavailable with explanations.
+CUDA BF16/FP16 model. CUDA weight/KV quantization is no longer supported; the
+historical H200 experiments are documented under `docs/performance/`. Other MOSS
+formats requiring different engines are listed as unavailable with explanations.
 
 Mac hardware metadata comes from sysctl. Remote setup reads GPU memory with
 nvidia-smi without allocating a GPU. Capacity-based profiles are starting values,

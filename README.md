@@ -13,8 +13,10 @@ Apple Silicon · macOS 13 이상
 ## 주요 기능
 
 - **전사와 화자 구분** — 음성·영상에서 발언 내용, 시간, 화자를 정리합니다.
+- **서버 빠른 전사** — MOSS·Qwen3-ASR 중 전사 방식을 선택하고 Nemotron으로 화자를 구분합니다. VRAM에 맞춰 여러 청크를 동시에 처리합니다.
 - **편집과 저장** — 선택한 TXT·SRT·VTT 형식으로 자동 저장하고, 본문과 화자 이름을 다듬습니다. 기존 파일도 불러올 수 있습니다.
-- **목소리 프로필** — 5초 목소리를 등록해 화자 이름을 자동으로 채우고, `.mossvoice` 파일로 가져오고 공유합니다.
+- **목소리 프로필** — 5초 목소리를 등록하고 이름·화자 병합 추천을 검토해 선택한 항목만 승인합니다. `.mossvoice` 파일로 가져오고 공유할 수 있습니다.
+- **화자 재분리** — Nemotron 3 Diarization·pyannote Community-1으로 원본 녹음을 다시 분석하고, 승인한 발화의 화자만 반영합니다. [모델 준비·이용 동의](docs/USAGE.md#화자-다시-분리하기)
 - **AI 요약** — Codex·Claude로 내용을 요약하고 Markdown으로 저장합니다.
 - **처리 장치 선택** — 이 Mac에서 전사하거나 SSH로 연결한 NVIDIA GPU를 사용합니다.
 
@@ -25,7 +27,7 @@ MP3·WAV·M4A·MP4 등 녹음된 파일을 지원합니다. 목소리 프로필�
 1. [릴리스 페이지](https://github.com/hoonably/cosMOSS/releases)에서 Mac 앱 DMG를 받습니다.
 2. DMG를 열고 **cosMOSS**를 **Applications(응용 프로그램)** 폴더로 드래그합니다.
 3. 앱을 열고 첫 화면에서 **전체 디스크 접근 권한**을 허용합니다. 이후 상단 **설정 → 준비하기**를 누릅니다. 파일 처리에 필요한 도구를 자동으로 준비합니다.
-4. 이 Mac에서 전사하려면 **이 Mac → 모델·설정**에서 모델을 준비합니다. 원격 장치만 사용한다면 Mac용 모델 설치 없이 **새로운 장치 연결**로 추가하세요.
+4. 왼쪽 처리 장치에서 전사 모델을 선택하고 **선택한 모델 다운로드**를 누릅니다. 원격 장치만 사용한다면 Mac용 모델 설치 없이 **새로운 장치 연결**로 서버를 먼저 추가하세요. 연결만으로 모델을 설치하지 않습니다.
 
 처음에는 전체 디스크 접근 권한을 확인한 뒤 작업 화면을 엽니다. Downloads 파일과 음성 메모를 불러오고 저장하는 데 사용합니다.
 도구나 모델을 처음 다운로드할 때는 인터넷 연결이 필요합니다.
@@ -35,6 +37,7 @@ macOS가 실행을 차단하면 **시스템 설정 → 개인정보 보호 및 �
 ## 사용하기
 
 1. 사용할 장치에서 **노트 만들기**를 눌러 녹음 파일을 선택합니다.
+   NVIDIA 서버의 모델 선택에는 **MOSS + Nemotron**, **Qwen3-ASR + Nemotron**, **MOSS · 긴 문맥**이 있습니다. 왼쪽에서 선택·다운로드한 뒤 노트 만들기 창에서 GPU 번호를 고릅니다.
 2. 전사된 내용을 확인하고 본문과 화자 이름을 다듬습니다.
 3. 처음 선택한 TXT·SRT·VTT 형식으로 기본 경로에 자동 저장됩니다. **AI 요약**으로 더 정리할 수 있습니다.
 
@@ -56,6 +59,6 @@ AI 요약을 실행하면 전사 내용을 선택한 AI 서비스로 전송합�
 
 ## Credits
 
-[JoNebula/moss-note](https://github.com/JoNebula/moss-note), [jiseungjeong/moss-note](https://github.com/jiseungjeong/moss-note), [ginjae/mac-moss](https://github.com/ginjae/mac-moss)를 바탕으로 만들었으며, 전사와 화자 구분에는 OpenMOSS의 [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize) 모델을 사용합니다.
+[JoNebula/moss-note](https://github.com/JoNebula/moss-note), [jiseungjeong/moss-note](https://github.com/jiseungjeong/moss-note), [ginjae/mac-moss](https://github.com/ginjae/mac-moss)를 바탕으로 만들었습니다. 전사에는 [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize)·[Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf), 화자 구분에는 [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)·[pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)을 사용합니다.
 
 [MIT License](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)

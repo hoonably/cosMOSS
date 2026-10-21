@@ -52,6 +52,8 @@ async def main():
             await page.goto(base)
             await page.locator(f'.note-item[data-id="{note_id}"]').click()
             await page.locator('#edit-speakers').click()
+            initial = store.get(note_id)
+            initial_text = Path(initial['text_path']).read_bytes() if initial['text_path'] else None
             assert await page.locator('#speaker-merge-help').inner_text() == '드래그로 화자를 병합할 수 있습니다.'
 
             async def drag(source, target):
@@ -84,7 +86,9 @@ async def main():
             assert await page.locator('.speaker-choice').count() == 1
             assert await page.locator('.speaker-preview-row.highlighted').count() == 4
             assert store.get(note_id)['speaker_merges'] == {}
-            assert not store.get(note_id)['text_path']
+            assert store.get(note_id)['text_path'] == initial['text_path']
+            if initial_text is not None:
+                assert Path(initial['text_path']).read_bytes() == initial_text
             await page.click('#cancel-speakers')
             await page.click('#edit-speakers')
             assert await page.locator('.speaker-choice').count() == 3, 'Cancelled draft merge persisted'

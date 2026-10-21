@@ -8,6 +8,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -23,8 +24,32 @@ except ModuleNotFoundError:
 UPSTREAM = "https://github.com/OpenMOSS/MOSS-Transcribe-Diarize/archive/e3bdd93f8ad58418e04659818efd5fd87a0bc486.tar.gz"
 PROCESSES = Path("/proc")
 RUNTIME_VERSION = "cuda128-torch280-moss-e3bdd93f-v1"
-QUANTIZATION_VERSION = "bitsandbytes-0.48.1-accelerate-v1"
 JOB_FILES = ("src", "tmp", "cache", "__pycache__", "worker.log", "worker.pid", "worker.json")
+LEASE_SECONDS = 60
+WORKER_STOP_GRACE_SECONDS = 10
+
+
+class WorkerLease:
+    """Read the app's private SSH stream independently of model startup/work."""
+
+    def __init__(self, stream):
+        self.last_seen = time.monotonic()
+        self.connected = True
+
+        def receive():
+            try:
+                for line in stream:
+                    if line.strip() != "PING":
+                        break
+                    self.last_seen = time.monotonic()
+            finally:
+                self.connected = False
+
+        threading.Thread(target=receive, name="cosmoss-worker-lease", daemon=True).start()
+
+    def check(self):
+        if not self.connected or time.monotonic() - self.last_seen >= LEASE_SECONDS:
+            raise RuntimeError("앱과의 연결이 끊겨 GPU 작업을 종료했습니다.")
 
 
 def job_cleanup_pending(root):
@@ -167,29 +192,13 @@ def hardware_info():
         return dict(gpus=[])
 
 
-def prepare_quantization_runtime(root, python, options, emit, environment=None, pass_fds=()):
-    if options.get("precision") not in {"int8", "int4"}:
-        return
-    stamp = root / "quantization-version"
-    version = QUANTIZATION_VERSION
-    checked = inspect_environment(root / ".venv", root / "runtime-version", RUNTIME_VERSION, root / "tools", precision=options["precision"])
-    if stamp.is_file() and stamp.read_text() == version and checked["packages"]["ready"]:
-        return
-    emit("installing")
-    uv = ensure_uv(root / "tools", environment, pass_fds=pass_fds)
-    installer = [uv, "pip", "install", "--python", str(python)]
-    subprocess.run(installer + ["bitsandbytes==0.48.1", "accelerate>=1,<2"], check=True, env=environment, pass_fds=pass_fds)
-    stamp.write_text(version)
-
-
 def prepare_shared_runtime(shared, device, emit):
     def install(runtime_root, lock_descriptor):
         # Installer caches belong to this unpublished runtime, not a Mac's job
         # directory. Another client's cleanup cannot remove them mid-install.
         environment = temporary_environment(runtime_root, device)
         try:
-            python = prepare_runtime(runtime_root, emit, environment, pass_fds=(lock_descriptor,))
-            prepare_quantization_runtime(runtime_root, python, device.get("options", {}), emit, environment, pass_fds=(lock_descriptor,))
+            prepare_runtime(runtime_root, emit, environment, pass_fds=(lock_descriptor,))
         finally:
             cleanup_job_files(runtime_root, device, verified=True)
     return shared.ensure(emit, install)
@@ -248,15 +257,16 @@ def stop_owned_worker(root, device, emit):
 
 
 def main():
-    request = json.load(sys.stdin)
+    # One framed request, followed by PING lines for a GPU session. Other
+    # actions still finish immediately and can use an EOF-terminated request.
+    request = json.loads(sys.stdin.readline())
     device = request["device"]
     action = request.get("action", "install")
     device_id = device["id"]
     if len(device_id) != 32 or any(character not in "0123456789abcdef" for character in device_id):
         raise ValueError("Invalid worker ID")
     root = Path.home() / ".local" / "share" / "cosmoss" / "workers" / device_id
-    shared = SharedRuntime(RUNTIME_VERSION, device.get("options", {}).get("precision", "auto"),
-                           QUANTIZATION_VERSION, probe=inspect_environment)
+    shared = SharedRuntime(RUNTIME_VERSION, probe=inspect_environment)
     port = int(device["remote_port"])
     if not 1024 <= port <= 65535:
         raise ValueError("Use an unprivileged worker port")
@@ -338,17 +348,13 @@ def main():
         emit("installed" if runtime["ready"] and details.get("model_ready") else "idle", runtime=runtime, **details)
         return
 
-    previous = status() if action == "prepare" else None
     if action == "stop":
         stop_owned_worker(root, device, emit)
         return
     if action != "prepare" or not device.get("gpu_uuid"):
         raise RuntimeError("전사를 실행할 GPU를 선택해 주세요.")
-    if (owns(previous) and previous.get("ok") and previous.get("model") == device["model"]
-            and previous.get("options", {}) == device.get("options", {})
-            and (device.get("model_source") != "folder" or previous.get("model_path") == str(Path(device["model_path"]).expanduser().resolve()))):
-        emit("ready")
-        return
+    if request.get("lease_protocol") != 1:
+        raise RuntimeError("안전한 GPU 종료를 위해 cosMOSS 앱을 다시 실행해 주세요.")
     with socket.socket() as check:
         if check.connect_ex(("127.0.0.1", port)) == 0:
             raise RuntimeError("The selected port is already occupied; choose another port")
@@ -368,22 +374,33 @@ def main():
         raise RuntimeError("The selected GPU has active or unknown processes; choose an idle GPU")
 
     claim_root(root, device)
+    import fcntl
+    session_lock = (root / "worker.lock").open("a")
+    try:
+        fcntl.flock(session_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        session_lock.close()
+        raise RuntimeError("이 장치의 이전 GPU 작업을 정리 중입니다. 잠시 후 다시 시도해 주세요.")
+    lease = WorkerLease(sys.stdin)
     worker = None
     model_details = None
-    ready = False
     try:
+        lease.check()
         environment = temporary_environment(root, device)
         python = prepare_shared_runtime(shared, device, emit)
-        model_details = prepare_model(request, python, emit, environment=environment)
+        model_details = prepare_model(request, python, emit, install=False, environment=environment)
+        lease.check()  # Never acquire a GPU after its app has disappeared.
         source = root / "src"
         source.mkdir(exist_ok=True)
         (source / "__init__.py").write_text("")
         (source / "cuda_server.py").write_text(request["source"])
+        (source / "process_lifecycle.py").write_text(request["lifecycle_source"])
         environment.update({
             "CUDA_VISIBLE_DEVICES": device["gpu_uuid"], "COSMOSS_DEVICE_ID": device_id,
             "MOSS_MODEL_NAME": device["model"], "MOSS_MODEL_PATH": model_details["model_path"],
             "HF_HUB_CACHE": model_details["model_cache"], "HF_HUB_OFFLINE": "1",
             "COSMOSS_WORKER_TOKEN": device["api_key"],
+            "COSMOSS_WORKER_PARENT_PID": str(os.getpid()),
             "PYTHONUNBUFFERED": "1", "COSMOSS_MODEL_OPTIONS": json.dumps(device.get("options", {})),
         })
         emit("loading", active_gpu_uuid=device["gpu_uuid"], worker_cleanup_pending=True)
@@ -397,23 +414,33 @@ def main():
         for _ in range(900):
             if worker.poll() is not None:
                 raise RuntimeError("Worker exited: " + (root / "worker.log").read_text(errors="replace")[-1800:])
+            lease.check()
             if owns(status()):
                 emit("ready")
-                ready = True
-                return
+                break
             time.sleep(1)
-        raise RuntimeError("Worker model loading timed out")
+        else:
+            raise RuntimeError("Worker model loading timed out")
+        # Retain the SSH supervisor while the Mac uploads, transcribes and
+        # collects results. EOF or a silent network partition revokes the lease.
+        while worker.poll() is None:
+            lease.check()
+            time.sleep(0.5)
+        raise RuntimeError("GPU worker exited before the app released its session")
     finally:
-        if not ready:
-            # A failed launch may only stop the child created by this invocation.
+        try:
+            # Only the direct child created by this supervisor is signalled;
+            # Popen.poll/wait reap it before files are removed or a PID reused.
             if worker is not None and worker.poll() is None:
                 worker.terminate()
                 try:
-                    worker.wait(timeout=10)
+                    worker.wait(timeout=WORKER_STOP_GRACE_SECONDS)
                 except subprocess.TimeoutExpired:
                     worker.kill()
                     worker.wait()
             cleanup_job_files(root, device, details=model_details)
+        finally:
+            session_lock.close()
 
 
 

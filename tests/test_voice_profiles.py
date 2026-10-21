@@ -62,15 +62,34 @@ class VoiceProfileTests(unittest.TestCase):
     def test_threshold_margin_grouping_and_settings_persist(self):
         a = self.profiles.store('정훈', self.vector, sample())
         b = self.profiles.store('재민', [0.99, 0.1] + [0.] * 190, sample())
-        self.assertFalse(self.profiles.compare({'S01': self.vector})['speaker_names'])
+        self.assertFalse(self.profiles.compare({'S01': self.vector})['suggested_names'])
         self.profiles.delete(b['id'])
-        self.assertEqual(self.profiles.compare({'S01': self.vector})['speaker_names'], {'S01': '정훈'})
-        self.assertFalse(self.profiles.compare({'S01': [0., 1.] + [0.] * 190})['speaker_names'])
+        self.assertEqual(self.profiles.compare({'S01': self.vector})['suggested_names'], {'S01': '정훈'})
+        self.assertFalse(self.profiles.compare({'S01': [0., 1.] + [0.] * 190})['suggested_names'])
         self.profiles.configure(False, .88)
         self.assertEqual(VoiceProfiles(self.root, self.engine).settings()['threshold'], .88)
         self.assertFalse(self.profiles.settings()['enabled'])
         with self.assertRaises(ValueError): self.profiles.configure(True, float('nan'))
         self.assertEqual(self.profiles.get(a['id'])['model_id'], MODEL_ID)
+
+    def test_merge_proposals_work_without_profiles_and_skip_overlapping_speakers(self):
+        vectors = {'S01': self.vector, 'S02': self.vector, 'S03': [0., 1.] + [0.] * 190}
+        result = self.profiles.compare(vectors, profiles=[])
+        self.assertEqual(result['matches'], [])
+        self.assertEqual([(item['source'], item['target']) for item in result['merge_candidates']], [('S02', 'S01')])
+        self.assertTrue(result['merge_candidates'][0]['recommended'])
+        self.assertEqual(result['suggested_names'], {})
+        self.assertFalse(self.profiles.compare(vectors, [], overlapping_pairs={frozenset(('S01', 'S02'))})['merge_candidates'])
+
+    def test_mixed_samples_are_marked_for_additional_review(self):
+        self.profiles.store('정훈', self.vector, sample())
+        different = [0., 1.] + [0.] * 190
+        result = self.profiles.compare({'S01': self.vector, 'S02': self.vector},
+            sample_vectors={'S01': [self.vector, different], 'S02': [self.vector]})
+        self.assertFalse(result['matches'][0]['recommended'])
+        self.assertFalse(result['merge_candidates'][0]['recommended'])
+        self.assertEqual(result['matches'][0]['sample_similarity_min'], 0)
+        self.assertNotIn('accepted', result['matches'][0])
 
     def test_ranges_skip_overlap_and_short_speech_and_bound_samples(self):
         segments = [{'speaker': 'S01', 'start': 0., 'end': 10.},
@@ -110,6 +129,25 @@ class VoiceAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('microphone=(self)', response.headers['Permissions-Policy'])
         self.assertIn('camera=()', response.headers['Permissions-Policy'])
 
+    async def test_identification_without_enrollment_preserves_segments_and_returns_bounded_samples(self):
+        segments = [{'speaker': speaker, 'start': start, 'end': start + 10}
+                    for speaker, start in [('S01', 0), ('S02', 20), ('S03', 40)]]
+        original = json.dumps(segments)
+        async def clip(source, destination, start, seconds, ffmpeg):
+            destination.write_bytes(sample())
+            return sample()
+        vectors = [[1.] + [0.] * 191, [1.] + [0.] * 191, [0., 1.] + [0.] * 190]
+        with patch.object(self.engine, 'require_ready', new=AsyncMock()), \
+             patch.object(self.profiles, 'clip', new=AsyncMock(side_effect=clip)), \
+             patch.object(self.engine, 'embeddings', new=AsyncMock(return_value=vectors)):
+            result = await self.profiles.identify(self.root / 'source.wav', segments, 'ffmpeg')
+        self.assertEqual(json.dumps(segments), original)
+        self.assertEqual(result['matches'], [])
+        self.assertEqual(len(result['merge_candidates']), 1)
+        pair = result['merge_candidates'][0]
+        self.assertEqual(pair['source_samples'], [{'start': 22.5, 'end': 27.5}])
+        self.assertEqual(pair['target_samples'], [{'start': 2.5, 'end': 7.5}])
+
     async def test_crud_and_import_have_no_unexpected_download(self):
         item = self.profiles.store('정훈', [1.] + [0.] * 191, sample())
         response = await self.client.get(f"/api/voice-profiles/{item['id']}/export")
@@ -129,6 +167,37 @@ class VoiceAPITests(unittest.IsolatedAsyncioTestCase):
 
 
 class VoiceFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_success_only_stores_proposals_and_preview_does_not_modify_note_or_file(self):
+        from tests.test_automatic_output import AutomaticOutputTests
+        case = AutomaticOutputTests()
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        self.addAsyncCleanup(case.client.aclose)
+        response = await case.create('txt')
+        main = case.main
+        proposal = {'suggested_names': {'S01': '정훈'},
+                    'matches': [{'speaker': 'S01', 'name': '정훈', 'similarity': .96, 'recommended': True}],
+                    'merge_candidates': [{'source': 'S02', 'target': 'S01', 'similarity': .91, 'recommended': True}]}
+        with patch.object(main.VOICE_PROFILES, 'documents', return_value=[{'name': '등록된 목소리'}]), \
+             patch.object(main.VOICE_PROFILES, 'settings', return_value={'enabled': True}), \
+             patch.object(main.VOICE_PROFILES, 'identify', new=AsyncMock(return_value=proposal)):
+            note = await case.run_inference(response.json()['id'])
+            self.assertEqual(note['speaker_names'], {'S01': 'S01'})
+            self.assertEqual(note['speaker_merges'], {})
+            self.assertEqual(note['voice_matches'], proposal['matches'])
+            self.assertEqual(note['voice_merge_candidates'], proposal['merge_candidates'])
+            saved = Path(note['text_path']).read_bytes()
+            self.assertNotIn('정훈', saved.decode())
+            case.store.resolve_path(note['id'], note['normalized_path']).write_bytes(b'fixture audio')
+            result = await case.client.post(f"/api/notes/{note['id']}/identify-speakers", json={})
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.json(), proposal)
+            self.assertEqual(case.store.get(note['id'])['speaker_names'], {'S01': 'S01'})
+            self.assertEqual(Path(note['text_path']).read_bytes(), saved)
+        result = await case.client.post(f"/api/notes/{note['id']}/speakers", json={'speaker_names': {'S01': '정훈'}})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertIn('정훈', Path(note['text_path']).read_text())
+
     async def test_matching_failure_keeps_transcript_and_saved_result(self):
         from tests.test_automatic_output import AutomaticOutputTests
         case = AutomaticOutputTests()

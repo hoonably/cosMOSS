@@ -1,0 +1,51 @@
+[
+  {
+    "gpu_name": "h200",
+    "memory_class_gib": 144,
+    "model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+    "precision": "bf16",
+    "attention": "sdpa",
+    "use_cache": true,
+    "max_tokens": 32768,
+    "engine": "cosmoss-cuda-v1",
+    "software": {
+      "torch": "2.8.0+cu128",
+      "transformers": "5.20.2",
+      "model_revision": "704aa4a9c304e8520be88901e0d1960158ef5b15"
+    },
+    "provenance": "docs/performance/2026-10-20-h200-kv-ablation.json",
+    "samples": [
+      {
+        "audio_seconds": 900.0,
+        "inference_seconds": 91.87482985109091,
+        "peak_reserved_gib": 4.265625,
+        "kind": "main"
+      },
+      {
+        "audio_seconds": 1800.0,
+        "inference_seconds": 187.64271568134427,
+        "peak_reserved_gib": 7.212890625,
+        "kind": "main"
+      },
+      {
+        "audio_seconds": 1968.56534375,
+        "inference_seconds": 212.86268430575728,
+        "peak_reserved_gib": 8.07421875,
+        "kind": "main"
+      },
+      {
+        "audio_seconds": 3937.1306875,
+        "inference_seconds": 528.915353640914,
+        "peak_reserved_gib": 14.4921875,
+        "kind": "main"
+      },
+      {
+        "audio_seconds": 30.0,
+        "inference_seconds": 2.673874121159315,
+        "peak_reserved_gib": 1.90234375,
+        "kind": "bridge"
+      }
+    ],
+    "requested_precision": "auto"
+  }
+]

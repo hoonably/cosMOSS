@@ -9,6 +9,7 @@ import mimetypes
 import math
 import os
 import secrets
+import sqlite3
 import shutil
 import subprocess
 import threading
@@ -32,8 +33,12 @@ from src.config import TranscriptionConfig
 from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
 from src.local_models import LocalModels
 from src.media_tools import MediaTools
-from src.model_catalog import catalog, model_selection, recommendation, DEFAULT_OPTIONS, default_chunk_minutes, local_hardware
+from src.model_catalog import catalog, model_selection, recommendation, DEFAULT_OPTIONS, default_chunk_minutes, local_hardware, has_model_selection
 from src.processing_estimates import estimate_processing
+from src.process_lifecycle import watch_desktop_parent
+from src.performance_history import PerformanceHistory
+from src.speech_jobs import SpeechJobs
+from src.speech_pipeline import PIPELINES, FAST_PIPELINES, BATCHES, estimate_pipeline
 from src.remote_workers import RemoteWorkers
 from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host, gpu_warning_token
 from src.store import NoteStore
@@ -44,6 +49,7 @@ from src.transcript import json_text, parse_transcript, plain_text, srt_text, vt
 from src.voice_memos import VoiceMemos
 from src.voice_engine import VoiceEngine
 from src.voice_profiles import VoiceProfiles, MAX_PROFILE_BYTES
+from src.diarization import Diarization, MODELS as DIARIZATION_MODELS, DEFAULT_MODEL_KEY as DEFAULT_DIARIZATION_MODEL
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,7 +65,7 @@ AUTH_USERNAME = os.getenv("MOSS_AUTH_USERNAME", "")
 AUTH_PASSWORD = os.getenv("MOSS_AUTH_PASSWORD", "")
 MAX_UPLOAD_BYTES = int(float(os.getenv("MOSS_MAX_UPLOAD_GB", "5")) * 1024**3)
 MAX_COMPLETION_TOKENS = int(os.getenv("MOSS_MAX_COMPLETION_TOKENS", "32768"))
-# Default to 30-minute chunks with the server's 8-bit KV cache.
+# Default to 30-minute chunks; CUDA workers use original-precision KV caches.
 # The official model limit remains an upper bound of 90 minutes.
 MAX_SUPPORTED_CHUNK_SECONDS = 5400
 MAX_AUDIO_CHUNK_SECONDS = max(
@@ -73,8 +79,11 @@ TEXT_LIBRARY = TextLibrary(DATA_DIR / "text-library.sqlite3")
 VOICE_MEMOS = VoiceMemos()
 VOICE_ENGINE = VoiceEngine(RUNTIME_DIR)
 VOICE_PROFILES = VoiceProfiles(DATA_DIR, VOICE_ENGINE)
+DIARIZATION = Diarization(DATA_DIR, RUNTIME_DIR)
 SUMMARIES = Summaries(DATA_DIR / "summaries")
 DEVICES = DeviceStore(DATA_DIR / "devices.sqlite3")
+PERFORMANCE = PerformanceHistory(DATA_DIR / 'performance.sqlite3')
+SPEECH = SpeechJobs(DATA_DIR / 'performance.sqlite3')
 LOCAL_MODELS = LocalModels(RUNTIME_DIR, DATA_DIR, DEVICES.get("local")["remote_port"], DEVICES.get("local")["model"])
 TUNNELS = SSHTunnels()
 def remote_worker_stopped(device_id: str) -> None:
@@ -144,6 +153,31 @@ class SSHHostRequest(BaseModel):
     host: str = Field(min_length=1, max_length=128)
 
 
+class DiarizationSetupRequest(SSHHostRequest):
+    model_key: Literal['nemotron-3', 'pyannote-community-1']
+
+
+class SpeechSetupRequest(BaseModel):
+    pipeline: Literal['moss-batch', 'qwen-batch']
+
+
+class DeviceModelSelection(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    pipeline: Literal['moss-batch', 'qwen-batch', 'moss-original'] | None = None
+    model_key: str = Field(default='', max_length=100)
+
+
+class DiarizationRequest(DiarizationSetupRequest):
+    gpu_uuid: str = Field(min_length=5, max_length=100)
+    busy_confirmation: str | None = Field(default=None, max_length=64)
+    num_speakers: int | None = Field(default=None, ge=1, le=32)
+
+
+class DiarizationApproval(TextFileRequest):
+    proposal_id: str = Field(min_length=32, max_length=32)
+    segment_ids: list[int] = Field(min_length=1, max_length=100000)
+
+
 class SSHDeviceRequest(SSHHostRequest):
     name: str = Field(min_length=1, max_length=80)
     remote_port: int = Field(default=18400, ge=1024, le=65535)
@@ -159,7 +193,7 @@ class DeviceOptions(BaseModel):
     max_tokens: int = Field(default=32768, ge=512, le=32768)
     kv_bits: Literal[0, 8] = 8
     prefill_step_size: Literal[128, 256, 512, 1024, 2048] = 512
-    precision: Literal["auto", "bf16", "fp16", "int8", "int4"] = "auto"
+    precision: Literal["auto", "bf16", "fp16"] = "auto"
     attention: Literal["sdpa", "eager"] = "sdpa"
     use_cache: bool = True
 
@@ -200,6 +234,11 @@ def public_note(note: dict[str, Any]) -> dict[str, Any]:
         }
     }
     result["processing_elapsed_seconds"] = note.get("processing_seconds")
+    result['inference_elapsed_seconds'] = None
+    if note.get('inference_started_at'):
+        end = note.get('inference_finished_at') or note.get('processing_finished_at')
+        until = datetime.fromisoformat(end) if end else datetime.now(UTC)
+        result['inference_elapsed_seconds'] = max(0.0, (until - datetime.fromisoformat(note['inference_started_at'])).total_seconds())
     if note["status"] == "processing" and note.get("processing_started_at"):
         result["processing_elapsed_seconds"] = (note.get("preprocessing_seconds") or 0) + max(
             0.0, (datetime.now(UTC) - datetime.fromisoformat(note["processing_started_at"])).total_seconds()
@@ -564,6 +603,11 @@ async def transcribe_chunk(
             }
             for index, segment in enumerate(payload["segments"])
         ]
+    if segments and target and target.gpu_uuid and isinstance(payload.get('performance'), dict):
+        # Record worker-side inference only, excluding SSH upload, queuing and
+        # model loading. Failed/cancelled/truncated runs never become samples.
+        with suppress(ValueError, OSError, sqlite3.Error):
+            PERFORMANCE.record({**payload['performance'], 'kind':'bridge' if ':bridge:' in request_id else 'main'}, model=target.model)
     return raw, segments
 
 
@@ -583,6 +627,24 @@ def record_model_progress(
             min(duration, offset + min(local_seconds, chunk_duration)), 3
         )
     STORE.update(note_id, **changes)
+
+
+def estimate_note_inference(note: dict[str, Any], duration: float, count: int) -> float | None:
+    """Freeze the same point estimate used by the upload dialog for this job."""
+    try:
+        device = json.loads(note.get('device_snapshot_json') or '{}')
+        if not device:
+            device = {'backend': 'mlx' if TRANSCRIPTION.backend == 'mlx' else 'cuda'}
+        gpu = device.get('gpu_hardware')
+        if not gpu and device.get('gpu_uuid'):
+            inventory = GPU_INVENTORIES.get(device.get('id'), (0, {}))[1]
+            gpu = next((item for item in inventory.get('gpus', []) if item['uuid'] == device['gpu_uuid']), None)
+        result = estimate_processing(device, duration, count, gpu, profiles=PERFORMANCE.profiles())
+        value = result.get('time_seconds')
+        return value if isinstance(value, (int, float)) and math.isfinite(value) and value > 0 else None
+    except (ValueError, OSError, sqlite3.Error):
+        # An unavailable estimate must never prevent a transcription.
+        return None
 
 
 def match_speakers_by_overlap(
@@ -707,12 +769,20 @@ async def transcribe(note_id: str) -> None:
         processing_started_at=datetime.now(UTC).isoformat(),
         processing_finished_at=None,
         processing_seconds=None,
+        inference_started_at=None,
+        inference_finished_at=None,
+        estimated_inference_seconds=None,
     )
     chunk_dir: Path | None = None
     managed_device = None
     preprocessing_seconds = note.get("preprocessing_seconds") or 0
     try:
         await MEDIA_TOOLS.require_ready()
+        snapshot_device = json.loads(note.get('device_snapshot_json') or '{}')
+        if snapshot_device.get('options', {}).get('speech_pipeline') in FAST_PIPELINES:
+            DEVICES.get(note['device_id'])
+            await transcribe_fast(note, snapshot_device, started)
+            return
         target = None
         if snapshot := note.get("device_snapshot_json"):
             # The snapshot fixes this job's destination. Removal must never cause
@@ -759,6 +829,8 @@ async def transcribe(note_id: str) -> None:
             bridge_count=len(bridges),
             progress_phase="transcribing",
             progress_total_steps=len(chunks) + len(bridges) + 1,
+            estimated_inference_seconds=estimate_note_inference(note, duration, len(chunks)),
+            inference_started_at=datetime.now(UTC).isoformat(),
         )
 
         timeout = httpx.Timeout(connect=30, read=6 * 60 * 60, write=60 * 60, pool=30)
@@ -811,7 +883,7 @@ async def transcribe(note_id: str) -> None:
                     model_progress={},
                 )
 
-        STORE.update(note_id, progress_phase="finalizing")
+        STORE.update(note_id, progress_phase="finalizing", inference_finished_at=datetime.now(UTC).isoformat())
         segments = await asyncio.to_thread(
             merge_chunk_segments, chunk_results, bridge_results
         )
@@ -819,15 +891,15 @@ async def transcribe(note_id: str) -> None:
             preview = "\n".join(raw_results)[:500]
             raise RuntimeError(f"모델 결과를 구간으로 해석하지 못했습니다: {preview}")
         speakers = sorted({segment["speaker"] for segment in segments})
-        voice_names, voice_matches, voice_error = {}, [], None
-        if VOICE_PROFILES.settings()['enabled'] and VOICE_PROFILES.documents():
+        voice_matches, voice_merges, voice_error = [], [], None
+        if VOICE_PROFILES.settings()['enabled'] and (VOICE_PROFILES.documents() or VOICE_ENGINE.ready()):
             STORE.update(note_id, progress_phase='identifying_speakers')
             try:
                 identified = await VOICE_PROFILES.identify(normalized, segments, MEDIA_TOOLS.executable('ffmpeg'))
-                voice_names, voice_matches = identified['speaker_names'], identified['matches']
+                voice_matches, voice_merges = identified['matches'], identified['merge_candidates']
             except Exception as error:
                 # Speaker matching is optional; keep the successful transcription.
-                voice_error = f'목소리 자동 이름 지정을 완료하지 못했습니다: {error}'
+                voice_error = f'목소리 추천을 준비하지 못했습니다: {error}'
         completed = dict(
             status="done",
             progress_phase="done",
@@ -839,8 +911,8 @@ async def transcribe(note_id: str) -> None:
             raw_transcript=canonical_transcript(segments),
             raw_segments=segments,
             segments=segments,
-            speaker_names={speaker: voice_names.get(speaker, speaker) for speaker in speakers},
-            voice_matches=voice_matches, voice_match_error=voice_error,
+            speaker_names={speaker: speaker for speaker in speakers},
+            voice_matches=voice_matches, voice_merge_candidates=voice_merges, voice_match_error=voice_error,
         )
         if note.get("output_directory"):
             try:
@@ -851,6 +923,9 @@ async def transcribe(note_id: str) -> None:
                 completed["text_save_error"] = f"전사는 완료했지만 파일을 저장하지 못했습니다: {error}"
         STORE.update(note_id, **completed)
     except asyncio.CancelledError:
+        current = STORE.get(note_id)
+        if current.get('inference_started_at') and not current.get('inference_finished_at'):
+            STORE.update(note_id, inference_finished_at=datetime.now(UTC).isoformat())
         if note_id in CANCEL_REQUESTED:
             STORE.update(
                 note_id, status="cancelled", progress_phase="cancelled", error=None,
@@ -859,6 +934,9 @@ async def transcribe(note_id: str) -> None:
             )
         raise
     except Exception as error:
+        current = STORE.get(note_id)
+        if current.get('inference_started_at') and not current.get('inference_finished_at'):
+            STORE.update(note_id, inference_finished_at=datetime.now(UTC).isoformat())
         detail = str(error)
         if isinstance(error, httpx.HTTPStatusError):
             detail = f"전사 처리 오류 ({error.response.status_code}): {error.response.text[:1000]}"
@@ -875,6 +953,82 @@ async def transcribe(note_id: str) -> None:
                 await REMOTE_WORKERS.perform(managed_device, "stop")
         if chunk_dir is not None:
             shutil.rmtree(chunk_dir, ignore_errors=True)
+
+
+async def transcribe_fast(note, device, started):
+    """A finite job creates the initial transcript; later changes need approval."""
+    key = device['options']['speech_pipeline']
+    source = STORE.resolve_path(note['id'], note['source_path'])
+    normalized = STORE.resolve_path(note['id'], note['normalized_path']) if note.get('normalized_path') else source.parent / 'normalized.wav'
+    if not normalized.is_file():
+        await run_audio_work(normalize_audio, source, normalized)
+    duration = note.get('duration') or await run_audio_work(probe_duration, normalized)
+    gpu = device.get('gpu_hardware', {})
+    plan = estimate_pipeline(key, duration, gpu, device['options'].get('speech_batch', 0), SPEECH.observations())
+    # A resumed job reuses its original GPU UUID and configuration. The lock
+    # still rejects another cosMOSS owner; no process is displaced.
+    STORE.update(note['id'], progress_phase='preparing_model', normalized_path=str(normalized), duration=duration,
+                 chunk_seconds=180, chunk_count=plan['chunk_count'], bridge_count=0, pipeline_result={})
+    ready = await SPEECH.execute(device['host'], key, 'inspect', lambda _: None)
+    if ready['phase'] != 'installed':
+        raise RuntimeError('왼쪽 처리 장치에서 선택한 모델을 먼저 다운로드해 주세요.')
+    inference_started = False
+    def on_event(event):
+        nonlocal inference_started
+        phase = event.get('phase')
+        changes = {}
+        if phase in {'loading', 'transferring'}:
+            changes['progress_phase'] = 'preparing_model'
+        elif phase in {'transcribing', 'aligning', 'diarizing'}:
+            changes.update(progress_phase='transcribing', model_progress={'pipeline_phase': phase},
+                           progress_total_steps=event.get('chunk_count', plan['chunk_count']) + 1)
+            if not inference_started:
+                changes.update(inference_started_at=datetime.now(UTC).isoformat(), estimated_inference_seconds=plan['time_seconds'])
+                inference_started = True
+            if 'completed' in event:
+                changes.update(processed_chunks=event['completed'], progress_completed_steps=event['completed'])
+        if changes:
+            STORE.update(note['id'], **changes)
+    prompt = DEFAULT_PROMPT + (f"热词提示：{note['hotwords']}" if note.get('hotwords') else '')
+    response = await SPEECH.execute(device['host'], key, 'run', on_event, audio=normalized,
+                                   gpu_uuid=device['gpu_uuid'], batch=plan['batch'], language=note.get('language'),
+                                   hotwords=note.get('hotwords'), prompt=prompt)
+    result = response['result']
+    STORE.update(note['id'], inference_finished_at=datetime.now(UTC).isoformat(), progress_phase='finalizing')
+    segments = result['segments']
+    if not segments:
+        raise RuntimeError('음성에서 발화를 찾지 못했습니다. 원본 음성을 확인해 주세요.')
+    # Keep original ASR strings, aligned words and Nemotron turns for inspection.
+    # The normal note API carries only concise numeric diagnostics.
+    diagnostic = normalized.parent / 'speech-result.json'
+    temporary = diagnostic.with_suffix('.tmp')
+    temporary.write_text(json.dumps(result, ensure_ascii=False))
+    temporary.chmod(0o600)
+    temporary.replace(diagnostic)
+    SPEECH.record(result)
+    metrics = {key: value for key, value in result.items() if key not in {'segments', 'words', 'turns', 'asr_chunks'}}
+    matches, merges, voice_error = [], [], None
+    if VOICE_PROFILES.settings()['enabled'] and (VOICE_PROFILES.documents() or VOICE_ENGINE.ready()):
+        try:
+            identified = await VOICE_PROFILES.identify(normalized, segments, MEDIA_TOOLS.executable('ffmpeg'))
+            matches, merges = identified['matches'], identified['merge_candidates']
+        except Exception as error:
+            voice_error = f'목소리 추천을 준비하지 못했습니다: {error}'
+    completed = dict(status='done', progress_phase='done', chunk_count=result['chunk_count'],
+        processed_chunks=result['chunk_count'], progress_completed_steps=result['chunk_count'] + 1,
+        progress_total_steps=result['chunk_count'] + 1, processed_audio_seconds=duration, model_progress={},
+        processing_finished_at=datetime.now(UTC).isoformat(),
+        processing_seconds=round((note.get('preprocessing_seconds') or 0) + time.monotonic() - started, 3),
+        raw_transcript=canonical_transcript(segments), raw_segments=segments, segments=segments,
+        speaker_names={speaker: speaker for speaker in sorted({s['speaker'] for s in segments})},
+        voice_matches=matches, voice_merge_candidates=merges, voice_match_error=voice_error, pipeline_result=metrics)
+    if note.get('output_directory'):
+        try:
+            completed.update(write_text({**STORE.get(note['id']), **completed}, note['output_directory']))
+            completed['text_save_error'] = None
+        except (ValueError, OSError) as error:
+            completed['text_save_error'] = f'전사는 완료했지만 파일을 저장하지 못했습니다: {error}'
+    STORE.update(note['id'], **completed)
 
 
 async def queue_worker() -> None:
@@ -908,6 +1062,7 @@ async def queue_worker() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    watch_desktop_parent()
     if bool(AUTH_USERNAME) != bool(AUTH_PASSWORD):
         raise RuntimeError(
             "MOSS_AUTH_USERNAME과 MOSS_AUTH_PASSWORD는 함께 설정해야 합니다."
@@ -940,6 +1095,8 @@ async def lifespan(_: FastAPI):
             task.cancel()
         await asyncio.gather(*VOICE_PROFILES.operations, return_exceptions=True)
         await VOICE_ENGINE.close()
+        await DIARIZATION.close()
+        await SPEECH.close()
 
 
 app = FastAPI(
@@ -968,8 +1125,8 @@ def valid_basic_auth(header: str | None) -> bool:
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    local_action = (request.method == "POST" and request.url.path == "/api/notes") or request.url.path.startswith(("/api/voice-profiles", "/api/voice-memos", "/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/")) or (
-        request.url.path.startswith("/api/notes/") and any(part in {"text-file", "speakers", "identify-speakers", "summary"} for part in request.url.path.split("/")[4:])
+    local_action = (request.method == "POST" and request.url.path == "/api/notes") or request.url.path.startswith(("/api/diarization", "/api/voice-profiles", "/api/voice-memos", "/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/")) or (
+        request.url.path.startswith("/api/notes/") and any(part in {"diarization", "text-file", "speakers", "identify-speakers", "summary"} for part in request.url.path.split("/")[4:])
     )
     if local_action:
         try:
@@ -980,7 +1137,7 @@ async def security_middleware(request: Request, call_next):
             return JSONResponse({"detail": "이 작업은 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "외부 웹사이트에서는 이 작업을 실행할 수 없습니다."}, status_code=403)
-        if (request.url.path.startswith(('/api/voice-memos', '/api/voice-profiles')) or request.url.path == '/api/notes' or request.url.path.endswith('/identify-speakers')) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
+        if (request.url.path.startswith(('/api/diarization', '/api/voice-memos', '/api/voice-profiles')) or '/diarization' in request.url.path or request.url.path == '/api/notes' or request.url.path.endswith('/identify-speakers')) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
             return JSONResponse({'detail': '외부 웹사이트에서는 이 작업을 실행할 수 없습니다.'}, status_code=403)
     if request.url.path not in {"/healthz", "/readyz"} and not valid_basic_auth(
         request.headers.get("Authorization")
@@ -997,9 +1154,9 @@ async def security_middleware(request: Request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self)"
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
-    elif request.url.path in {"/", "/index.html", "/app.js", "/voices.js", "/styles.css"}:
-        # Revalidate the UI after code changes instead of heuristically caching
-        # an older progress renderer against the current API response.
+    elif request.url.path == "/" or Path(request.url.path).suffix in {".html", ".js", ".css"}:
+        # Every UI module must revalidate, including separately loaded speech
+        # controls. A stale module can otherwise send old forms to the new API.
         response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -1056,7 +1213,7 @@ async def model_health(target: ResolvedDevice | None = None) -> dict[str, Any]:
 
 @app.get("/healthz", include_in_schema=False)
 def liveness() -> dict[str, Any]:
-    return {"ok": True, "app": "cosMOSS"}
+    return {"ok": True, "app": "cosMOSS", "desktop_parent_pid": os.environ.get("COSMOSS_DESKTOP_PARENT_PID")}
 
 
 @app.get("/api/setup")
@@ -1075,7 +1232,7 @@ async def update_status() -> dict[str, bool]:
     """Do not relaunch during owned work; loaded, idle models can be stopped."""
     tasks = [*PREPARATION_TASKS.values(), *TRANSCRIPTION_TASKS.values(),
              *SUMMARIES.tasks.values(), *REMOTE_WORKERS.tasks.values(), *VOICE_PROFILES.operations,
-             LOCAL_MODELS.task, MEDIA_TOOLS.task, VOICE_ENGINE.task]
+             *DIARIZATION.tasks.values(), *SPEECH.tasks.values(), LOCAL_MODELS.task, MEDIA_TOOLS.task, VOICE_ENGINE.task]
     return {"busy": any(task is not None and not task.done() for task in tasks)
             or any(note["status"] in {"queued", "processing"} for note in STORE.list())}
 
@@ -1203,6 +1360,95 @@ async def identify_note_speakers(note_id: str, request: VoiceMatchRequest | None
         raise HTTPException(409, str(error) or '목소리 처리 시간이 초과되었습니다. 다시 시도해 주세요.') from None
 
 
+@app.get('/api/diarization/models')
+def diarization_models():
+    return {'models': DIARIZATION_MODELS, 'hosts': ['@local', *discover_hosts()],
+            'default_model_key': DEFAULT_DIARIZATION_MODEL}
+
+
+@app.get('/api/diarization/setup')
+async def diarization_setup_status(host: str, model_key: Literal['nemotron-3', 'pyannote-community-1']):
+    identity = 'setup:' + host + ':' + model_key
+    if identity not in DIARIZATION.states:
+        try:
+            DIARIZATION.states[identity] = await DIARIZATION.execute(host, model_key, 'inspect', lambda _: None)
+        except (ValueError, RuntimeError, OSError, TimeoutError) as error:
+            raise HTTPException(409, str(error)) from None
+    return DIARIZATION.status(identity)
+
+
+@app.post('/api/diarization/setup', status_code=202)
+async def prepare_diarization(request: DiarizationSetupRequest):
+    if request.host == '@local' and request.model_key != 'nemotron-3':
+        raise HTTPException(400, '이 Mac의 화자 분리는 Nemotron을 사용합니다.')
+    if request.host != '@local' and request.host not in discover_hosts():
+        raise HTTPException(400, '등록된 SSH 서버를 선택해 주세요.')
+    return DIARIZATION.install(request.host, request.model_key)
+
+
+def diarization_note(note_id):
+    if TEXT_LIBRARY.is_document(note_id):
+        raise HTTPException(409, '화자 재분리에는 이 앱에서 전사한 원본 녹음이 필요합니다.')
+    try: note = STORE.get(note_id)
+    except KeyError:
+        raise HTTPException(404, '노트를 찾을 수 없습니다.') from None
+    if note['status'] != 'done':
+        raise HTTPException(409, '전사가 완료된 녹음을 선택해 주세요.')
+    return note
+
+
+@app.get('/api/notes/{note_id}/diarization')
+def note_diarization_status(note_id: str):
+    diarization_note(note_id)
+    return DIARIZATION.status('note:' + note_id)
+
+
+@app.post('/api/notes/{note_id}/diarization', status_code=202)
+async def start_note_diarization(note_id: str, request: DiarizationRequest):
+    note = diarization_note(note_id)
+    try:
+        if request.model_key == 'nemotron-3' and request.num_speakers is not None:
+            raise ValueError('Nemotron은 화자 인원수를 자동으로 판단합니다.')
+        if request.host == '@local':
+            if request.model_key != 'nemotron-3' or request.gpu_uuid != 'local':
+                raise ValueError('이 Mac의 화자 분리는 Nemotron을 사용합니다.')
+            gpu = {'uuid': 'local'}
+        else:
+            inventory = await probe_host(request.host)
+            gpu = next((gpu for gpu in inventory['gpus'] if gpu['uuid'] == request.gpu_uuid), None)
+            if not gpu or (not gpu['idle_candidate'] and request.busy_confirmation != gpu['busy_confirmation']):
+                raise ValueError('GPU 상태가 바뀌었습니다. 사용 중인 프로세스를 확인하고 GPU를 다시 선택해 주세요.')
+        await MEDIA_TOOLS.require_ready()
+        source = STORE.resolve_path(note_id, note.get('normalized_path') or note['source_path'])
+        if not source.is_file(): raise ValueError('원본 녹음 파일을 찾을 수 없습니다.')
+        return DIARIZATION.start(note, source, MEDIA_TOOLS.executable('ffmpeg'), request.host,
+                                 request.model_key, gpu['uuid'], request.num_speakers)
+    except (ValueError, RuntimeError, OSError, TimeoutError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.post('/api/notes/{note_id}/diarization/cancel')
+async def cancel_note_diarization(note_id: str):
+    diarization_note(note_id)
+    task = DIARIZATION.tasks.get('note:' + note_id)
+    if task and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    return DIARIZATION.status('note:' + note_id)
+
+
+@app.post('/api/notes/{note_id}/diarization/approve')
+def approve_note_diarization(note_id: str, request: DiarizationApproval):
+    try:
+        with STORE.lock:
+            note = diarization_note(note_id)
+            changes = DIARIZATION.approved(note, request.proposal_id, request.segment_ids)
+            changes.update(write_text({**note, **changes}, request.directory))
+            return public_note(STORE.update(note_id, **changes, text_save_error=None))
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
 @app.get("/readyz", include_in_schema=False)
 async def readiness() -> JSONResponse:
     services = await model_health(await resolve_device(DEVICES.get("local"), TUNNELS))
@@ -1246,8 +1492,55 @@ def initialize_device_chunks(device, hardware=None):
 
 @app.get("/api/devices")
 def list_devices() -> list[dict[str, Any]]:
-    return [{**public_device(device), "setup": LOCAL_MODELS.status() if device["id"] == "local" else REMOTE_WORKERS.states.get(device["id"], {"phase": "idle" if device.get("model_prepared") is False else "unknown"})}
+    return [{**public_device(device), "setup": device_model_state(device)}
             for device in (initialize_device_chunks(item) for item in DEVICES.list())]
+
+
+def device_model_state(device):
+    if not has_model_selection(device):
+        return {'phase': 'unselected'}
+    if device['id'] == 'local':
+        return LOCAL_MODELS.status()
+    key = device.get('options', {}).get('speech_pipeline')
+    if key in FAST_PIPELINES:
+        state = SPEECH.status(device['host'], key)
+        return {'phase': 'unknown'} if state['phase'] == 'idle' else state
+    return REMOTE_WORKERS.states.get(device['id'], {'phase': 'unknown'})
+
+
+@app.post('/api/devices/{device_id}/model/selection')
+async def choose_device_model(device_id: str, request: DeviceModelSelection):
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, '등록된 장치를 찾을 수 없습니다.') from None
+    if any(n['device_id'] == device_id and n['status'] in {'queued', 'processing'} for n in STORE.list()):
+        raise HTTPException(409, '진행 중인 전사가 끝난 뒤 모델을 변경해 주세요.')
+    task = LOCAL_MODELS.task if device_id == 'local' else REMOTE_WORKERS.tasks.get(device_id)
+    if task and not task.done():
+        raise HTTPException(409, '현재 모델 준비가 끝난 뒤 선택해 주세요.')
+    if device['backend'] == 'cuda' and any(not t.done() for (host, _), t in SPEECH.tasks.items() if host == device['host']):
+        raise HTTPException(409, '현재 모델 준비가 끝난 뒤 선택해 주세요.')
+    try:
+        if device_id == 'local':
+            if request.pipeline or not request.model_key:
+                raise ValueError('이 Mac에서 사용할 MLX 모델을 선택해 주세요. Qwen은 NVIDIA 서버에서 지원합니다.')
+            selected = model_selection('mlx', request.model_key)
+            options = {**DEFAULT_OPTIONS, **device.get('options', {})}
+            await LOCAL_MODELS.select(selected, options)
+            device = DEVICES.configure(device_id, model_key=selected['key'], model_id=selected['repo'], model_selected=True, options=options)
+        elif device['backend'] == 'cuda' and request.pipeline:
+            repo = 'Qwen/Qwen3-ASR-1.7B-hf' if request.pipeline == 'qwen-batch' else 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
+            device = DEVICES.configure(device_id, model_key='cuda-original', model_selected=True, model_prepared=False,
+                model=repo, model_id=repo,
+                model_source='cache', model_path='',
+                options={**device.get('options', {}), 'speech_pipeline': request.pipeline, 'speech_batch': 0})
+            REMOTE_WORKERS.states.pop(device_id, None)
+        else:
+            raise ValueError('이 장치에서 사용할 모델을 선택해 주세요.')
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+    return {**public_device(device), 'setup': device_model_state(device)}
 
 
 @app.patch('/api/devices/{device_id}/chunk-default')
@@ -1266,6 +1559,7 @@ def processing_estimate(device_id: str, duration: float = Query(gt=0, le=365 * 8
     except KeyError:
         raise HTTPException(404, '등록된 장치를 찾을 수 없습니다.') from None
     gpu = None
+    gpu_source = None
     if gpu_uuid:
         checked_at, inventory = GPU_INVENTORIES.get(device_id, (0, {}))
         gpu = next((item for item in inventory.get('gpus', []) if item['uuid'] == gpu_uuid), None)
@@ -1273,7 +1567,87 @@ def processing_estimate(device_id: str, duration: float = Query(gt=0, le=365 * 8
             raise HTTPException(409, 'GPU 상태를 새로고침해 주세요.')
         if time.monotonic() - checked_at > 10:
             gpu = {**gpu, 'memory_free_mib':None}
-    return estimate_processing(device, duration, count, gpu, local_hardware().get('memory_gib') if device_id == 'local' else None)
+        gpu_source = 'selected'
+    elif device['backend'] == 'cuda':
+        # Registration already discovers hardware. A homogeneous server can
+        # provide its model's estimate before the user picks a physical GPU.
+        inventory = GPU_INVENTORIES.get(device_id, (0, {}))[1]
+        hardware = REMOTE_WORKERS.states.get(device_id, {}).get('hardware') or device.get('hardware') or {}
+        gpus = inventory.get('gpus') or hardware.get('gpus', [])
+        names = {item.get('name', '').strip().lower() for item in gpus}
+        if len(names) == 1 and '' not in names:
+            capacities = []
+            for item in gpus:
+                capacity = item.get('memory_total_mib')
+                if capacity is None and item.get('memory_gib') is not None:
+                    capacity = item['memory_gib'] * 1024
+                capacities.append(capacity)
+            known = all(isinstance(value, (int, float)) and math.isfinite(value) and value > 0 for value in capacities)
+            gpu = {'name':gpus[0]['name'], 'memory_total_mib':min(capacities) if known else None}
+            # No single GPU's free-memory reading represents an unselected server.
+            gpu_source = 'server-hardware'
+    result = estimate_processing(device, duration, count, gpu, local_hardware().get('memory_gib') if device_id == 'local' else None,
+                                 profiles=PERFORMANCE.profiles())
+    result['gpu_source'] = gpu_source
+    if device['backend'] == 'cuda' and not gpu_uuid:
+        result['note'] += ' · 서버 GPU 기준 · 번호 선택 전' if gpu_source == 'server-hardware' else ' · GPU 선택 후 보정'
+    return result
+
+
+def speech_device(device_id):
+    try:
+        device = DEVICES.get(device_id)
+    except KeyError:
+        raise HTTPException(404, '등록된 장치를 찾을 수 없습니다.') from None
+    if device['backend'] != 'cuda':
+        raise HTTPException(400, '빠른 전사는 등록된 NVIDIA 서버에서 사용할 수 있습니다.')
+    return device
+
+
+@app.get('/api/speech/pipelines')
+def speech_pipelines():
+    return {'pipelines': PIPELINES, 'batches': BATCHES, 'default': 'moss-batch'}
+
+
+@app.get('/api/devices/{device_id}/speech-setup')
+async def speech_setup(device_id: str, pipeline: Literal['moss-batch', 'qwen-batch']):
+    device = speech_device(device_id)
+    state = SPEECH.status(device['host'], pipeline)
+    if state['phase'] not in {'idle', 'installed', 'error', 'cancelled'}:
+        return state
+    try:
+        checked = await SPEECH.execute(device['host'], pipeline, 'inspect', lambda _: None)
+        return state if state['phase'] == 'error' and checked['phase'] == 'idle' else checked
+    except (OSError, ValueError, RuntimeError) as error:
+        return {'phase': 'error', 'error': str(error)}
+
+
+@app.post('/api/devices/{device_id}/speech-setup', status_code=202)
+def prepare_speech(device_id: str, request: SpeechSetupRequest):
+    device = speech_device(device_id)
+    if not has_model_selection(device) or device.get('options', {}).get('speech_pipeline') != request.pipeline:
+        raise HTTPException(409, '왼쪽 처리 장치에서 다운로드할 모델을 먼저 선택해 주세요.')
+    try:
+        return SPEECH.install(device['host'], request.pipeline)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+
+
+@app.get('/api/devices/{device_id}/speech-estimate')
+def speech_estimate(device_id: str, pipeline: Literal['moss-batch', 'qwen-batch'],
+                    duration: float = Query(gt=0, le=365 * 86400, allow_inf_nan=False),
+                    gpu_uuid: str = Query(min_length=5), batch: int = Query(default=0, ge=0, le=24)):
+    speech_device(device_id)
+    checked_at, inventory = GPU_INVENTORIES.get(device_id, (0, {}))
+    gpu = next((g for g in inventory.get('gpus', []) if g['uuid'] == gpu_uuid), None)
+    if not gpu:
+        raise HTTPException(409, 'GPU 번호를 다시 선택해 주세요.')
+    if time.monotonic() - checked_at > 10:
+        gpu = {**gpu, 'memory_free_mib': None}
+    try:
+        return estimate_pipeline(pipeline, duration, gpu, batch, SPEECH.observations())
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
 
 
 @app.get("/api/model-catalog")
@@ -1295,7 +1669,7 @@ async def prepare_local_model(request: LocalModelRequest) -> dict[str, Any]:
     try:
         selected, options = selected_configuration(request, "mlx", LOCAL_MODELS.status())
         result = LOCAL_MODELS.start(request.source, request.path, model_id=selected["repo"], model_key=selected["key"], options=options)
-        DEVICES.configure("local", model_key=selected["key"], model_id=selected["repo"], options=options)
+        DEVICES.configure("local", model_key=selected["key"], model_id=selected["repo"], options=options, model_selected=True)
         return result
     except (ValueError, OSError) as error:
         raise HTTPException(400, str(error)) from None
@@ -1325,15 +1699,26 @@ async def add_device(request: SSHDeviceRequest) -> dict[str, Any]:
     cache = request.model_cache.strip()
     if cache and (not cache.startswith(("/", "~/")) or "\x00" in cache or ".." in Path(cache).parts):
         raise HTTPException(400, "캐시 경로는 절대 경로 또는 ~/로 시작해야 합니다.")
+    inventory = None
+    if request.backend == 'cuda':
+        try:
+            inventory = await probe_host(request.host)
+        except (SSHError, OSError) as error:
+            raise HTTPException(400, str(error)) from None
     try:
         device = DEVICES.add_ssh(name=name, host=request.host, remote_port=request.remote_port,
                                  model=model, backend=request.backend, model_cache=cache)
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
     if device["backend"] == "cuda":
-        device = DEVICES.set_model(device["id"], "cache", "")
-        setup = REMOTE_WORKERS.start(device, "install")
-        return {**public_device(device), "setup": setup}
+        # Registration records a target only. No runtime/model installation,
+        # GPU process or model choice is implied by connecting a server.
+        GPU_INVENTORIES[device['id']] = (time.monotonic(), inventory)
+        hardware = {'gpus': [{'index': g.get('index'), 'name': g.get('name'),
+                             'memory_gib': g['memory_total_mib'] / 1024 if g.get('memory_total_mib') else None}
+                            for g in inventory.get('gpus', [])]}
+        device = DEVICES.configure(device['id'], hardware=hardware)
+        return {**public_device(device), "setup": {'phase': 'unselected'}}
     return public_device(device)
 
 
@@ -1388,6 +1773,23 @@ async def device_status(device_id: str) -> dict[str, Any]:
         raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
     try:
         if device["backend"] == "cuda":
+            if not has_model_selection(device):
+                return {'device_id': device_id, 'ok': False, 'label': '모델 선택 필요', 'setup': {'phase': 'unselected'}}
+            key = device.get('options', {}).get('speech_pipeline')
+            if key in FAST_PIPELINES:
+                setup = SPEECH.status(device['host'], key)
+                task = SPEECH.tasks.get((device['host'], key))
+                if not task or task.done():
+                    setup = await SPEECH.execute(device['host'], key, 'inspect', lambda _: None)
+                    # The device list and worker poll must see the same cached
+                    # readiness; otherwise each list refresh disables the card.
+                    task = SPEECH.tasks.get((device['host'], key))
+                    if not task or task.done():
+                        SPEECH.states[(device['host'], key)] = setup
+                    else:
+                        setup = SPEECH.status(device['host'], key)
+                return {'device_id': device_id, 'ok': setup['phase'] == 'installed',
+                        'label': '모델 준비됨' if setup['phase'] == 'installed' else '모델 다운로드 필요', 'setup': setup}
             setup = REMOTE_WORKERS.states.get(device_id, {"phase": "unknown"})
             task = REMOTE_WORKERS.tasks.get(device_id)
             if not task or task.done():
@@ -1411,6 +1813,10 @@ async def remote_model_options(device_id: str) -> dict[str, Any]:
     if device["kind"] != "ssh" or device["backend"] != "cuda":
         raise HTTPException(400, "모델을 준비할 장치를 선택해 주세요.")
     try:
+        if not has_model_selection(device) or device.get('options', {}).get('speech_pipeline') in FAST_PIPELINES:
+            return {**device_model_state(device), **catalog('cuda', device.get('hardware')),
+                    'source': 'cache', 'model_id': device['model'], 'model_key': device.get('model_key', 'cuda-original'),
+                    'options': {**DEFAULT_OPTIONS, **device.get('options', {})}, 'cache_dir': device.get('model_cache') or '~/.cache/huggingface/hub'}
         result = await REMOTE_WORKERS.options(device)
         metadata = catalog("cuda", result.get("hardware"))
         device = initialize_device_chunks(device, result.get('hardware'))
@@ -1480,7 +1886,8 @@ async def prepare_remote_model(device_id: str, request: LocalModelRequest) -> di
     except ValueError as error:
         raise HTTPException(400, str(error)) from None
     device = DEVICES.set_model(device_id, request.source, selected)
-    device = DEVICES.configure(device_id, model=model["repo"], model_id=model["repo"], model_key=model["key"], options=options)
+    options['speech_pipeline'] = 'moss-original'
+    device = DEVICES.configure(device_id, model=model["repo"], model_id=model["repo"], model_key=model["key"], options=options, model_selected=True)
     return REMOTE_WORKERS.start(device, "install")
 
 
@@ -1490,7 +1897,7 @@ def worker_state(device_id: str) -> dict[str, Any]:
         device = DEVICES.get(device_id)
     except KeyError:
         raise HTTPException(404, "등록된 장치를 찾을 수 없습니다.") from None
-    return REMOTE_WORKERS.states.get(device_id, {"phase": "idle" if device.get("model_prepared") is False else "unknown"})
+    return device_model_state(device)
 
 
 @app.post("/api/devices/{device_id}/worker/{action}", status_code=202)
@@ -1608,16 +2015,35 @@ async def create_note(
     gpu_confirmation: str = Form("", max_length=64),
     output_format: Literal["txt", "srt", "vtt"] = Form("txt"),
     output_directory: str = Form("", max_length=4096),
+    speech_pipeline: Literal['moss-original', 'moss-batch', 'qwen-batch'] | None = Form(None),
+    speech_batch: int = Form(0, ge=0, le=24),
+    allow_memory_risk: bool = Form(False),
 ) -> dict[str, Any]:
     if bool(file) == bool(upload_id):
         raise HTTPException(400, "전사할 음성 파일을 하나 선택해 주세요.")
-    if chunk_minutes is not None and chunk_count is not None:
-        raise HTTPException(422, "청크 분할은 시간 또는 개수 중 하나로 지정해 주세요.")
     try:
         device = DEVICES.get(device_id)
     except KeyError:
         raise HTTPException(400, "전사할 장치를 선택해 주세요.") from None
     device = {key: value for key, value in device.items() if key not in {"gpu_uuid", "gpu_index", "allow_busy_gpu"}}
+    if device.get('model_selected') is False and speech_pipeline is None:
+        raise HTTPException(409, '왼쪽 처리 장치에서 모델을 선택하고 다운로드해 주세요.')
+    selected_pipeline = device.get('options', {}).get('speech_pipeline')
+    if device.get('model_selected') is True and selected_pipeline and speech_pipeline and selected_pipeline != speech_pipeline:
+        raise HTTPException(409, '선택한 전사 모델이 변경되었습니다. 왼쪽 모델을 확인한 뒤 다시 시작해 주세요.')
+    speech_pipeline = speech_pipeline or device.get('options', {}).get('speech_pipeline') or 'moss-original'
+    fast = speech_pipeline in FAST_PIPELINES
+    if fast and (device['backend'] != 'cuda' or device.get('model_key') == 'custom'):
+        raise HTTPException(400, '빠른 전사는 기본 MOSS 모델을 사용하는 NVIDIA 서버에서 선택해 주세요.')
+    if speech_batch not in (0, *BATCHES):
+        raise HTTPException(422, '동시 청크 수를 다시 선택해 주세요.')
+    if fast:
+        # Older app windows may still submit classic chunk controls. The fast
+        # worker owns chunk length; keep its selected batch (or automatic 0)
+        # and discard those obsolete controls before planning/consuming audio.
+        chunk_minutes = chunk_count = None
+    elif chunk_minutes is not None and chunk_count is not None:
+        raise HTTPException(422, "청크 분할은 시간 또는 개수 중 하나로 지정해 주세요.")
     default_chunk_minutes = MAX_AUDIO_CHUNK_SECONDS // 60
     if device["backend"] == "cuda":
         if not gpu_uuid:
@@ -1640,6 +2066,7 @@ async def create_note(
             default_chunk_minutes = recommendation("cuda", gpu["memory_total_mib"] / 1024)["options"]["chunk_minutes"]
         device["options"] = {"chunk_minutes": default_chunk_minutes, **device.get("options", {})}
         device.update(gpu_uuid=gpu["uuid"], gpu_index=gpu["index"])
+        device['gpu_hardware'] = {key: gpu.get(key) for key in ('name', 'memory_total_mib')}
     elif gpu_uuid:
         raise HTTPException(400, "이 장치는 별도의 GPU 선택을 지원하지 않습니다.")
     if output_directory:
@@ -1658,9 +2085,22 @@ async def create_note(
         "output_format": output_format,
         "output_directory": output_directory or None,
     }
+    def configure_fast(duration):
+        if not fast:
+            return
+        if not duration or not math.isfinite(duration):
+            raise HTTPException(422, '음성 길이를 먼저 확인해 주세요.')
+        plan = estimate_pipeline(speech_pipeline, duration, gpu, speech_batch, SPEECH.observations())
+        if plan['exceeds_capacity']:
+            raise HTTPException(422, f"약 {plan['memory_expected_gib']:.1f} GiB가 필요합니다. 동시 청크 수를 줄여 주세요.")
+        if plan['exceeds_budget'] and not allow_memory_risk:
+            raise HTTPException(409, f"예상 Peak Memory가 전체 VRAM의 70%를 넘습니다. 경고를 확인하거나 동시 청크 수를 줄여 주세요.")
+        device['options'] = {**device.get('options', {}), 'speech_pipeline': speech_pipeline, 'speech_batch': speech_batch}
+        settings.update(device_snapshot_json=json.dumps(device, ensure_ascii=False), chunk_seconds=180)
     if upload_id:
         try:
             upload = STORE.get_upload(upload_id)
+            configure_fast(upload.get('duration'))
             if chunk_count is not None:
                 settings.update(count_chunk_settings(upload.get("duration"), chunk_count))
             settings["title"] = (title.strip() or Path(upload["original_filename"]).stem)[:200]
@@ -1672,6 +2112,9 @@ async def create_note(
     else:
         saved = await save_audio_upload(file, uuid.uuid4().hex)
         try:
+            if fast:
+                saved['duration'] = await run_audio_work(probe_duration, Path(saved['source_path']))
+                configure_fast(saved['duration'])
             if chunk_count is not None:
                 saved["duration"] = await run_audio_work(probe_duration, Path(saved["source_path"]))
                 settings.update(count_chunk_settings(saved["duration"], chunk_count))
@@ -1922,6 +2365,8 @@ async def restart_note(note_id: str) -> dict[str, Any]:
             processed_audio_seconds=0, model_progress={}, processing_started_at=None,
             processing_finished_at=None, processing_seconds=None, preprocessing_seconds=0,
             raw_transcript=None, raw_segments=[], segments=[], speaker_names={}, speaker_merges={},
+            voice_matches=[], voice_merge_candidates=[], voice_match_error=None,
+            inference_started_at=None, inference_finished_at=None, estimated_inference_seconds=None,
         )
         requeue_note(note_id)
         return public_note(note)
@@ -1929,6 +2374,8 @@ async def restart_note(note_id: str) -> dict[str, Any]:
 
 @app.delete("/api/notes/{note_id}", status_code=204)
 async def delete_note(note_id: str) -> Response:
+    if DIARIZATION.busy('note:' + note_id):
+        raise HTTPException(409, '화자 재분리를 취소하거나 완료한 후 노트를 삭제해 주세요.')
     if TEXT_LIBRARY.is_document(note_id):
         raise HTTPException(409, "외부 TXT 파일은 Finder에서 관리해 주세요.")
     if SUMMARIES.busy(note_id):
@@ -1953,12 +2400,19 @@ async def delete_note(note_id: str) -> Response:
 
 
 @app.get("/api/notes/{note_id}/media")
-def note_media(note_id: str) -> FileResponse:
+def note_media(note_id: str, playback: bool = Query(default=False)) -> FileResponse:
     try:
         note = STORE.get(note_id)
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
     try:
+        # Use the existing browser-compatible PCM audio for timed playback.
+        # The default route still serves the original recording/download.
+        if playback and note.get('normalized_path'):
+            normalized = STORE.resolve_path(note_id, note['normalized_path'])
+            if normalized.is_file():
+                return FileResponse(normalized, media_type='audio/wav',
+                                    filename=Path(note['original_filename']).stem + '.wav')
         path = STORE.resolve_path(note_id, note["source_path"])
     except ValueError:
         raise HTTPException(409, "노트의 녹음 파일 경로를 확인해 주세요.") from None

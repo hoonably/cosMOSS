@@ -232,11 +232,11 @@ async def main():
         default_copy = await page.locator("body").inner_text()
         assert not any(word in default_copy for word in ["서버", "SSH", "GPU"]), default_copy
         assert await page.locator('#save-location-name').inner_text() == 'Downloads'
-        assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 전사 파일을 불러옵니다.'
+        assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.'
         await page.click('#save-location')
         await page.wait_for_function("document.querySelector('#save-location-name').textContent === '노트'")
         assert '/Users/tester/Documents/노트' in await page.locator('#save-location').get_attribute('title')
-        assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 전사 파일을 불러옵니다.'
+        assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.'
         assert await page.locator('#summary-path-note').text_content() == '기본 경로에 AI 요약 md파일을 저장합니다.'
         await page.evaluate('window.__cancelSaveLocation = true')
         await page.click('#save-location')
@@ -304,11 +304,13 @@ async def main():
         assert remote_prepared == [], 'Automatic setup should not submit the manual model form'
         assert await page.locator('#model-choice').input_value() == 'cuda-original'
         assert await page.locator('#model-choice option[value="mlx-8bit"]').evaluate('el => el.disabled')
-        await choose_option(page, '#model-choice', 'cuda-8bit')
+        assert await page.locator('#model-choice option[value="cuda-8bit"], #model-choice option[value="cuda-4bit"]').count() == 0
         await page.locator('#model-knobs > summary').click()
-        assert await page.locator('[data-knob="precision"]').input_value() == 'int8'
+        await choose_option(page, '[data-knob="precision"]', 'bf16')
+        assert await page.locator('[data-knob="precision"] option[value="int8"], [data-knob="precision"] option[value="int4"]').count() == 0
         await page.locator('[data-knob="chunk_minutes"]').fill('15')
         await choose_option(page, '[data-knob="attention"]', 'eager')
+        assert await page.locator('[data-knob="cuda_kv_bits"]').count() == 0
 
         assert await page.locator('#model-sources input[value="cache"]').is_checked()
         assert await page.locator('#model-cache-path').inner_text() == '/home/tester/.cache/huggingface/hub'
@@ -337,6 +339,8 @@ async def main():
         assert await page.locator('#model-preparation').is_hidden()
         assert 'GPU는 전사할 때' not in await page.locator('#local-model-dialog').inner_text()
         assert remote_prepared[-1]['source'] == 'folder' and remote_prepared[-1]['path'] == '~/models/moss'
+        assert 'cuda_kv_bits' not in remote_prepared[-1]['options']
+        assert remote_prepared[-1]['options']['precision'] == 'bf16'
         await page.click('#close-local-model')
         assert await page.locator("#device-dialog").is_hidden()
         assert await page.locator("#server-state").count() == 0
@@ -369,6 +373,17 @@ async def main():
         assert await page.evaluate('state.executionDeviceId') == 'b' * 32
         await choose_option(page, '#output-format', 'srt')
         await page.locator('input[name="selected-gpu"]').first.wait_for()
+        gpu_panel = await page.locator('#execution-gpu').bounding_box()
+        details = await page.locator('.upload-details').bounding_box()
+        dialog = await page.locator('#upload-dialog').bounding_box()
+        assert dialog['width'] > 1000
+        assert gpu_panel['x'] + gpu_panel['width'] <= details['x']
+        assert abs(gpu_panel['y'] - details['y']) < 1
+        submit = await page.locator('.submit-upload').bounding_box()
+        assert abs(submit['x'] - details['x']) < 1
+        assert 0 <= submit['y'] - details['y'] - details['height'] <= 20
+        assert await page.locator('#probe-ssh-host').count() == 0
+        assert '3초마다 갱신' in await page.locator('#execution-gpu-meta').inner_text()
         assert await page.locator('.gpu-table th').nth(1).inner_text() == '사용 / 전체 VRAM'
         assert await page.locator('.gpu-table tbody tr').nth(0).locator('td').nth(1).inner_text() == '4 MiB / 24576 MiB'
         assert await page.locator('.gpu-table tbody tr').nth(1).locator('td').nth(1).inner_text() == '0 MiB / 24576 MiB'
@@ -414,13 +429,16 @@ async def main():
         assert memo_imports == [{'id': memo['id'], 'version': memo['version']}]
         assert await page.locator('#audio-file').evaluate('el => !el.required')
         assert await page.locator(".submit-upload").is_disabled()
+        assert await page.locator('#upload-chunk-count').is_disabled()
+        assert await page.locator('#upload-estimate-memory').inner_text() == '-'
+        assert await page.locator('#upload-estimate-time').inner_text() == '-'
         await page.check(f'input[value="{GPU_OTHER}"]')
         assert await page.locator(".submit-upload").is_enabled()
+        assert await page.locator('#upload-chunk-count').is_enabled()
         async with page.expect_response('**/api/devices/*/gpus'):
-            await page.click('#probe-ssh-host')
+            pass  # The automatic monitor refreshes without a button.
         assert await page.locator(f'input[value="{GPU_OTHER}"]').is_checked(), "Refresh lost job GPU selection"
         busy = True
-        await page.click("#probe-ssh-host")
         await page.wait_for_function("document.querySelector('#gpu-probe-result').textContent.includes('사용 중')")
         assert await page.locator(f'input[value="{GPU_OTHER}"]').is_enabled()
         assert await page.locator(f'input[value="{GPU_OTHER}"]').is_checked()
@@ -445,6 +463,14 @@ async def main():
         await page.locator(f'input[value="{GPU_OTHER}"]:checked').wait_for()
         if screenshot:
             await page.locator("#upload-dialog").screenshot(path=screenshot)
+        await page.set_viewport_size({'width':390, 'height':950})
+        gpu_panel = await page.locator('#execution-gpu').bounding_box()
+        details = await page.locator('.upload-details').bounding_box()
+        assert gpu_panel['y'] + gpu_panel['height'] <= details['y']
+        assert gpu_panel['x'] >= 0 and details['x'] + details['width'] <= 390
+        if screenshot:
+            await page.locator('#upload-dialog').screenshot(path=screenshot.replace('.png','-mobile.png'))
+        await page.set_viewport_size({'width':1440, 'height':1100})
         busy_revision = 43
         await page.click(".submit-upload")
         await page.locator('#gpu-warning-dialog').wait_for(state='visible')
@@ -462,7 +488,7 @@ async def main():
         if await page.locator('#note-dialog').is_visible():
             await page.click('#close-note')
             await page.locator('#note-dialog').wait_for(state='hidden')
-        await page.click('#show-devices')
+        await page.click('#go-home')
         await page.locator('#welcome').wait_for(state='visible')
         await page.click('[data-device-id="local"] .use-device')
         assert await page.locator("#execution-gpu").is_hidden(), "Local target showed GPU selection"

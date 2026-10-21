@@ -10,6 +10,8 @@ from unittest.mock import patch
 import httpx
 
 from src.config import TranscriptionConfig
+from src.devices import ResolvedDevice
+from src.performance_history import PerformanceHistory, ORIGINAL_MODEL
 
 
 _storage = tempfile.TemporaryDirectory(prefix="cosmoss-tests-")
@@ -111,6 +113,27 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             "id": 0, "start": 0.0, "end": 2.0, "speaker": "S02", "text": "두 번째 화자",
         })
 
+    async def test_completed_cuda_metrics_are_persisted_without_upload_time_or_contents(self):
+        from test_performance_history import measurement
+        history=PerformanceHistory(Path(self.audio_dir.name)/'performance.sqlite3')
+        self.enterContext(patch.object(main,'PERFORMANCE',history))
+        config=TranscriptionConfig.from_env({'MOSS_TRANSCRIPTION_BACKEND':'remote','MOSS_TRANSCRIPTION_URL':'https://gpu.example/v1'})
+        target=ResolvedDevice(config,ORIGINAL_MODEL,'GPU','fixture','GPU-test')
+        metrics=measurement()
+        payload={'text':'[0.0][S01]private speech[1.5]','performance':metrics}
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _:httpx.Response(200,json=payload))) as client:
+            await main.transcribe_chunk(client,self.audio,self.note,request_id='private-note:bridge:1',target=target)
+        saved=next(profile for profile in history.profiles() if profile.get('observed_samples'))
+        self.assertEqual(saved['samples'][0]['kind'],'bridge')
+        self.assertEqual(saved['samples'][0]['inference_seconds'],240)
+        self.assertNotIn('private speech',json.dumps(saved))
+        self.assertNotIn('private-note',json.dumps(saved))
+        metrics['hit_token_limit']=True
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _:httpx.Response(200,json=payload))) as client:
+            await main.transcribe_chunk(client,self.audio,self.note,target=target)
+        saved=next(profile for profile in history.profiles() if profile.get('observed_samples'))
+        self.assertEqual(saved['observed_samples'],1)
+
     async def test_mlx_ndjson_progress_and_result(self):
         self.configure("mlx")
         progress = []
@@ -162,7 +185,9 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             transport=httpx.ASGITransport(app=main.app), base_url="http://cosmoss.test",
         ) as client:
             response = await client.get("/healthz")
-            self.assertEqual(response.json(), {"ok": True, "app": "cosMOSS"})
+            self.assertTrue(response.json()['ok'])
+            self.assertEqual(response.json()['app'], 'cosMOSS')
+            self.assertIn('desktop_parent_pid', response.json())
             response = await client.get("/")
             self.assertEqual(response.status_code, 200)
             self.assertIn("<title>cosMOSS</title>", response.text)

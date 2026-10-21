@@ -108,7 +108,7 @@
       if (!threshold.value || !threshold.reportValidity()) return;
       await api('/api/voice-profiles/settings', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: ui('#voice-auto-enabled').checked, threshold: Number(ui('#voice-match-threshold').value)})});
       model.optionsDirty = false;
-      message('자동 이름 지정 설정을 저장했습니다.');
+      message('목소리 추천 설정을 저장했습니다.');
     } catch (error) { message(error.message, true); }
   });
   ui('#voice-enroll-file').addEventListener('change', event => { message(); selectSource(event.target.files[0], false); });
@@ -177,7 +177,7 @@
       ui('#voice-enroll-file').value = '';
       ui('#voice-profile-name').value = '';
       ui('#voice-source-status').textContent = '직접 녹음하거나 기존 녹음의 5초 구간을 선택하세요.';
-      message('목소리를 등록했습니다. 다음 전사부터 이름 자동 지정에 사용합니다.');
+      message('목소리를 등록했습니다. 다음 전사부터 이름 추천에 사용합니다.');
       await refresh();
     } catch (error) { message(error.message, true); }
     finally { model.busy = false; render(); }

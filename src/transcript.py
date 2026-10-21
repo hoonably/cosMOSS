@@ -7,16 +7,17 @@ from typing import Any
 
 
 TIMESTAMP = r"\d+(?:\.\d+)?"
-SEGMENT_HEADER = rf"\[{TIMESTAMP}(?:-{TIMESTAMP})?\]\[S\d+\]"
+SPEAKER = r"(?:S\d+|미확인)"
+SEGMENT_HEADER = rf"\[{TIMESTAMP}(?:-{TIMESTAMP})?\]\[{SPEAKER}\]"
 SEGMENT_PATTERN = re.compile(
-    rf"\[(?P<start>{TIMESTAMP})\]\[(?P<speaker>S\d+)\]"
+    rf"\[(?P<start>{TIMESTAMP})\]\[(?P<speaker>{SPEAKER})\]"
     r"(?P<text>.*?)"
     rf"\[(?P<end>{TIMESTAMP})\]"
     rf"(?=\s*{SEGMENT_HEADER}|\s*$)",
     re.DOTALL,
 )
 RANGE_SEGMENT_PATTERN = re.compile(
-    rf"\[(?P<start>{TIMESTAMP})-(?P<end>{TIMESTAMP})\]\[(?P<speaker>S\d+)\]"
+    rf"\[(?P<start>{TIMESTAMP})-(?P<end>{TIMESTAMP})\]\[(?P<speaker>{SPEAKER})\]"
     r"(?P<text>.*?)"
     rf"(?=\s*{SEGMENT_HEADER}|\s*$)",
     re.DOTALL,

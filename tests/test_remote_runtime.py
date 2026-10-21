@@ -25,7 +25,7 @@ class SharedRuntimeTests(unittest.TestCase):
         self.version = bootstrap.RUNTIME_VERSION
         self.shared = self.client()
 
-    def probe(self, runtime, stamp, expected, tools, precision='auto'):
+    def probe(self, runtime, stamp, expected, tools):
         interpreter = (runtime / 'bin/python').is_file()
         packages = interpreter and not (runtime / 'broken-packages').exists()
         try:
@@ -36,8 +36,8 @@ class SharedRuntimeTests(unittest.TestCase):
                 'venv': {'ready': interpreter, 'path': str(runtime)},
                 'packages': {'ready': packages, 'missing': [] if packages else ['torch']}}
 
-    def client(self, precision='auto', version=None):
-        return SharedRuntime(version or self.version, precision, bootstrap.QUANTIZATION_VERSION, probe=self.probe)
+    def client(self, version=None):
+        return SharedRuntime(version or self.version, probe=self.probe)
 
     def install(self, root, descriptor=None):
         (root / '.venv/bin').mkdir(parents=True, exist_ok=True)
@@ -243,20 +243,6 @@ with open(sys.argv[1], 'r') as lock:
         self.assertEqual(len(uv.call_args.kwargs['pass_fds']), 1)
         install.assert_not_called()
         self.assertEqual(python, legacy / '.venv/bin/python')
-
-    def test_quantized_variant_does_not_modify_a_base_runtime_used_by_another_mac(self):
-        legacy = self.legacy()
-        quantized = self.client('int4')
-        attempted = []
-        def install(root, descriptor):
-            attempted.append(root)
-            self.install(root)
-            (root / 'quantization-version').write_text(bootstrap.QUANTIZATION_VERSION)
-        python = quantized.ensure(lambda *a, **k: None, install)
-        self.assertNotEqual(python, legacy / '.venv/bin/python')
-        self.assertFalse((legacy / 'quantization-version').exists())
-        self.assertEqual(self.client('int8').ensure(lambda *a, **k: None, Mock()), python)
-        self.assertEqual(len(attempted), 1)
 
     def test_legacy_version_mismatch_and_unowned_or_symlinked_environments_are_not_adopted(self):
         legacy = self.legacy()

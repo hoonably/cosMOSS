@@ -108,6 +108,22 @@ class LocalModels:
                 "suggested_path": suggested if Path(suggested).expanduser().is_dir() else "",
                 **self.state}
 
+    async def select(self, selected, options):
+        """Remember an explicit choice without installing or loading weights."""
+        if self.task and not self.task.done():
+            raise ValueError('현재 모델 준비가 끝난 뒤 선택해 주세요.')
+        if selected['key'] == self.model_key and selected['repo'] == self.model_id:
+            return self.status()
+        await self.stop_process()
+        self.model_key, self.model_id, self.options = selected['key'], selected['repo'], options
+        self.saved = {'source': 'cache', 'model_id': self.model_id, 'model_key': self.model_key, 'options': options}
+        self.data.mkdir(parents=True, exist_ok=True)
+        temporary = self.settings_file.with_suffix('.tmp')
+        temporary.write_text(json.dumps(self.saved, ensure_ascii=False))
+        temporary.replace(self.settings_file)
+        self.state = {'phase': 'idle'}
+        return self.status()
+
     def start(self, source: str, path: str = "", *, model_id=None, model_key=None, options=None) -> dict[str, Any]:
         if self.task and not self.task.done():
             return self.status()

@@ -103,8 +103,9 @@ async def main():
                     result = store.get(identity)
                     assert result['status'] == 'done', result.get('error')
                     assert not result['voice_match_error'], result['voice_match_error']
-                    assert result['speaker_names']['S01'] == '파이프라인 확인'
-                    assert '파이프라인 확인' in Path(result['text_path']).read_text()
+                    assert result['speaker_names']['S01'] == 'S01'
+                    assert result['voice_matches'][0]['name'] == '파이프라인 확인'
+                    assert '파이프라인 확인' not in Path(result['text_path']).read_text()
                     assert not result['text_save_error']
                     assert store.resolve_path(identity, result['source_path']).is_file()
                 # Manual identification remains a draft until the explicit Save endpoint.
@@ -113,10 +114,10 @@ async def main():
                 before = Path(note['text_path']).read_bytes()
                 preview = await client.post('/api/notes/real-txt/identify-speakers', json={})
                 assert preview.status_code == 200, preview.text
-                assert preview.json()['speaker_names'] == {'S01': '파이프라인 확인'}
+                assert preview.json()['suggested_names'] == {'S01': '파이프라인 확인'}
                 assert store.get('real-txt')['speaker_names'] == {'S01': 'S01'}
                 assert Path(note['text_path']).read_bytes() == before
-                response = await client.post('/api/notes/real-txt/speakers', json={'speaker_names': preview.json()['speaker_names']})
+                response = await client.post('/api/notes/real-txt/speakers', json={'speaker_names': preview.json()['suggested_names']})
                 assert response.status_code == 200, response.text
                 assert '파이프라인 확인' in Path(note['text_path']).read_text()
         assert checksum(clip) == clip_hash
@@ -126,7 +127,7 @@ async def main():
             await browser_qa(root, runtime, clip, output, screenshot_dir)
     assert checksum(source) == source_hash, 'Original recording changed'
     assert checksum(original_txt) == text_hash, 'Original Downloads transcript changed'
-    print('PASS: real audio enrollment, portable roundtrip, actual CPU embeddings, automatic TXT/SRT/VTT naming, manual draft/save, original preservation; accuracy not evaluated')
+    print('PASS: real audio enrollment, portable roundtrip, actual CPU embeddings, TXT/SRT/VTT proposals without renaming, explicit review/save, original preservation; accuracy not evaluated')
 
 
 async def browser_qa(root, runtime, clip, output, screenshots):

@@ -23,8 +23,6 @@ from pathlib import Path
 backend = sys.argv[1]
 required = {"fastapi":"fastapi", "uvicorn":"uvicorn", "python-multipart":"multipart", "jinja2":"jinja2"}
 required.update({"torch":"torch", "torchaudio":"torchaudio", "transformers":"transformers", "huggingface-hub":"huggingface_hub"} if backend == "cuda" else {"mlx-audio":"mlx_audio", "mlx-lm":"mlx_lm"})
-if len(sys.argv) > 2 and sys.argv[2] in ("int4", "int8"):
-    required.update({"bitsandbytes":"bitsandbytes", "accelerate":"accelerate"})
 versions, missing = {}, []
 for name, module in required.items():
     try:
@@ -58,7 +56,7 @@ def find_uv(tools):
     return {"ready": False, "path": str(Path(tools) / "uv"), "version": ""}
 
 
-def inspect_environment(runtime, stamp, expected, tools, backend="cuda", precision="auto"):
+def inspect_environment(runtime, stamp, expected, tools, backend="cuda"):
     runtime = Path(runtime)
     python = runtime / "bin/python"
     result = {"uv": find_uv(tools), "venv": {"ready": False, "path": str(runtime), "version": ""},
@@ -67,7 +65,7 @@ def inspect_environment(runtime, stamp, expected, tools, backend="cuda", precisi
         return result
     try:
         # -I ignores inherited PYTHONPATH/user packages; -B prevents bytecode leftovers.
-        process = subprocess.run([str(python), "-I", "-B", "-c", PACKAGE_PROBE, backend, precision],
+        process = subprocess.run([str(python), "-I", "-B", "-c", PACKAGE_PROBE, backend],
                                  capture_output=True, text=True, timeout=20)
         if process.returncode:
             raise RuntimeError(process.stderr.strip()[-800:] or "Python을 실행하지 못했습니다.")
@@ -105,14 +103,12 @@ def ensure_uv(tools, environment=None, pass_fds=()):
 # Account-scoped CUDA environments travel with this standalone SSH helper.
 # Keep ready installations immutable so workers from other Macs can use them.
 class SharedRuntime:
-    def __init__(self, version, precision="auto", quantization_version="", probe=None):
+    def __init__(self, version, probe=None):
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", version):
             raise ValueError("Invalid runtime version")
         self.version = version
-        self.precision = precision
-        self.quantization_version = quantization_version
         self.base = Path.home() / ".local/share/cosmoss"
-        self.key = version + ("-quantized" if precision in {"int4", "int8"} else "")
+        self.key = version
         self.slot = self.base / "runtimes" / self.key
         self.probe = probe or inspect_environment
 
@@ -144,7 +140,7 @@ class SharedRuntime:
 
     def valid_root(self, root, complete=True):
         if (not self.safe_path(root / ".venv") or not self.safe_path(root / "runtime-version")
-                or not self.safe_path(root / "quantization-version") or not root.is_dir()):
+                or not root.is_dir()):
             return False
         if root.parent == self.base / "workers" and re.fullmatch(r"[0-9a-f]{32}", root.name):
             if not complete:
@@ -169,23 +165,12 @@ class SharedRuntime:
         tools = root / "tools"
         if not self.safe_path(tools):
             raise RuntimeError("공유 실행 환경 도구 경로를 확인해 주세요.")
-        result = self.probe(root / ".venv", root / "runtime-version", self.version, tools,
-                            precision=self.precision)
+        result = self.probe(root / ".venv", root / "runtime-version", self.version, tools)
         if result.get("uv", {}).get("ready") is False and tools != self.slot / "tools":
             tools = self.slot / "tools"
             if not self.safe_path(tools):
                 raise RuntimeError("공유 실행 환경 도구 경로를 확인해 주세요.")
-            result = self.probe(root / ".venv", root / "runtime-version", self.version, tools,
-                                precision=self.precision)
-        if self.precision in {"int4", "int8"}:
-            stamp = root / "quantization-version"
-            try:
-                current = self.safe_path(stamp) and stamp.read_text() == self.quantization_version
-            except OSError:
-                current = False
-            if not current:
-                result["packages"]["ready"] = False
-                result["ready"] = False
+            result = self.probe(root / ".venv", root / "runtime-version", self.version, tools)
         return {**result, "shared": True}
 
     def candidates(self):

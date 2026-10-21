@@ -19,7 +19,22 @@ PROVIDERS = {
     "codex": {"name": "Codex", "login": "codex login", "install": "npm install -g @openai/codex", "url": "https://developers.openai.com/codex/cli/"},
     "claude": {"name": "Claude", "login": "claude auth login", "install": "brew install --cask claude-code", "url": "https://code.claude.com/docs/en/quickstart"},
 }
-DEFAULT_QUERY = "한국어 Markdown으로 요약해 주세요. 제목과 소제목, 목록을 사용해 핵심 내용, 결정 사항, 할 일(담당자·기한), 남은 질문을 구분하고 중요한 발언에는 타임스탬프를 붙여 주세요. 녹음에서 확인할 수 없는 내용은 추측하지 마세요."
+PREVIOUS_DEFAULT_QUERY = "한국어 Markdown으로 요약해 주세요. 제목과 소제목, 목록을 사용해 핵심 내용, 결정 사항, 할 일(담당자·기한), 남은 질문을 구분하고 중요한 발언에는 타임스탬프를 붙여 주세요. 녹음에서 확인할 수 없는 내용은 추측하지 마세요."
+DEFAULT_QUERY = """제공된 전사문을 바탕으로 한국어 Markdown 요약을 작성해 주세요. 제목·소제목·목록을 활용하고, 간결하고 객관적인 문체로 정리해 주세요.
+
+구성 기준
+1. 전체 내용을 대표하는 제목을 작성해 주세요.
+2. 주된 발표자나 발언의 중심이 뚜렷하게 바뀌면 전사문의 흐름에 따라 구간별 소제목으로 나누어 주세요. 구간의 주제와 화자는 전사문에서 확인되는 경우에만 표시해 주세요. 단순한 발언 교대나 짧은 질의응답만으로 구간을 나누지는 마세요.
+3. 각 구간은 다음 순서로 정리하되, 해당 내용이 없는 항목은 생략해 주세요.
+   - 핵심 내용: 주요 논점과 그 근거를 간결하게 정리해 주세요.
+   - 결정 사항: 명시적으로 합의하거나 확정한 내용을 정리하고, 제안·검토 의견과 구분해 주세요.
+   - 할 일: 실행할 업무와 담당자·기한을 구분해 적어 주세요. 담당자나 기한이 확인되지 않으면 ‘미정’으로 표시해 주세요.
+   - 남은 질문: 답변이 필요한 질문과 결론이 나지 않은 쟁점을 정리해 주세요.
+
+해석 및 사실 확인 기준
+- 전사 과정에서 단어나 문장이 부정확하게 기록되었을 수 있습니다. 앞뒤 문맥을 고려해 의미를 해석해 주세요.
+- 불확실한 고유명사·수치·발언 의도는 임의로 확정하지 말고, 필요한 경우 ‘확인 필요’로 표시해 주세요.
+- 전사문에서 확인할 수 없는 사실·결정 사항·담당자·기한을 추측하거나 추가하지 마세요."""
 
 
 def save_markdown(folder: Path, stem: str, text: str) -> str:
@@ -126,6 +141,10 @@ class Summaries:
                 pass
         result = state.get("result")
         current_hash = note.get("text_hash") if note.get("source_type") == "text_file" else digest(transcript_content(note).encode("utf-8"))
+        # Refresh an unchanged app default in the editor while preserving custom
+        # requests and the historical prompt stored with an existing result.
+        if state.get("phase") != "running" and state.get("prompt") == PREVIOUS_DEFAULT_QUERY:
+            state = {**state, "prompt": DEFAULT_QUERY}
         return {**state, "stale": bool(result and (result["source_hash"] != actual_hash or result["source_hash"] != current_hash or note["status"] != "done")), "default_prompt": DEFAULT_QUERY}
 
     def busy(self, note_id: str) -> bool:

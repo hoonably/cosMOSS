@@ -1,0 +1,695 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "schema_version": 1,
+      "case": "30m-bf16-kv16-c1",
+      "gpu_uuid": "GPU-15458aa2-d8d9-0c12-536d-e724f64076e0",
+      "gpu_name": "NVIDIA H200",
+      "duration": 1800,
+      "source_sha256": "28456ade09f4e7fabed07ca702b3519240e07dcaba8a32446a2bf9d233ddd650",
+      "chunks": 1,
+      "bridge_seconds": 30,
+      "kv_bits": 0,
+      "weight_precision": "bf16",
+      "attention": "sdpa",
+      "seed": 0,
+      "max_new_tokens": 32768,
+      "runs": [
+        {
+          "kind": "chunk",
+          "index": 0,
+          "offset": 0.0,
+          "duration": 1800.0,
+          "prompt_tokens": 23807,
+          "input_seconds": 0.9294021837413311,
+          "first_token_seconds": 1.515609748661518,
+          "inference_seconds": 187.64271568134427,
+          "generated_tokens": 14226,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 5.9136247634887695,
+          "peak_reserved_gib": 7.212890625,
+          "decode_tokens_per_second": 76.42626756978001,
+          "transcript_sha256": "fcd3277a0398426797d8a879d90e34b4cfdf585a1c31775eb0bcafde8cf13211"
+        }
+      ],
+      "phase": "done",
+      "versions": {
+        "torch": "2.8.0+cu128",
+        "transformers": "5.20.2",
+        "moss-transcribe-diarize": "0.1.0"
+      },
+      "measurement_scope": "One GPU; sequential chunks and optional boundary bridges. Inference includes input feature preparation and output decode; excludes model load, warmup, transfer, audio slicing, final speaker merge and app startup.",
+      "load_seconds": 2.117989659309387,
+      "cache_implementation": "dynamic",
+      "warmup_seconds": 2.0315355956554413,
+      "observed_cache": {
+        "class": "DynamicCache",
+        "layer_class": "DynamicLayer"
+      },
+      "wall_seconds": 187.68605086952448,
+      "inference_seconds": 187.64271568134427,
+      "peak_allocated_gib": 5.9136247634887695,
+      "peak_reserved_gib": 7.212890625,
+      "rtf": 0.10424595315630238,
+      "quality": {
+        "segment_count": 415,
+        "speaker_count": 3,
+        "normalized_characters": 6799,
+        "first_start": 7.12,
+        "last_end": 1799.18,
+        "invalid_time_segments": 0,
+        "hit_token_limit": false,
+        "reference_case": "30m-bf16-kv16-c1",
+        "relative_character_edit_rate": 0.0,
+        "speaker_agreement_on_overlapping_segments": 1.0
+      },
+      "launched_at_utc": "2026-10-20T14:10:56.559656+00:00",
+      "torch_threads": 4
+    },
+    {
+      "schema_version": 1,
+      "case": "30m-bf16-kv16-c1-repeat",
+      "gpu_uuid": "GPU-31406075-5747-2320-4b51-0815b7bfc530",
+      "gpu_name": "NVIDIA H200",
+      "duration": 1800,
+      "source_sha256": "28456ade09f4e7fabed07ca702b3519240e07dcaba8a32446a2bf9d233ddd650",
+      "chunks": 1,
+      "bridge_seconds": 30,
+      "kv_bits": 0,
+      "weight_precision": "bf16",
+      "attention": "sdpa",
+      "seed": 0,
+      "max_new_tokens": 32768,
+      "runs": [
+        {
+          "kind": "chunk",
+          "index": 0,
+          "offset": 0.0,
+          "duration": 1800.0,
+          "prompt_tokens": 23807,
+          "input_seconds": 0.5286648795008659,
+          "first_token_seconds": 1.1103431843221188,
+          "inference_seconds": 199.10776283591986,
+          "generated_tokens": 14226,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 5.9136247634887695,
+          "peak_reserved_gib": 7.212890625,
+          "decode_tokens_per_second": 71.84437062377248,
+          "transcript_sha256": "fcd3277a0398426797d8a879d90e34b4cfdf585a1c31775eb0bcafde8cf13211"
+        }
+      ],
+      "phase": "done",
+      "torch_threads": 4,
+      "torch_interop_threads": 64,
+      "worker_sha256": "52a66a08f6ebf4f525d334f609fdb360287e7b82e45aae82ff89677569b3d94a",
+      "versions": {
+        "torch": "2.8.0+cu128",
+        "transformers": "5.20.2",
+        "moss-transcribe-diarize": "0.1.0"
+      },
+      "measurement_scope": "One GPU; sequential chunks and optional boundary bridges. Inference includes input feature preparation and output decode; excludes model load, warmup, transfer, audio slicing, final speaker merge and app startup.",
+      "load_seconds": 1.2969562411308289,
+      "cache_implementation": "dynamic",
+      "warmup_seconds": 1.8053171820938587,
+      "observed_cache": {
+        "class": "DynamicCache",
+        "layer_class": "DynamicLayer"
+      },
+      "wall_seconds": 199.15148621425033,
+      "inference_seconds": 199.10776283591986,
+      "peak_allocated_gib": 5.9136247634887695,
+      "peak_reserved_gib": 7.212890625,
+      "rtf": 0.11061542379773326,
+      "quality": {
+        "segment_count": 415,
+        "speaker_count": 3,
+        "normalized_characters": 6799,
+        "first_start": 7.12,
+        "last_end": 1799.18,
+        "invalid_time_segments": 0,
+        "hit_token_limit": false,
+        "reference_case": "30m-bf16-kv16-c1",
+        "relative_character_edit_rate": 0.0,
+        "speaker_agreement_on_overlapping_segments": 1.0
+      },
+      "launched_at_utc": "2026-10-20T14:22:43.462483+00:00"
+    },
+    {
+      "schema_version": 1,
+      "case": "30m-bf16-kv16-c1-t64",
+      "gpu_uuid": "GPU-81959f78-c2c2-32d2-0fde-ac79acc7884e",
+      "gpu_name": "NVIDIA H200",
+      "duration": 1800,
+      "source_sha256": "28456ade09f4e7fabed07ca702b3519240e07dcaba8a32446a2bf9d233ddd650",
+      "chunks": 1,
+      "bridge_seconds": 30,
+      "kv_bits": 0,
+      "weight_precision": "bf16",
+      "attention": "sdpa",
+      "seed": 0,
+      "max_new_tokens": 32768,
+      "runs": [
+        {
+          "kind": "chunk",
+          "index": 0,
+          "offset": 0.0,
+          "duration": 1800.0,
+          "prompt_tokens": 23807,
+          "input_seconds": 0.5211787596344948,
+          "first_token_seconds": 1.108385369181633,
+          "inference_seconds": 192.51043567061424,
+          "generated_tokens": 14226,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 5.9136247634887695,
+          "peak_reserved_gib": 7.212890625,
+          "decode_tokens_per_second": 74.31999802299677,
+          "transcript_sha256": "fcd3277a0398426797d8a879d90e34b4cfdf585a1c31775eb0bcafde8cf13211"
+        }
+      ],
+      "phase": "done",
+      "torch_threads": 64,
+      "torch_interop_threads": 64,
+      "worker_sha256": "52a66a08f6ebf4f525d334f609fdb360287e7b82e45aae82ff89677569b3d94a",
+      "versions": {
+        "torch": "2.8.0+cu128",
+        "transformers": "5.20.2",
+        "moss-transcribe-diarize": "0.1.0"
+      },
+      "measurement_scope": "One GPU; sequential chunks and optional boundary bridges. Inference includes input feature preparation and output decode; excludes model load, warmup, transfer, audio slicing, final speaker merge and app startup.",
+      "load_seconds": 1.234567902982235,
+      "cache_implementation": "dynamic",
+      "warmup_seconds": 1.7793665565550327,
+      "observed_cache": {
+        "class": "DynamicCache",
+        "layer_class": "DynamicLayer"
+      },
+      "wall_seconds": 192.55341588705778,
+      "inference_seconds": 192.51043567061424,
+      "peak_allocated_gib": 5.9136247634887695,
+      "peak_reserved_gib": 7.212890625,
+      "rtf": 0.10695024203923013,
+      "quality": {
+        "segment_count": 415,
+        "speaker_count": 3,
+        "normalized_characters": 6799,
+        "first_start": 7.12,
+        "last_end": 1799.18,
+        "invalid_time_segments": 0,
+        "hit_token_limit": false,
+        "reference_case": "30m-bf16-kv16-c1",
+        "relative_character_edit_rate": 0.0,
+        "speaker_agreement_on_overlapping_segments": 1.0
+      },
+      "launched_at_utc": "2026-10-20T14:18:29.609018+00:00"
+    },
+    {
+      "schema_version": 1,
+      "case": "30m-bf16-kv16-c2",
+      "gpu_uuid": "GPU-31406075-5747-2320-4b51-0815b7bfc530",
+      "gpu_name": "NVIDIA H200",
+      "duration": 1800,
+      "source_sha256": "28456ade09f4e7fabed07ca702b3519240e07dcaba8a32446a2bf9d233ddd650",
+      "chunks": 2,
+      "bridge_seconds": 30,
+      "kv_bits": 0,
+      "weight_precision": "bf16",
+      "attention": "sdpa",
+      "seed": 0,
+      "max_new_tokens": 32768,
+      "runs": [
+        {
+          "kind": "chunk",
+          "index": 0,
+          "offset": 0.0,
+          "duration": 900.0,
+          "prompt_tokens": 11856,
+          "input_seconds": 0.6481516435742378,
+          "first_token_seconds": 0.9124095514416695,
+          "inference_seconds": 93.68047819286585,
+          "generated_tokens": 6785,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 3.7779712677001953,
+          "peak_reserved_gib": 4.265625,
+          "decode_tokens_per_second": 73.12861094718002,
+          "transcript_sha256": "8fad33f94e316828e6e84493a3f2e1c09c2fa34f158df5642fbb20138dc84323"
+        },
+        {
+          "kind": "chunk",
+          "index": 1,
+          "offset": 900.0,
+          "duration": 900.0,
+          "prompt_tokens": 11856,
+          "input_seconds": 0.24498962238430977,
+          "first_token_seconds": 0.5005421340465546,
+          "inference_seconds": 89.94477198272943,
+          "generated_tokens": 6531,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 3.750791549682617,
+          "peak_reserved_gib": 4.080078125,
+          "decode_tokens_per_second": 73.00638633757724,
+          "transcript_sha256": "08b87402dc473b66b33d0c758e7d54498c03dac590605c10cac8f66df541a889"
+        },
+        {
+          "kind": "bridge",
+          "index": 0,
+          "offset": 885.0,
+          "duration": 30.0,
+          "prompt_tokens": 472,
+          "input_seconds": 0.008835501968860626,
+          "first_token_seconds": 0.06818745285272598,
+          "inference_seconds": 2.7982836477458477,
+          "generated_tokens": 201,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 1.8093476295471191,
+          "peak_reserved_gib": 1.90234375,
+          "decode_tokens_per_second": 73.25749194263452,
+          "transcript_sha256": "4395f94907adc8c540058c58152af4066628e252dd85079d1c994e02f4168119"
+        }
+      ],
+      "phase": "done",
+      "versions": {
+        "torch": "2.8.0+cu128",
+        "transformers": "5.20.2",
+        "moss-transcribe-diarize": "0.1.0"
+      },
+      "measurement_scope": "One GPU; sequential chunks and optional boundary bridges. Inference includes input feature preparation and output decode; excludes model load, warmup, transfer, audio slicing, final speaker merge and app startup.",
+      "load_seconds": 2.2807475551962852,
+      "cache_implementation": "dynamic",
+      "warmup_seconds": 1.8932817205786705,
+      "observed_cache": {
+        "class": "DynamicCache",
+        "layer_class": "DynamicLayer"
+      },
+      "wall_seconds": 186.48393545672297,
+      "inference_seconds": 186.42353382334113,
+      "peak_allocated_gib": 3.7779712677001953,
+      "peak_reserved_gib": 4.265625,
+      "rtf": 0.10356862990185618,
+      "quality": {
+        "segment_count": 379,
+        "speaker_count": 5,
+        "normalized_characters": 6773,
+        "first_start": 7.12,
+        "last_end": 1799.14,
+        "invalid_time_segments": 0,
+        "hit_token_limit": false,
+        "reference_case": "30m-bf16-kv16-c1",
+        "relative_character_edit_rate": 0.026915722900426535,
+        "speaker_agreement_on_overlapping_segments": 0.8965391707622054
+      },
+      "launched_at_utc": "2026-10-20T14:10:56.561612+00:00",
+      "torch_threads": 4
+    },
+    {
+      "case": "30m-bf16-kv4-c1",
+      "phase": "error",
+      "error_type": "KeyboardInterrupt",
+      "duration": 1800,
+      "chunks": 1,
+      "kv_bits": 4,
+      "censored_after_seconds": 900.658215045929,
+      "observed_generated_tokens": 23041,
+      "stop_reason": "Exceeded 15-minute inference budget for the 30-minute sample; not a completed latency measurement.",
+      "launched_at_utc": "2026-10-20T14:10:56.560727+00:00",
+      "torch_threads": 4,
+      "hqq_version": "0.2.8.post1"
+    },
+    {
+      "schema_version": 1,
+      "case": "30m-bf16-kv8-c1",
+      "gpu_uuid": "GPU-81959f78-c2c2-32d2-0fde-ac79acc7884e",
+      "gpu_name": "NVIDIA H200",
+      "duration": 1800,
+      "source_sha256": "28456ade09f4e7fabed07ca702b3519240e07dcaba8a32446a2bf9d233ddd650",
+      "chunks": 1,
+      "bridge_seconds": 30,
+      "kv_bits": 8,
+      "weight_precision": "bf16",
+      "attention": "sdpa",
+      "seed": 0,
+      "max_new_tokens": 32768,
+      "runs": [
+        {
+          "kind": "chunk",
+          "index": 0,
+          "offset": 0.0,
+          "duration": 1800.0,
+          "prompt_tokens": 23807,
+          "input_seconds": 0.53398147970438,
+          "first_token_seconds": 1.6967128813266754,
+          "inference_seconds": 438.57780320569873,
+          "generated_tokens": 14352,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 5.213246822357178,
+          "peak_reserved_gib": 6.1171875,
+          "decode_tokens_per_second": 32.84875522844164,
+          "transcript_sha256": "e757ea4da1e31d0261702317a47124cd4f46b28ca486f150e1b42d212d38bc04"
+        }
+      ],
+      "phase": "done",
+      "versions": {
+        "torch": "2.8.0+cu128",
+        "transformers": "5.20.2",
+        "moss-transcribe-diarize": "0.1.0"
+      },
+      "measurement_scope": "One GPU; sequential chunks and optional boundary bridges. Inference includes input feature preparation and output decode; excludes model load, warmup, transfer, audio slicing, final speaker merge and app startup.",
+      "load_seconds": 2.3763197511434555,
+      "cache_implementation": "quantized",
+      "warmup_seconds": 2.035067915916443,
+      "observed_cache": {
+        "class": "QuantizedCache",
+        "layer_class": "HQQQuantizedLayer"
+      },
+      "wall_seconds": 438.6218536570668,
+      "inference_seconds": 438.57780320569873,
+      "peak_allocated_gib": 5.213246822357178,
+      "peak_reserved_gib": 6.1171875,
+      "rtf": 0.24365433511427706,
+      "quality": {
+        "segment_count": 422,
+        "speaker_count": 3,
+        "normalized_characters": 6783,
+        "first_start": 7.12,
+        "last_end": 1799.18,
+        "invalid_time_segments": 0,
+        "hit_token_limit": false,
+        "reference_case": "30m-bf16-kv16-c1",
+        "relative_character_edit_rate": 0.006618620385350787,
+        "speaker_agreement_on_overlapping_segments": 0.998912756472982
+      },
+      "launched_at_utc": "2026-10-20T14:10:56.560198+00:00",
+      "torch_threads": 4,
+      "hqq_version": "0.2.8.post1"
+    },
+    {
+      "schema_version": 1,
+      "case": "65m-bf16-kv16-c1",
+      "gpu_uuid": "GPU-15458aa2-d8d9-0c12-536d-e724f64076e0",
+      "gpu_name": "NVIDIA H200",
+      "duration": 3937.1306875,
+      "source_sha256": "28456ade09f4e7fabed07ca702b3519240e07dcaba8a32446a2bf9d233ddd650",
+      "chunks": 1,
+      "bridge_seconds": 30,
+      "kv_bits": 0,
+      "weight_precision": "bf16",
+      "attention": "sdpa",
+      "seed": 0,
+      "max_new_tokens": 32768,
+      "runs": [
+        {
+          "kind": "chunk",
+          "index": 0,
+          "offset": 0.0,
+          "duration": 3937.1306875,
+          "prompt_tokens": 52230,
+          "input_seconds": 1.1904128976166248,
+          "first_token_seconds": 2.9222865737974644,
+          "inference_seconds": 528.915353640914,
+          "generated_tokens": 30580,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 10.848695278167725,
+          "peak_reserved_gib": 14.4921875,
+          "decode_tokens_per_second": 58.13574724569161,
+          "transcript_sha256": "afb86984c63afb35b041ce1f305ea5e96adb401271a3d8f09280200af647d42b"
+        }
+      ],
+      "phase": "done",
+      "versions": {
+        "torch": "2.8.0+cu128",
+        "transformers": "5.20.2",
+        "moss-transcribe-diarize": "0.1.0"
+      },
+      "measurement_scope": "One GPU; sequential chunks and optional boundary bridges. Inference includes input feature preparation and output decode; excludes model load, warmup, transfer, audio slicing, final speaker merge and app startup.",
+      "load_seconds": 1.3143313936889172,
+      "cache_implementation": "dynamic",
+      "warmup_seconds": 1.7505068629980087,
+      "observed_cache": {
+        "class": "DynamicCache",
+        "layer_class": "DynamicLayer"
+      },
+      "wall_seconds": 529.0034520886838,
+      "inference_seconds": 528.915353640914,
+      "peak_allocated_gib": 10.848695278167725,
+      "peak_reserved_gib": 14.4921875,
+      "rtf": 0.13434030912922648,
+      "quality": {
+        "segment_count": 806,
+        "speaker_count": 2,
+        "normalized_characters": 15560,
+        "first_start": 6.99,
+        "last_end": 3937.1,
+        "invalid_time_segments": 0,
+        "hit_token_limit": false,
+        "reference_case": "65m-bf16-kv16-c1",
+        "relative_character_edit_rate": 0.0,
+        "speaker_agreement_on_overlapping_segments": 1.0
+      },
+      "launched_at_utc": "2026-10-20T14:14:23.684175+00:00",
+      "torch_threads": 4
+    },
+    {
+      "schema_version": 1,
+      "case": "65m-bf16-kv16-c2",
+      "gpu_uuid": "GPU-31406075-5747-2320-4b51-0815b7bfc530",
+      "gpu_name": "NVIDIA H200",
+      "duration": 3937.1306875,
+      "source_sha256": "28456ade09f4e7fabed07ca702b3519240e07dcaba8a32446a2bf9d233ddd650",
+      "chunks": 2,
+      "bridge_seconds": 30,
+      "kv_bits": 0,
+      "weight_precision": "bf16",
+      "attention": "sdpa",
+      "seed": 0,
+      "max_new_tokens": 32768,
+      "runs": [
+        {
+          "kind": "chunk",
+          "index": 0,
+          "offset": 0.0,
+          "duration": 1968.565375,
+          "prompt_tokens": 26047,
+          "input_seconds": 0.7043019272387028,
+          "first_token_seconds": 1.4981653057038784,
+          "inference_seconds": 208.52396098151803,
+          "generated_tokens": 15624,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 6.31760835647583,
+          "peak_reserved_gib": 7.6640625,
+          "decode_tokens_per_second": 75.46402586692322,
+          "transcript_sha256": "6dd5e9f87401db4c8ca81093c2f406877c7979c3425d4c0fef88cf0b5a7f80b2"
+        },
+        {
+          "kind": "chunk",
+          "index": 1,
+          "offset": 1968.56534375,
+          "duration": 1968.5653125,
+          "prompt_tokens": 26047,
+          "input_seconds": 0.5716945976018906,
+          "first_token_seconds": 1.2168204821646214,
+          "inference_seconds": 217.32581715658307,
+          "generated_tokens": 16347,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 6.393228054046631,
+          "peak_reserved_gib": 8.07421875,
+          "decode_tokens_per_second": 75.63775803663675,
+          "transcript_sha256": "5eb443c33bd384156ec42aeb8d99a54cbc1df6049351cfbad28d2ed9fd3d492b"
+        },
+        {
+          "kind": "bridge",
+          "index": 0,
+          "offset": 1953.56534375,
+          "duration": 30.0,
+          "prompt_tokens": 472,
+          "input_seconds": 0.017269957810640335,
+          "first_token_seconds": 0.06467403471469879,
+          "inference_seconds": 2.5494645945727825,
+          "generated_tokens": 178,
+          "hit_token_limit": false,
+          "peak_allocated_gib": 1.7995514869689941,
+          "peak_reserved_gib": 1.90234375,
+          "decode_tokens_per_second": 71.23336785781622,
+          "transcript_sha256": "9a2911947d9fe8c7de3f8af177745595a269bcc874be36598bd511f4579a4a2e"
+        }
+      ],
+      "phase": "done",
+      "versions": {
+        "torch": "2.8.0+cu128",
+        "transformers": "5.20.2",
+        "moss-transcribe-diarize": "0.1.0"
+      },
+      "measurement_scope": "One GPU; sequential chunks and optional boundary bridges. Inference includes input feature preparation and output decode; excludes model load, warmup, transfer, audio slicing, final speaker merge and app startup.",
+      "load_seconds": 1.2550597973167896,
+      "cache_implementation": "dynamic",
+      "warmup_seconds": 1.7955144457519054,
+      "observed_cache": {
+        "class": "DynamicCache",
+        "layer_class": "DynamicLayer"
+      },
+      "wall_seconds": 428.4910047277808,
+      "inference_seconds": 428.3992427326739,
+      "peak_allocated_gib": 6.393228054046631,
+      "peak_reserved_gib": 8.07421875,
+      "rtf": 0.10881001336653595,
+      "quality": {
+        "segment_count": 903,
+        "speaker_count": 6,
+        "normalized_characters": 15480,
+        "first_start": 7.04,
+        "last_end": 3873.405,
+        "invalid_time_segments": 0,
+        "hit_token_limit": false,
+        "reference_case": "65m-bf16-kv16-c1",
+        "relative_character_edit_rate": 0.061439588688946015,
+        "speaker_agreement_on_overlapping_segments": 0.6876985712221547
+      },
+      "launched_at_utc": "2026-10-20T14:14:17.681385+00:00",
+      "torch_threads": 4
+    }
+  ],
+  "quality_scope": "Normalized character edit rate and permutation-aligned speaker agreement against the original-KV same-duration baseline. No ground-truth transcript: neither metric measures recognition accuracy or DER. Two-chunk outputs use the app parser and 30-second bridge speaker merger. Raw audio, transcript contents, source filenames and credentials are excluded.",
+  "hardware": {
+    "host_alias": "juyu-h200",
+    "gpu": "NVIDIA H200",
+    "gpu_indices": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "memory_total_mib_per_gpu": 143771,
+    "driver_version": "580.126.16"
+  },
+  "model_revision": "704aa4a9c304e8520be88901e0d1960158ef5b15",
+  "upstream_revision": "e3bdd93f8ad58418e04659818efd5fd87a0bc486",
+  "telemetry": {
+    "samples": 149,
+    "started_at_utc": "2026-10-20T14:14:34.040628+00:00",
+    "ended_at_utc": "2026-10-20T14:27:13.926134+00:00",
+    "unexpected_non_dummy_processes": [],
+    "gpu_ranges": {
+      "0": {
+        "sm_mhz_min": 345.0,
+        "sm_mhz_max": 1980.0,
+        "temperature_c_max": 57.0
+      },
+      "1": {
+        "sm_mhz_min": 345.0,
+        "sm_mhz_max": 1980.0,
+        "temperature_c_max": 54.0
+      },
+      "2": {
+        "sm_mhz_min": 345.0,
+        "sm_mhz_max": 1980.0,
+        "temperature_c_max": 57.0
+      },
+      "3": {
+        "sm_mhz_min": 345.0,
+        "sm_mhz_max": 1980.0,
+        "temperature_c_max": 45.0
+      }
+    },
+    "coverage": "Continuous 5-second samples cover full-length runs and baseline repeat, but started after the first 30-minute baseline finished. Initial runs also had manual process snapshots. GPU dummy workers automatically yielded; their manager was never stopped."
+  },
+  "limitations": [
+    "One Korean recording plus its first 30 minutes; not representative of all speech or languages.",
+    "No human reference: output differences and speaker agreement do not establish accuracy or DER.",
+    "One GPU per case; two chunks run sequentially and include a 30-second boundary bridge.",
+    "Per-case GPUs differ; one original-KV case was repeated on another GPU. This is not a fully balanced multi-run study.",
+    "BF16 model weights throughout; this isolates KV compression, not 8/4bit model-weight quantization.",
+    "Warm inference excludes loading, warmup, audio copy/slicing, transfer and final merge/app startup.",
+    "The 4bit KV case was stopped after 900 seconds and has no completed latency, peak allocation or transcript quality score.",
+    "Measured HQQ/PyTorch cache compression; no claim about other engines or fused FP8 cache kernels."
+  ],
+  "conclusion": {
+    "default": "BF16 / SDPA / original KV / one chunk when VRAM allows",
+    "kv8_latency_ratio": 2.3373025785370407,
+    "kv8_peak_allocated_reduction_fraction": 0.11843462667022531,
+    "full_two_chunk_latency_reduction_fraction": 0.19004196080963365,
+    "full_two_chunk_last_timestamp_difference_seconds": 63.69499999999971
+  },
+  "calibration": {
+    "version": "measured-profiles-20261021-v3",
+    "scope": "Full H200 (not MIG), original BF16/auto model weights, SDPA, original KV enabled, 32768 token cap, positive chunk length up to 5400 seconds. Measured per-chunk interval 900–3937.1306875 seconds; shorter chunks scale the shortest observed time proportionally and longer chunks extrapolate the final slope, both labeled. Other configurations use a point heuristic.",
+    "formula": "T(D,N,B) = N*f(D/N) + (N-1)*bridge_seconds_cost*(B/30)",
+    "method": "Piecewise linear interpolation of four effective per-chunk anchors derived from the four original-KV cases. Subtract mean measured bridge cost from two-chunk totals before dividing by two.",
+    "bridge_seconds_cost": 2.673874121159315,
+    "time_anchors_chunk_seconds_inference_seconds": [
+      [
+        900.0,
+        91.87482985109091
+      ],
+      [
+        1800.0,
+        187.64271568134427
+      ],
+      [
+        1968.56534375,
+        212.86268430575728
+      ],
+      [
+        3937.1306875,
+        528.915353640914
+      ]
+    ],
+    "memory_anchors_chunk_seconds_peak_reserved_gib": [
+      [
+        900.0,
+        4.265625
+      ],
+      [
+        1800.0,
+        7.212890625
+      ],
+      [
+        1968.56534375,
+        8.07421875
+      ],
+      [
+        3937.1306875,
+        14.4921875
+      ]
+    ],
+    "memory_context_headroom_gib": 1.0,
+    "memory_display": "Interpolate peak reserved per sequential chunk, take maximum with bridge footprint, add 1 GiB context/execution headroom. Do not sum sequential chunk VRAM.",
+    "memory_warning_upper_budget": "1.25 * interpolated_peak_reserved_gib + 1 GiB",
+    "latency_interval_displayed": false,
+    "statistical_confidence_interval": false,
+    "excludes": "Model loading/warmup, file transfer/slicing, final speaker merge and app startup.",
+    "app_server_quantization_supported": false,
+    "predictions_at_calibration_points": [
+      {
+        "duration_seconds": 1800.0,
+        "chunk_count": 1,
+        "memory_expected_gib": 8.2,
+        "memory_high_gib": 10.0,
+        "time_seconds": 188
+      },
+      {
+        "duration_seconds": 1800.0,
+        "chunk_count": 2,
+        "memory_expected_gib": 5.3,
+        "memory_high_gib": 6.3,
+        "time_seconds": 186
+      },
+      {
+        "duration_seconds": 3937.1306875,
+        "chunk_count": 1,
+        "memory_expected_gib": 15.5,
+        "memory_high_gib": 19.1,
+        "time_seconds": 529
+      },
+      {
+        "duration_seconds": 3937.1306875,
+        "chunk_count": 2,
+        "memory_expected_gib": 9.1,
+        "memory_high_gib": 11.1,
+        "time_seconds": 428
+      }
+    ],
+    "limitations": "One recording; interpolation is not an independently validated prediction. Speech density/output token count, GPU sharing, software versions and prompt differences can change latency and memory. Stopped KV4 run is excluded.",
+    "short_chunk_reserved_floor_gib": 1.90234375,
+    "reference_data_file": "src/performance_seeds.json",
+    "adaptive_history": "Completed non-truncated CUDA request metrics are stored locally in data/performance.sqlite3. Profiles separate GPU name/VRAM class, model, precision, attention/cache/token cap and software/model revision. The H200 measurements are reference data in a generic profile estimator, not GPU-name branches."
+  }
+}

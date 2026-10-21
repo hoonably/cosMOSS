@@ -167,7 +167,9 @@ class VoiceProfiles:
     def ranges(segments):
         selected = {}
         for speaker in dict.fromkeys(s['speaker'] for s in segments):
-            candidates = sorted([s for s in segments if s['speaker'] == speaker and s['end'] - s['start'] >= 1.2],
+            if speaker == '미확인':
+                continue
+            candidates = sorted([s for s in segments if s['speaker'] == speaker and not s.get('speaker_uncertain') and s['end'] - s['start'] >= 1.2],
                                 key=lambda s: s['end'] - s['start'], reverse=True)
             ranges = []
             for segment in candidates:
@@ -180,34 +182,64 @@ class VoiceProfiles:
             selected[speaker] = ranges
         return selected
 
-    def compare(self, speaker_vectors, profiles=None):
+    def compare(self, speaker_vectors, profiles=None, sample_vectors=None, overlapping_pairs=None):
         profiles = self.documents() if profiles is None else profiles
         settings = self.settings()
+        vectors = {speaker: unit_vector(vector) for speaker, vector in speaker_vectors.items()}
+        sample_vectors = sample_vectors or {speaker: [vector] for speaker, vector in vectors.items()}
+        overlapping_pairs = overlapping_pairs or set()
+        similarity = lambda a, b: max(-1., min(1., sum(x * y for x, y in zip(a, b))))
         matches, names = [], {}
-        for speaker, vector in speaker_vectors.items():
+        for speaker, vector in vectors.items():
             scores = {}
             for profile in profiles:
-                score = max(-1., min(1., sum(a * b for a, b in zip(vector, profile['embedding']))))
+                score = similarity(vector, profile['embedding'])
                 if profile['name'] not in scores or score > scores[profile['name']]['similarity']:
                     scores[profile['name']] = {'name': profile['name'], 'profile_id': profile['id'], 'similarity': score}
             ranked = sorted(scores.values(), key=lambda item: item['similarity'], reverse=True)
             if not ranked: continue
             best = ranked[0]
             runner_up = ranked[1]['similarity'] if len(ranked) > 1 else -1.
-            accepted = best['similarity'] >= settings['threshold'] and best['similarity'] - runner_up >= settings['margin']
+            profile = next(item for item in profiles if item['id'] == best['profile_id'])
+            minimum = min(similarity(sample, profile['embedding']) for sample in sample_vectors[speaker])
+            recommended = (best['similarity'] >= settings['threshold']
+                           and best['similarity'] - runner_up >= settings['margin']
+                           and minimum >= settings['threshold'])
             matches.append({'speaker': speaker, **best, 'similarity': round(best['similarity'], 4),
-                            'runner_up_similarity': round(runner_up, 4), 'accepted': accepted})
-            if accepted: names[speaker] = best['name']
-        return {'speaker_names': names, 'matches': matches, 'model_id': MODEL_ID}
+                            'runner_up_similarity': round(runner_up, 4), 'recommended': recommended,
+                            'sample_similarity_min': round(minimum, 4)})
+            if recommended: names[speaker] = best['name']
+        merges = []
+        speakers = list(vectors)
+        for index, target in enumerate(speakers):
+            for source in speakers[index + 1:]:
+                if frozenset((source, target)) in overlapping_pairs:
+                    continue
+                score = similarity(vectors[source], vectors[target])
+                if score < settings['threshold']:
+                    continue
+                minimum = min(similarity(a, b) for a in sample_vectors[source] for b in sample_vectors[target])
+                merges.append({'source': source, 'target': target, 'similarity': round(score, 4),
+                               'sample_similarity_min': round(minimum, 4),
+                               'recommended': minimum >= settings['threshold']})
+        merges.sort(key=lambda item: item['similarity'], reverse=True)
+        # These are proposals only. Callers must never apply them without review.
+        return {'suggested_names': names, 'matches': matches, 'merge_candidates': merges, 'model_id': MODEL_ID}
 
     async def identify(self, source, segments, ffmpeg):
         profiles = self.documents()
-        if not profiles:
-            return {'speaker_names': {}, 'matches': [], 'model_id': MODEL_ID}
         await self.engine.require_ready()
         selected = self.ranges(segments)
+        overlapping_pairs, active = set(), {}
+        for segment in sorted(segments, key=lambda item: item['start']):
+            start, end, speaker = segment['start'], segment['end'], segment['speaker']
+            active = {other: until for other, until in active.items() if until > start + .15}
+            for other, until in active.items():
+                if other != speaker and min(until, end) - start > .15:
+                    overlapping_pairs.add(frozenset((speaker, other)))
+            active[speaker] = max(end, active.get(speaker, end))
         with tempfile.TemporaryDirectory(prefix='cosmoss-voice-match-') as temporary:
-            files, speakers = [], []
+            files, speakers, sample_ranges = [], [], {}
             for speaker, ranges in selected.items():
                 for start, seconds in ranges:
                     target = Path(temporary) / f'{len(files)}.wav'
@@ -215,11 +247,23 @@ class VoiceProfiles:
                     except ValueError: continue
                     files.append(target)
                     speakers.append(speaker)
+                    sample_ranges.setdefault(speaker, []).append({'start': start, 'end': start + seconds})
             if not files:
-                return {'speaker_names': {}, 'matches': [], 'model_id': MODEL_ID}
+                return self.compare({}, profiles)
             vectors = await self.engine.embeddings(files)
             collected = {}
             for speaker, vector in zip(speakers, vectors):
                 collected.setdefault(speaker, []).append(vector)
-            averaged = {speaker: unit_vector([sum(axis) / len(group) for axis in zip(*group)]) for speaker, group in collected.items()}
-            return self.compare(averaged, profiles)
+            averaged = {}
+            for speaker, group in collected.items():
+                try:
+                    averaged[speaker] = unit_vector([sum(axis) / len(group) for axis in zip(*group)])
+                except ValueError:
+                    continue
+            result = self.compare(averaged, profiles, collected, overlapping_pairs)
+            for match in result['matches']:
+                match['samples'] = sample_ranges[match['speaker']]
+            for match in result['merge_candidates']:
+                match['source_samples'] = sample_ranges[match['source']]
+                match['target_samples'] = sample_ranges[match['target']]
+            return result

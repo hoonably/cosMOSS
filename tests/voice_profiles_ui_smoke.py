@@ -48,7 +48,7 @@ async def run(base, sample, output, screenshots):
         await page.fill('#voice-match-threshold', '.83')
         await page.uncheck('#voice-auto-enabled')
         await page.click('#save-voice-options')
-        await page.wait_for_function("document.querySelector('#voice-profile-message').textContent==='자동 이름 지정 설정을 저장했습니다.'")
+        await page.wait_for_function("document.querySelector('#voice-profile-message').textContent==='목소리 추천 설정을 저장했습니다.'")
         for width, height in ((1440, 950), (1100, 720)):
             await page.set_viewport_size({'width': width, 'height': height})
             dialog = page.locator('#voice-profiles-dialog')
@@ -66,14 +66,20 @@ async def run(base, sample, output, screenshots):
         await page.click('#identify-voice-speakers')
         await page.wait_for_function("!document.querySelector('#identify-voice-speakers').disabled")
         # Two identical profiles with different names should remain ambiguous.
-        assert '추가로 지정할 이름을 찾지 못했습니다.' in await page.locator('#speaker-voice-status').inner_text()
+        assert await page.locator('.voice-review-confidence.needs-review').count() == 1
+        assert await page.locator('#speaker-name').input_value() == 'S01'
+        await page.click('#cancel-voice-review')
         await page.locator('#speaker-dialog [data-open-voice-profiles]').click()
         row = page.locator('.voice-profile-row').filter(has=page.locator('input[value="공유 확인"]'))
         await row.locator('[data-voice-action="delete"]').click()
         await row.locator('[data-voice-action="delete"]').click()
         await page.wait_for_function("document.querySelector('#voice-profile-count').textContent==='1'")
         await page.click('#close-voice-profiles')
-        await page.click('#identify-voice-speakers')
+        await page.evaluate('compareSpeakerVoices(true)')
+        await page.locator('#voice-review-dialog').wait_for(state='visible')
+        assert await page.locator('#speaker-name').input_value() == 'S01'
+        await page.locator('[data-voice-proposal]').first.check()
+        await page.click('#approve-voice-review')
         await page.wait_for_function("document.querySelector('#speaker-name').value==='파이프라인 확인'")
         await page.click('#save-speakers')
         await page.locator('#speaker-dialog').wait_for(state='hidden')

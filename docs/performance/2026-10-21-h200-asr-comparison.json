@@ -1,0 +1,296 @@
+{
+  "date": "2026-10-21",
+  "duration_seconds": 3937.1306875,
+  "human_reference_available": false,
+  "scope": "One H200 per configuration; already downloaded models; warmed pipeline includes feature extraction, ASR, alignment when needed, Nemotron, timed speaker matching and local result serialization; excludes download, transfer, input conversion and model load/warmup.",
+  "memory_scope": "Maximum owned-process nvidia-smi used_memory sampled every ~0.5 s; allocated/reserved are PyTorch high-water marks for all resident models.",
+  "app_changes": false,
+  "configurations": {
+    "moss-full": {
+      "asr_seconds": 495.81617357581854,
+      "align_seconds": 0.0,
+      "diarization_seconds": 2.8775238692760468,
+      "join_seconds": 0.37010978534817696,
+      "pipeline_seconds": 499.06833582744,
+      "process_seconds": 508.92023000121117,
+      "load_seconds": 1.9090380296111107,
+      "warmup_seconds": 1.4767061620950699,
+      "peak_allocated_gib": 11.080828666687012,
+      "peak_reserved_gib": 14.083984375,
+      "peak_host_rss_gib": 3.17218017578125,
+      "runs": 1,
+      "pipeline_runs": [
+        499.06833582744
+      ],
+      "process_runs": [
+        508.92023000121117
+      ],
+      "batch": 0,
+      "chunk_count": 1,
+      "hit_token_limit": false,
+      "peak_process_gib": 14.763671875,
+      "maximum_peak_reserved_gib": 14.083984375
+    },
+    "moss-short-batch8": {
+      "asr_seconds": 96.19557612389326,
+      "align_seconds": 0.0,
+      "diarization_seconds": 2.888756025582552,
+      "join_seconds": 0.41407159343361855,
+      "pipeline_seconds": 99.50803168863058,
+      "process_seconds": 106.75956598296762,
+      "load_seconds": 1.8200758211314678,
+      "warmup_seconds": 1.2789484299719334,
+      "peak_allocated_gib": 5.856862545013428,
+      "peak_reserved_gib": 7.5546875,
+      "peak_host_rss_gib": 2.8184585571289062,
+      "runs": 1,
+      "pipeline_runs": [
+        99.50803168863058
+      ],
+      "process_runs": [
+        106.75956598296762
+      ],
+      "batch": 8,
+      "chunk_count": 23,
+      "hit_token_limit": false,
+      "peak_process_gib": 8.234375,
+      "maximum_peak_reserved_gib": 7.5546875
+    },
+    "moss-short-batch23": {
+      "asr_seconds": 73.4444971345365,
+      "align_seconds": 0.0,
+      "diarization_seconds": 2.8923439886420965,
+      "join_seconds": 0.39875996299088,
+      "pipeline_seconds": 76.7419098969549,
+      "process_seconds": 83.83722453378141,
+      "load_seconds": 1.8398412819951773,
+      "warmup_seconds": 1.2792623993009329,
+      "peak_allocated_gib": 13.017162799835205,
+      "peak_reserved_gib": 17.208984375,
+      "peak_host_rss_gib": 2.8200340270996094,
+      "runs": 2,
+      "pipeline_runs": [
+        76.81439495831728,
+        76.66942483559251
+      ],
+      "process_runs": [
+        84.20009737834334,
+        83.47435168921947
+      ],
+      "batch": 23,
+      "chunk_count": 23,
+      "hit_token_limit": false,
+      "peak_process_gib": 17.888671875,
+      "maximum_peak_reserved_gib": 17.208984375,
+      "repeat_transcript_identical": true,
+      "repeat_timeline_identical": true
+    },
+    "qwen-batch1": {
+      "asr_seconds": 200.07035625725985,
+      "align_seconds": 2.404666144400835,
+      "diarization_seconds": 2.840431831777096,
+      "join_seconds": 2.936736226081848,
+      "pipeline_seconds": 208.39578049629927,
+      "process_seconds": 218.41340959072113,
+      "load_seconds": 3.1905869841575623,
+      "warmup_seconds": 0.9327925108373165,
+      "peak_allocated_gib": 7.245550632476807,
+      "peak_reserved_gib": 8.82421875,
+      "peak_host_rss_gib": 4.919376373291016,
+      "runs": 1,
+      "pipeline_runs": [
+        208.39578049629927
+      ],
+      "process_runs": [
+        218.41340959072113
+      ],
+      "batch": 1,
+      "chunk_count": 23,
+      "hit_token_limit": false,
+      "peak_process_gib": 9.498046875,
+      "maximum_peak_reserved_gib": 8.82421875
+    },
+    "qwen-batch4": {
+      "asr_seconds": 71.13198558986187,
+      "align_seconds": 3.424171769991517,
+      "diarization_seconds": 2.853346858173609,
+      "join_seconds": 2.78789241053164,
+      "pipeline_seconds": 80.23310809955001,
+      "process_seconds": 89.63538377732038,
+      "load_seconds": 3.344989039003849,
+      "warmup_seconds": 0.8906329534947872,
+      "peak_allocated_gib": 11.25249719619751,
+      "peak_reserved_gib": 12.873046875,
+      "peak_host_rss_gib": 4.918983459472656,
+      "runs": 2,
+      "pipeline_runs": [
+        78.68001822382212,
+        81.7861979752779
+      ],
+      "process_runs": [
+        88.67245366051793,
+        90.59831389412284
+      ],
+      "batch": 4,
+      "chunk_count": 23,
+      "hit_token_limit": false,
+      "peak_process_gib": 13.546875,
+      "maximum_peak_reserved_gib": 12.873046875,
+      "repeat_transcript_identical": true,
+      "repeat_timeline_identical": true
+    },
+    "qwen-batch8": {
+      "asr_seconds": 46.810653280466795,
+      "align_seconds": 3.374496618285775,
+      "diarization_seconds": 3.093396171927452,
+      "join_seconds": 2.9081967547535896,
+      "pipeline_seconds": 56.20529133081436,
+      "process_seconds": 65.5353242829442,
+      "load_seconds": 3.345873437821865,
+      "warmup_seconds": 0.8863891866058111,
+      "peak_allocated_gib": 16.324657440185547,
+      "peak_reserved_gib": 19.54296875,
+      "peak_host_rss_gib": 4.924541473388672,
+      "runs": 2,
+      "pipeline_runs": [
+        55.97778099402785,
+        56.43280166760087
+      ],
+      "process_runs": [
+        65.99321224913001,
+        65.0774363167584
+      ],
+      "batch": 8,
+      "chunk_count": 23,
+      "hit_token_limit": false,
+      "peak_process_gib": 20.21484375,
+      "maximum_peak_reserved_gib": 19.54296875,
+      "repeat_transcript_identical": true,
+      "repeat_timeline_identical": true
+    },
+    "qwen-batch23": {
+      "asr_seconds": 37.406331622973084,
+      "align_seconds": 3.356959780678153,
+      "diarization_seconds": 2.822955844923854,
+      "join_seconds": 2.983054131269455,
+      "pipeline_seconds": 46.57991859130561,
+      "process_seconds": 54.81225570105016,
+      "load_seconds": 3.080047460272908,
+      "warmup_seconds": 0.862817469984293,
+      "peak_allocated_gib": 30.544198989868164,
+      "peak_reserved_gib": 30.66796875,
+      "peak_host_rss_gib": 4.924009323120117,
+      "runs": 2,
+      "pipeline_runs": [
+        46.58850147947669,
+        46.57133570313454
+      ],
+      "process_runs": [
+        54.8275945186615,
+        54.796916883438826
+      ],
+      "batch": 23,
+      "chunk_count": 23,
+      "hit_token_limit": false,
+      "peak_process_gib": 31.33984375,
+      "maximum_peak_reserved_gib": 30.66796875,
+      "repeat_transcript_identical": true,
+      "repeat_timeline_identical": true
+    }
+  },
+  "quality": {
+    "qwen-batch1": {
+      "words": 6052,
+      "zero_duration_words": 703,
+      "zero_duration_fraction": 0.11615994712491738,
+      "overlap_only_unmatched": 787,
+      "uniquely_matched_at_active_timestamp": 578,
+      "unmatched_after_unique_active_point_check": 209,
+      "last_aligned_end": 3936.8333124999995,
+      "assigned_speaker_count": 6,
+      "character_difference_from_moss_not_CER": 0.09762820512820512
+    },
+    "qwen-batch4": {
+      "words": 6073,
+      "zero_duration_words": 697,
+      "zero_duration_fraction": 0.11477029474724189,
+      "overlap_only_unmatched": 777,
+      "uniquely_matched_at_active_timestamp": 570,
+      "unmatched_after_unique_active_point_check": 207,
+      "last_aligned_end": 3936.8333124999995,
+      "assigned_speaker_count": 6,
+      "character_difference_from_moss_not_CER": 0.0979213303485769
+    },
+    "qwen-batch8": {
+      "words": 6072,
+      "zero_duration_words": 701,
+      "zero_duration_fraction": 0.11544795783926219,
+      "overlap_only_unmatched": 782,
+      "uniquely_matched_at_active_timestamp": 571,
+      "unmatched_after_unique_active_point_check": 211,
+      "last_aligned_end": 3936.8333124999995,
+      "assigned_speaker_count": 6,
+      "character_difference_from_moss_not_CER": 0.09884836852207293
+    },
+    "qwen-batch23": {
+      "words": 6074,
+      "zero_duration_words": 699,
+      "zero_duration_fraction": 0.11508067171550873,
+      "overlap_only_unmatched": 777,
+      "uniquely_matched_at_active_timestamp": 548,
+      "unmatched_after_unique_active_point_check": 229,
+      "last_aligned_end": 3936.8333124999995,
+      "assigned_speaker_count": 6,
+      "character_difference_from_moss_not_CER": 0.09842041312272175
+    }
+  },
+  "fresh_moss_matches_previous_output": false,
+  "between_batch_character_difference_not_CER": {
+    "qwen-batch1/qwen-batch4": 0.0050527662296130475,
+    "qwen-batch4/qwen-batch8": 0.004029421170450911,
+    "qwen-batch8/qwen-batch23": 0.0051800217433011445
+  },
+  "models": {
+    "moss": {
+      "repo": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+      "revision": "704aa4a9c304e8520be88901e0d1960158ef5b15",
+      "precision": "bf16"
+    },
+    "qwen": {
+      "repo": "Qwen/Qwen3-ASR-1.7B-hf",
+      "revision": "bcd2b5b7f32b480ab5790554cfa8347f246a14f3",
+      "precision": "bf16"
+    },
+    "aligner": {
+      "repo": "Qwen/Qwen3-ForcedAligner-0.6B-hf",
+      "revision": "c07281df297b9905d24a508279258cccf987a064",
+      "precision": "bf16"
+    },
+    "nemotron": {
+      "repo": "nvidia/Nemotron-3-Diarization",
+      "revision": "f667ed73aee57d40cc39428eb768b4fd87a0a29e",
+      "precision": "fp32"
+    }
+  },
+  "audio_sha256": "28456ade09f4e7fabed07ca702b3519240e07dcaba8a32446a2bf9d233ddd650",
+  "torch": "2.8.0+cu128",
+  "transformers": "5.20.2",
+  "attention": "sdpa",
+  "torch_compile": false,
+  "quantization": false,
+  "torch_threads": 4,
+  "nemotron_timelines_identical": true,
+  "quality_evaluation_scope": "Direct reading of representative transcript passages only. No independent listening reference, human reference transcript, CER or DER was produced. Character differences are model disagreement, not recognition error rates.",
+  "archived_harness_source_hashes": {
+    "worker.py": "1d15e64f2d7139d3ff93c0c8ed54f1ab01154cbc435e218e00d98917e6321b1c",
+    "supervisor.py": "3b44df8d9336decfdc3f152b18c7ce7452c024dd3abd83f3380b69915b56b939",
+    "launch.py": "0a7aaab64889f5dab0f96cde0ba464215b65f70adce9090a0c7c3cf20564640c",
+    "split_audio.py": "5d572631e0f1d2bd643ff9f96f8eaaf7ecbc616b83464ebe286f05a568d1dabc",
+    "analyze.py": "72265882a72e8d5e9907d1b153a7f8a4be17bae62ddf1578a4716405e9f1958d"
+  },
+  "cleanup": {
+    "owned_gpu_children_remaining": 0,
+    "remote_audio_and_transcript_copies_removed_after_backup_verification": true,
+    "server_model_cache_and_isolated_runtime_kept": true
+  }
+}

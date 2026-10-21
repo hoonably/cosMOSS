@@ -14,6 +14,23 @@ from typing import Any
 
 from src.config import TranscriptionConfig
 from src.ssh_devices import SSHTunnels
+from src.model_catalog import has_model_selection
+
+
+def original_cuda_configuration(device: dict[str, Any]) -> dict[str, Any]:
+    """Retire saved server quantization choices without changing Mac options."""
+    if device.get('backend') != 'cuda':
+        return device
+    device = device.copy()
+    options = dict(device.get('options', {}))
+    options.pop('cuda_kv_bits', None)
+    if options.get('precision') in {'int4', 'int8'}:
+        options['precision'] = 'auto'
+    if 'options' in device:
+        device['options'] = options
+    if device.get('model_key') in {'cuda-4bit', 'cuda-8bit'}:
+        device.update(model_key='cuda-original', model='OpenMOSS-Team/MOSS-Transcribe-Diarize')
+    return device
 
 
 class DeviceStore:
@@ -23,6 +40,11 @@ class DeviceStore:
         self.lock = threading.RLock()
         with self._connect() as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, config TEXT NOT NULL)")
+            for device_id, raw in connection.execute('SELECT id, config FROM devices').fetchall():
+                saved = json.loads(raw)
+                migrated = original_cuda_configuration(saved)
+                if migrated != saved:
+                    connection.execute('UPDATE devices SET config=? WHERE id=?', (json.dumps(migrated), device_id))
             local = {
                 "id": "local", "name": "이 Mac", "kind": "local", "backend": "mlx",
                 "model": os.getenv("MOSS_MODEL_NAME", "moss-mtd"),
@@ -39,14 +61,14 @@ class DeviceStore:
     def list(self) -> list[dict[str, Any]]:
         with self.lock, self._connect() as connection:
             rows = connection.execute("SELECT config FROM devices ORDER BY CASE id WHEN 'local' THEN 0 ELSE 1 END, rowid").fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [original_cuda_configuration(json.loads(row[0])) for row in rows]
 
     def get(self, device_id: str) -> dict[str, Any]:
         with self.lock, self._connect() as connection:
             row = connection.execute("SELECT config FROM devices WHERE id = ?", (device_id,)).fetchone()
         if row is None:
             raise KeyError(device_id)
-        return json.loads(row[0])
+        return original_cuda_configuration(json.loads(row[0]))
 
     def add_ssh(self, *, name: str, host: str, remote_port: int, model: str, backend: str,
                 model_cache: str = "") -> dict[str, Any]:
@@ -54,6 +76,7 @@ class DeviceStore:
                   "remote_port": remote_port, "model": model, "backend": backend,
                   "model_cache": model_cache, "model_prepared": False}
         if backend == "cuda":
+            device['model_selected'] = False
             device["api_key"] = secrets.token_urlsafe(32)
             device["worker_cleanup_pending"] = False
         with self.lock, self._connect() as connection:
@@ -76,6 +99,7 @@ class DeviceStore:
         with self.lock, self._connect() as connection:
             device = self.get(device_id)
             device.update(values)
+            device = original_cuda_configuration(device)
             connection.execute("UPDATE devices SET config = ? WHERE id = ?", (json.dumps(device), device_id))
         return device
 
@@ -115,7 +139,8 @@ class ResolvedDevice:
 
 
 def public_device(device: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in device.items() if key not in {"api_key", "gpu_uuid", "gpu_index"}}
+    return {**{key: value for key, value in device.items() if key not in {"api_key", "gpu_uuid", "gpu_index"}},
+            'model_selected': has_model_selection(device)}
 
 
 async def resolve_device(device: dict[str, Any], tunnels: SSHTunnels) -> ResolvedDevice:

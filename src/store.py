@@ -80,6 +80,9 @@ class NoteStore:
                 "processing_started_at": "TEXT",
                 "processing_finished_at": "TEXT",
                 "processing_seconds": "REAL",
+                "inference_started_at": "TEXT",
+                "inference_finished_at": "TEXT",
+                "estimated_inference_seconds": "REAL",
                 "chunk_seconds": "INTEGER",
                 "preprocessing_seconds": "REAL NOT NULL DEFAULT 0",
                 "device_id": "TEXT NOT NULL DEFAULT 'local'",
@@ -92,7 +95,9 @@ class NoteStore:
                 "output_directory": "TEXT",
                 "text_save_error": "TEXT",
                 "voice_matches_json": "TEXT NOT NULL DEFAULT '[]'",
+                "voice_merge_candidates_json": "TEXT NOT NULL DEFAULT '[]'",
                 "voice_match_error": "TEXT",
+                "pipeline_result_json": "TEXT NOT NULL DEFAULT '{}'",
             }
             for name, definition in migrations.items():
                 if name not in columns:
@@ -345,7 +350,9 @@ class NoteStore:
                     progress_phase = 'queued', progress_completed_steps = 0,
                     progress_total_steps = 0, processed_audio_seconds = 0,
                     model_progress_json = '{}', processing_started_at = NULL,
-                    processing_finished_at = NULL, processing_seconds = NULL
+                    processing_finished_at = NULL, processing_seconds = NULL,
+                    inference_started_at = NULL, inference_finished_at = NULL,
+                    estimated_inference_seconds = NULL
                 WHERE status IN ('queued', 'processing')
                 """
             )
@@ -361,6 +368,8 @@ class NoteStore:
             "speaker_merges": "speaker_merges_json",
             "model_progress": "model_progress_json",
             "voice_matches": "voice_matches_json",
+            "voice_merge_candidates": "voice_merge_candidates_json",
+            "pipeline_result": "pipeline_result_json",
         }
         normalized: dict[str, Any] = {}
         for key, value in changes.items():
@@ -402,4 +411,6 @@ class NoteStore:
         result["speaker_merges"] = json.loads(result.pop("speaker_merges_json", "{}") or "{}")
         result["model_progress"] = json.loads(result.pop("model_progress_json", "{}") or "{}")
         result["voice_matches"] = json.loads(result.pop("voice_matches_json", "[]") or "[]")
+        result["voice_merge_candidates"] = json.loads(result.pop("voice_merge_candidates_json", "[]") or "[]")
+        result["pipeline_result"] = json.loads(result.pop("pipeline_result_json", "{}") or "{}")
         return result

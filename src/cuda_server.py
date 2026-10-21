@@ -8,12 +8,17 @@ import os
 import secrets
 import tempfile
 import time
+import wave
+import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
+from src.process_lifecycle import arm_worker_parent_guard
+
+arm_worker_parent_guard()
 
 
 MODEL_ID = os.environ.get("MOSS_MODEL_NAME", "OpenMOSS-Team/MOSS-Transcribe-Diarize")
@@ -28,14 +33,23 @@ DTYPE: Any = None
 GPU_LOCK: Any = None
 LOCK = asyncio.Lock()
 JOBS: set[asyncio.Task] = set()
+GENERATION_COUNT = 0
 DEFAULT_PROMPT = (
     "请将音频转写为文本，每一段需以起始时间戳和说话人编号（[S01]、[S02]、[S03]…）开头，"
     "正文为对应的语音内容，并在段末标注结束时间戳，以清晰标明该段语音范围。"
 )
 
 
+def cuda_precision(options: dict[str, Any]) -> str:
+    precision = options.get("precision", "auto")
+    if precision not in {"auto", "bf16", "fp16"} or options.get("cuda_kv_bits", 0):
+        raise ValueError("서버 양자화 지원이 종료되었습니다. 원본 BF16/FP16 모델로 다시 준비해 주세요.")
+    return precision
+
+
 def load_model() -> None:
     global MODEL, PROCESSOR, DTYPE, GPU_LOCK
+    precision = cuda_precision(OPTIONS)
     import fcntl
     import torch
     from transformers import AutoModelForCausalLM, AutoProcessor
@@ -49,7 +63,6 @@ def load_model() -> None:
         fcntl.flock(GPU_LOCK, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as error:
         raise RuntimeError("Another cosMOSS worker under this user already owns this GPU") from error
-    precision = OPTIONS.get("precision", "auto")
     if precision == "bf16" and not torch.cuda.is_bf16_supported():
         raise RuntimeError("선택한 GPU는 BF16을 지원하지 않습니다. 자동 또는 FP16을 선택해 주세요.")
     DTYPE = torch.float16 if precision == "fp16" else (torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
@@ -57,19 +70,13 @@ def load_model() -> None:
         raise RuntimeError("A prepared model path is required; prepare the device model first")
     kwargs = dict(trust_remote_code=True, dtype=DTYPE,
                   attn_implementation=OPTIONS.get("attention", "sdpa"), local_files_only=True)
-    if precision in {"int8", "int4"}:
-        from transformers import BitsAndBytesConfig
-        capability = torch.cuda.get_device_capability()
-        if capability < ((7, 5) if precision == "int8" else (6, 0)):
-            raise RuntimeError("선택한 GPU는 이 양자화 방식을 지원하지 않습니다. 원본 모델을 선택해 주세요.")
-        kwargs.update(device_map={"": "cuda:0"}, quantization_config=BitsAndBytesConfig(
-            load_in_8bit=precision == "int8", load_in_4bit=precision == "int4",
-            llm_int8_skip_modules=["whisper_encoder", "vq_adaptor", "lm_head"],
-            bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=DTYPE, bnb_4bit_use_double_quant=True))
-        MODEL = AutoModelForCausalLM.from_pretrained(MODEL_PATH, **kwargs).eval()
-    else:
-        MODEL = AutoModelForCausalLM.from_pretrained(MODEL_PATH, **kwargs).to(dtype=DTYPE).to("cuda:0").eval()
+    configuration = json.loads((Path(MODEL_PATH) / "config.json").read_text())
+    if configuration.get("quantization_config"):
+        raise RuntimeError("서버에서는 양자화되지 않은 BF16/FP16 모델을 선택해 주세요.")
+    MODEL = AutoModelForCausalLM.from_pretrained(MODEL_PATH, **kwargs).to(dtype=DTYPE).to("cuda:0").eval()
     MODEL.generation_config.use_cache = OPTIONS.get("use_cache", True)
+    MODEL.generation_config.cache_implementation = None
+    MODEL.generation_config.cache_config = None
     PROCESSOR = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
 
 
@@ -103,15 +110,43 @@ def models() -> dict[str, Any]:
 
 
 def generate(path: str, prompt: str, max_tokens: int) -> dict[str, Any]:
+    global GENERATION_COUNT
     import torch
+    import transformers
     from moss_transcribe_diarize.inference_utils import build_transcription_messages, generate_transcription
 
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
     started = time.monotonic()
     result = generate_transcription(
         MODEL, PROCESSOR, build_transcription_messages(path, prompt=prompt),
         max_new_tokens=max_tokens, do_sample=False, device=torch.device("cuda:0"), dtype=DTYPE,
     )
-    return {"text": result["text"], "duration": round(time.monotonic() - started, 2)}
+    torch.cuda.synchronize()
+    elapsed = time.monotonic() - started
+    payload = {"text": result["text"], "duration": round(elapsed, 2)}
+    try:
+        with wave.open(path, 'rb') as audio:
+            seconds = audio.getnframes() / audio.getframerate()
+        properties = torch.cuda.get_device_properties(0)
+        revision = Path(MODEL_PATH).name
+        if len(revision) != 40 or any(character not in '0123456789abcdef' for character in revision):
+            revision = hashlib.sha256((Path(MODEL_PATH) / 'config.json').read_bytes()).hexdigest()
+        generated = result.get('generated_tokens')
+        payload['performance'] = dict(engine='cosmoss-cuda-v1', model=MODEL_ID,
+            gpu_name=torch.cuda.get_device_name(0), memory_total_mib=properties.total_memory / 1024**2,
+            precision='bf16' if DTYPE == torch.bfloat16 else 'fp16', requested_precision=OPTIONS.get('precision', 'auto'),
+            attention=OPTIONS.get('attention', 'sdpa'), use_cache=OPTIONS.get('use_cache', True), max_tokens=max_tokens,
+            software={'torch':str(torch.__version__), 'transformers':transformers.__version__, 'model_revision':revision},
+            audio_seconds=seconds, inference_seconds=elapsed, generated_tokens=generated,
+            hit_token_limit=generated is None or generated >= max_tokens,
+            peak_reserved_gib=torch.cuda.max_memory_reserved() / 1024**3,
+            peak_allocated_gib=torch.cuda.max_memory_allocated() / 1024**3, cold_start=GENERATION_COUNT == 0)
+    except (OSError, ValueError, wave.Error):
+        # Non-WAV clients can still transcribe; unavailable telemetry isn't a failure.
+        pass
+    GENERATION_COUNT += 1
+    return payload
 
 
 @app.post("/v1/audio/transcriptions")
