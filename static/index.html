@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f5f7f2" />
     <title>cosMOSS</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=transcript-formats-20261019" />
+    <link rel="stylesheet" href="/styles.css?v=note-selection-20261023" />
   </head>
   <body>
     <header class="app-topbar">        <a class="brand" id="go-home" href="/" aria-label="cosMOSS 홈으로 이동">
@@ -51,7 +51,7 @@
           </button>
         </div>
       </aside>
-      <div class="stage-splitter" data-splitter="0" role="separator" tabindex="0" aria-label="1단계와 2단계 너비 조절" aria-orientation="vertical" aria-controls="stage-device stage-review" aria-describedby="splitter-help" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="드래그하여 너비 조절 · 두 번 클릭하면 세 영역을 같게"><span aria-hidden="true"></span></div>
+      <div class="stage-divider" role="separator" aria-label="1단계와 2단계 구분" aria-orientation="vertical"></div>
       <main class="main review-panel" id="stage-review" aria-labelledby="review-title">
         <header class="stage-heading"><div><p class="eyebrow">STEP 02 · REVIEW</p><h2 id="review-title">노트 정리</h2></div><p class="stage-path-note" id="review-path-note">기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.</p></header>
         <section class="note-library" aria-label="내 노트">
@@ -61,28 +61,41 @@
         </label>
 
         <div class="side-label"><span>내 노트</span><span id="note-count">0</span></div>
+        <p class="note-selection-hint" id="note-selection-hint">노트를 선택하면 3단계에서 요약할 수 있어요.</p>
         <div class="note-list" id="note-list"></div>
         <p class="text-library-status hidden" id="text-library-status" role="status"></p>
 
         </section>
       </main>
-      <div class="stage-splitter" data-splitter="1" role="separator" tabindex="0" aria-label="2단계와 3단계 너비 조절" aria-orientation="vertical" aria-controls="stage-review stage-summary" aria-describedby="splitter-help" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="드래그하여 너비 조절 · 두 번 클릭하면 세 영역을 같게"><span aria-hidden="true"></span></div>
+      <div class="stage-divider" role="separator" aria-label="2단계와 3단계 구분" aria-orientation="vertical"></div>
       <aside class="summary-panel" id="stage-summary" aria-labelledby="summary-title">
-        <header class="stage-heading"><div><p class="eyebrow">STEP 03 · SUMMARIZE</p><h2 id="summary-title">AI 요약</h2></div><span class="stage-sparkle" aria-hidden="true">✳</span><p class="stage-path-note" id="summary-path-note">기본 경로에 AI 요약 md파일을 저장합니다.</p></header>
+        <header class="stage-heading"><div><p class="eyebrow">STEP 03 · SUMMARIZE</p><h2 id="summary-title">AI 요약</h2></div><span class="stage-sparkle" aria-hidden="true">✳</span><p class="stage-path-note" id="summary-path-note">기본 경로에 보정 TXT·요약 MD를 저장합니다.</p></header>
         <div class="summary-scroll">
           <label class="field"><span>함께 정리할 AI <button class="inline-link" id="refresh-summary-providers" type="button">연결 확인</button></span><select id="summary-provider" aria-describedby="summary-provider-status"><option value="codex">Codex</option><option value="claude">Claude</option></select></label>
           <p class="summary-provider-status" id="summary-provider-status" role="status">CLI 연결을 확인하고 있습니다…</p>
           <div class="cli-setup hidden" id="cli-setup"><p id="cli-setup-copy"></p><code id="cli-setup-command"></code><a id="cli-docs" href="https://developers.openai.com/codex/cli/" target="_blank" rel="noopener">설정 방법 보기 ↗</a></div>
-          <label class="field summary-prompt-field"><span>어떻게 정리할까요?</span><textarea id="summary-prompt" rows="6" maxlength="20000" placeholder="핵심 내용과 결정 사항, 담당자별 할 일을 정리해 줘."></textarea></label>
+          <div class="summary-default-option"><label><input id="use-default-summary-prompt" type="checkbox" checked /><span>기본 프롬프트</span></label><button class="summary-prompt-help" id="show-default-summary-prompt" type="button" aria-label="기본 프롬프트 내용 보기" aria-haspopup="dialog" aria-controls="default-summary-prompt-dialog">?</button></div>
+          <label class="field summary-prompt-field"><span><span id="summary-prompt-label">추가 요청</span> <small id="summary-prompt-optional">선택</small></span><textarea id="summary-prompt" rows="6" maxlength="20000" placeholder="추가로 요청할 내용을 적어 주세요."></textarea></label>
           <div class="summary-source" id="summary-source">먼저 2단계에서 노트를 선택하세요.</div>
-          <button class="primary-action summary-run" id="run-summary" type="button" disabled><span>Markdown으로 요약하기</span><span aria-hidden="true">→</span></button>
-          <button class="ghost-button summary-cancel hidden" id="cancel-summary" type="button">요약 취소</button>
+          <button class="primary-action summary-run" id="run-summary" type="button" disabled><span>전사문 보정·요약하기</span><span aria-hidden="true">→</span></button>
+          <button class="ghost-button summary-cancel hidden" id="cancel-summary" type="button">보정·요약 취소</button>
           <p class="summary-data-note">실행하면 전사 파일을 선택한 AI 서비스에 전달합니다.<br>이 Mac에 로그인된 CLI 계정을 사용합니다.</p>
           <div class="summary-status hidden" id="summary-status" role="status" aria-live="polite"></div>
-          <div class="summary-result-wrap hidden" id="summary-result-wrap"><div class="summary-result-head"><span id="summary-result-label">요약</span><button class="inline-link" id="copy-summary" type="button">복사</button></div><button class="summary-saved-file hidden" id="reveal-summary" type="button" title="파인더에서 보기"><span></span><span aria-hidden="true">↗</span></button><p class="summary-stale hidden" id="summary-stale">노트가 수정되었습니다. 최신 파일로 다시 요약해 주세요.</p><div class="summary-result" id="summary-result"></div></div>
+          <div class="summary-result-wrap hidden" id="summary-result-wrap">
+            <div class="summary-result-head"><span id="summary-result-label">보정·요약 결과</span><button class="inline-link" id="copy-summary" type="button">요약 복사</button></div>
+            <button class="summary-saved-file hidden" id="reveal-corrected" type="button" title="파인더에서 보기"><span></span><span aria-hidden="true">↗</span></button>
+            <button class="summary-saved-file hidden" id="reveal-summary" type="button" title="파인더에서 보기"><span></span><span aria-hidden="true">↗</span></button>
+            <p class="summary-stale hidden" id="summary-stale">노트가 수정되었습니다. 최신 파일로 다시 보정·요약해 주세요.</p>
+            <details class="corrected-transcript-preview hidden" id="corrected-transcript-preview"><summary>보정 전사문 확인</summary><button class="inline-link" id="copy-corrected" type="button">보정 전사문 복사</button><pre class="summary-result" id="corrected-transcript-result"></pre></details>
+            <div class="summary-result" id="summary-result"></div>
+          </div>
         </div>
       </aside>
     </div>
+    <dialog class="summary-prompt-dialog" id="default-summary-prompt-dialog" aria-labelledby="default-summary-prompt-title">
+      <div class="dialog-head"><h2 id="default-summary-prompt-title" tabindex="-1">기본 프롬프트</h2><button class="dialog-close" id="close-default-summary-prompt" type="button" aria-label="기본 프롬프트 닫기">×</button></div>
+      <div class="summary-default-content" id="default-summary-prompt-content">불러오는 중…</div>
+    </dialog>
     <dialog class="note-dialog review-panel" id="note-dialog" aria-label="노트 보기" tabindex="-1">
         <section class="workspace hidden" id="workspace">
           <header class="workspace-header">
@@ -150,13 +163,13 @@
 
             <div class="chunk-notice hidden" id="chunk-notice"></div>
             <div class="speech-result hidden" id="speech-result" role="status"></div>
+            <details id="auxiliary-transcript" class="speech-comparison hidden"><summary>Qwen 보조 대본 비교</summary><p>약20분씩 별도로 전사한 대본입니다. 본문은 MOSS 결과를 유지하며, 이 대본에는 단어별 시간과 화자 정보가 없습니다.</p><a id="download-auxiliary-transcript" class="inline-link" download>보조 대본 TXT 다운로드</a><pre id="auxiliary-transcript-text" style="white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details>
             <div class="speaker-panel" id="speaker-panel"></div>
             <div class="segments" id="segments"></div>
             <p class="transcript-empty hidden" id="transcript-empty" role="status"></p>
           </div>
         </section>
     </dialog>
-    <p class="sr-only" id="splitter-help">좌우 방향키로 너비를 조절합니다. Shift를 누르면 크게 조절합니다. Home과 End는 조절 한계로 이동하고, Enter 또는 경계선 두 번 클릭은 세 영역을 같은 너비로 되돌립니다.</p>
 
     <dialog class="diarization-dialog" id="diarization-dialog" aria-labelledby="diarization-title">
       <div class="dialog-head"><div><p class="eyebrow">화자 분리 모델</p><h2 id="diarization-title" tabindex="-1">화자 다시 분리하기</h2></div><button class="dialog-close" id="close-diarization" type="button" aria-label="화자 재분리 닫기">×</button></div>
@@ -242,14 +255,13 @@
               <label class="field"><span>저장 형식</span><select id="output-format" name="output_format"><option value="txt">TXT · 텍스트</option><option value="srt">SRT · 자막</option><option value="vtt">VTT · 웹 자막</option></select></label>
             </div>
             <section id="speech-options" class="speech-options hidden" aria-label="전사 방식">
-              <div class="speech-chosen-model"><span>선택한 전사 모델</span><strong id="speech-chosen-model"></strong><small>모델은 왼쪽 처리 장치에서 변경합니다.</small></div>
-              <input type="hidden" id="speech-pipeline" name="speech_pipeline" value="moss-original" disabled />
+              <label class="field speech-model-field"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="speech-pipeline" name="speech_pipeline" aria-describedby="speech-description"><option value="moss-sglang">MOSS · SGLang Omni · 전체 (추천)</option><option value="qwen-transformers">Qwen · Transformers · 3분 + 정렬</option><option value="moss-qwen-sequential">MOSS + Qwen · 순차 실행</option></select></label>
               <p id="speech-description" class="speech-description"></p>
+              <div id="upload-model-setup" class="speech-setup hidden" role="status"><span id="upload-model-status"></span><button type="button" class="inline-link" id="prepare-upload-model">모델 다운로드</button></div>
               <div class="speech-batch-controls" id="speech-batch-controls">
                 <label class="field"><span>동시 청크 수</span><select id="speech-batch" name="speech_batch"><option value="0">자동 · VRAM 70% 이내</option><option value="1">1개</option><option value="4">4개</option><option value="8">8개</option><option value="16">16개</option><option value="24">24개</option></select></label>
                 <small id="speech-batch-plan" class="speech-batch-plan">파일과 GPU를 선택해 주세요.</small>
               </div>
-              <details class="speech-comparison"><summary>방식별 실측과 선택 기준</summary><div id="speech-comparison-content"></div><p>같은 65분 37초 녹음 · H200 한 장 · 모델 준비·전송 제외. 정확도 순위는 확정하지 않았습니다. 전문 용어와 짧은 발화는 원음을 확인하세요.</p></details>
             </section>
             <div class="field-row upload-chunk-row">
               <div class="field"><label class="upload-chunk-label" for="upload-chunk-count">청크 분할 개수 <small>개</small></label><div class="upload-chunk-stepper"><input id="upload-chunk-count" name="chunk_count" type="number" min="1" max="1000" step="1" placeholder="파일 선택 후 계산" required aria-describedby="upload-chunk-default" /><div class="upload-chunk-buttons"><button id="increase-upload-chunks" type="button" aria-label="청크 분할 개수 늘리기"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 10 4-4 4 4"/></svg></button><button id="decrease-upload-chunks" type="button" aria-label="청크 분할 개수 줄이기"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div></div></div>
@@ -262,7 +274,7 @@
             <label id="speech-memory-consent" class="speech-memory-consent hidden"><input type="checkbox" name="allow_memory_risk" value="true" id="allow-speech-memory-risk"><span>예상 Peak Memory가 전체 VRAM의 70%를 넘는 것을 확인했습니다.</span></label>
             <div class="field-row">
               <label class="field"><span>주 언어</span><select name="language"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh">中文</option><option value="">자동 감지</option></select></label>
-              <label class="field"><span>중요 단어 <small>선택</small></span><input name="hotwords" placeholder="프로젝트명, 이름" /></label>
+              <label class="field"><span>중요 단어 <small>선택</small></span><input name="hotwords" placeholder="예: 김서현, 피그마, 코호트 분석" aria-describedby="hotwords-help" /><small class="field-help" id="hotwords-help">헷갈리기 쉬운 이름·전문용어의 표기 힌트입니다. 쉼표(,)로 구분해 주세요.</small></label>
             </div>
           </div>
           <button class="submit-upload" type="submit" disabled>전사 시작하기 <span>→</span></button>
@@ -475,10 +487,17 @@
       </div>
     </dialog>
 
+    <div class="note-context-menu hidden" id="note-context-menu" role="menu" aria-label="노트 파일 관리">
+      <div class="note-context-title" id="note-context-title" aria-hidden="true"></div>
+      <button type="button" role="menuitem" data-convert-format="txt"><span class="context-format">TXT</span><span>TXT로 변환</span></button>
+      <button type="button" role="menuitem" data-convert-format="srt"><span class="context-format">SRT</span><span>SRT로 변환</span></button>
+      <button type="button" role="menuitem" data-convert-format="vtt"><span class="context-format">VTT</span><span>VTT로 변환</span></button>
+      <div class="note-context-separator" role="separator"></div>
+      <button class="danger" id="trash-note-file" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg><span>휴지통으로 이동</span></button>
+    </div>
     <div class="toast" id="toast" role="status"></div>
-    <script src="/panes.js?v=split-panes-20261019" defer></script>
     <script src="/selects.js?v=custom-selects-20261019" defer></script>
-    <script src="/app.js?v=speaker-playback-012" defer></script>
+    <script src="/app.js?v=note-selection-20261023" defer></script>
     <script src="/speech.js?v=speech-pipelines-2" defer></script>
     <script src="/voice-review.js?v=voice-review-2" defer></script>
     <script src="/diarization.js?v=diarization-2" defer></script>

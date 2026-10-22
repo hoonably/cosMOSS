@@ -210,7 +210,7 @@ class SubtitleAPITests(unittest.IsolatedAsyncioTestCase):
     async def summarize(self,note):
         binary = self.root/'fake-codex'
         capture = self.root/'stdin.txt'
-        binary.write_text('#!'+sys.executable+'\nimport sys,pathlib\n'+f'pathlib.Path({str(capture)!r}).write_text(sys.stdin.read())\n'+"pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('# 요약\\n- 핵심 내용')\n")
+        binary.write_text('#!'+sys.executable+'\nimport sys,pathlib,json\n'+f'pathlib.Path({str(capture)!r}).write_text(sys.stdin.read())\n'+"pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(json.dumps({'corrected_transcript':'보정된 전사문','summary_markdown':'# 요약\\n- 핵심 내용'}))\n")
         binary.chmod(0o755)
         with patch.object(self.main,'provider_status',new=AsyncMock(return_value={'ready':True})),patch('src.summaries.executable',return_value=str(binary)):
             response = await self.client.post('/api/notes/'+note['id']+'/summary',json={'provider':'codex','directory':str(self.folder)})

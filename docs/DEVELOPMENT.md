@@ -6,11 +6,23 @@
 
 `speech_pipeline.py` defines the ordered presets and conservative memory plans;
 `speech_jobs.py` owns a finite SSH request and numeric-only performance history.
-`speech_bootstrap.py` installs the versioned server runtime, serializes setup,
-acquires the selected GPU UUID lock, monitors the lease and samples only its
-child's process VRAM. `speech_worker.py` runs native-precision MOSS or Qwen ASR,
-Qwen forced alignment where needed, and one continuous Nemotron speaker cache.
-The classic single-chunk server and Mac MLX installation remain independent.
+`speech_engine_bootstrap.py` installs separate pinned SGLang, Qwen SDK and
+Nemotron environments, acquires one GPU UUID lock and runs stages sequentially.
+`speech_engine_worker.py` exits after every model; the bootstrap kills and verifies
+the entire process group before acquiring CUDA for the next stage. The stage's
+Linux parent-death handler also kills its SGLang descendants on supervisor loss.
+The lease remains active through upload, loading, inference and collection.
+`speech_engines.py` pins checkpoint revisions and package versions. Its isolated
+CUDA13 compiler overlay leaves system CUDA and existing runtimes untouched.
+
+The server menu exposes MOSS SGLang full context (default), Qwen Transformers SDK
+3m + forced alignment, and MOSS full → unload → Qwen SDK20m auxiliary → unload →
+Nemotron. Alignment runs after Qwen exit, with a PyTorch allocator budget below
+its observed process peak and adaptive batches. Raw Qwen token IDs and natural
+EOS are checked before accepting outputs. Auxiliary text is private in
+`speech-result.json` and fetched only through the per-note auxiliary endpoint;
+it never overwrites the MOSS body. Mac MLX remains independent. The old
+`speech_bootstrap.py` / `speech_worker.py` are retained for saved legacy jobs.
 
 The app takes a per-note snapshot of the preset and requested batch. Automatic
 batch plans budget for quiet-boundary cuts up to five seconds early, avoiding an
@@ -89,7 +101,6 @@ run `./scripts/run-app.sh` instead of opening the Mac bundle.
 .venv/bin/python -m unittest discover -s tests -v
 node --check static/app.js
 node --check static/selects.js
-node --check static/panes.js
 ```
 
 Build the downloadable app, DMG installer and updater ZIP with
@@ -240,6 +251,10 @@ deduplicated. Writes require the viewed file hash, retain encoding/newlines/mode
 and use atomic replacement. File-backed summaries read the actual source bytes
 without invoking the audio-note TXT serializer. `test_text_library.py` and
 `library_ui_smoke.py` cover indexing, edits, conflict protection and summary flow.
+The review list selects notes without opening the editor; its separate edit
+button opens the note dialog. `note_selection_ui_smoke.py` checks direct summary
+handoff, per-note drafts, explicit editing, concurrent selections, load errors,
+and focus retention during list refreshes in WebKit and Chromium.
 
 `scripts/build-mac-app.sh` builds a development launcher referencing its checkout
 via `CosMOSSProjectRoot` in Info.plist. `scripts/build-mac-release.sh` builds a
@@ -371,13 +386,20 @@ The application-level `MOSS_AUTH_*` credentials remain separate.
 ## Validation
 
 The three-column UI keeps device selection, note review, and summaries visible.
-`static/panes.js` gives the stages equal initial widths and two draggable
-separators. It saves proportions in localStorage, constrains minimum usable
-widths on window resizing, and refits transcript textareas after a split changes.
-Double-click or Enter restores equal columns. Arrow keys (Shift for larger
-steps), Home/End, pointer capture and Escape cancellation are supported. Narrow
-browser layouts hide the splitters. `tests/panes_ui_smoke.py` exercises dragging,
-keyboard controls, reflow, persistence, limits and responsive transitions.
+The desktop stages have equal widths and two fixed one-pixel separators. Earlier
+saved width preferences are ignored; there are no drag or keyboard resize controls.
+Narrow browser layouts hide the vertical separators. `tests/panes_ui_smoke.py`
+checks fixed widths, ignored legacy preferences and responsive transitions.
+The note list has an app-styled context menu for TXT/SRT/VTT conversion and
+recoverable file deletion. `src/note_files.py` validates the indexed source and
+an exact string file-version token before acting. macOS Foundation moves the
+selected file to Trash via JXA without controlling Finder; managed audio/history
+are retained for restoration. Conversion writes a new file using exclusive links,
+keeps cue times and speakers, and exports ranged TXT timestamps for round trips.
+Plain TXT without end times is rejected instead of inventing timings. Reused
+export paths attach to the record matching the current file hash, and missing
+exports are never recreated by an editor save. `test_note_files.py` and
+`note_context_ui_smoke.py` cover these behaviors and menu interaction.
 `static/selects.js` renders every dropdown as an app-styled combobox and listbox.
 Hidden native selects retain form values and existing change handlers. The
 component synchronizes dynamic options, direct value assignments and disabled
@@ -406,10 +428,22 @@ scrolling, reduced motion, merge resets and source preservation.
 
 `src/summaries.py` calls authenticated local Codex or Claude CLIs using argv and
 stdin, without a shell. The source is a fixed snapshot of the edited TXT. Codex
-runs read-only with user config, hooks, and shell tools disabled. Claude runs in
-print mode with tools and MCP disabled and configuration sources empty. Both use
+runs read-only with user config, hooks, and shell tools disabled, and live web
+search enabled for official terminology checks. Claude runs in print mode with
+only WebSearch/WebFetch allowed, MCP disabled and configuration sources empty. Both use
 temporary working directories and disable session persistence. The final result,
 source digest, prompt, and status are saved in `data/summaries/<note-id>.json`.
+Both providers return a schema-constrained object containing the complete corrected
+transcript and Markdown summary. The app validates both fields and publishes
+`<stem>_보정.txt` and `<stem>_요약.md` without replacing any existing file; collisions
+advance both suffixes together, and a failed second publication rolls back the first.
+Original files stay unchanged. Legacy saved summaries remain readable and custom
+prompts are preserved when upgrading an unchanged default. A checked-by-default
+checkbox includes the default request; its help dialog reads the shared default
+without requiring a selected note. The editor holds only additional instructions.
+Disabling the checkbox sends only the edited user request, and an empty custom-only
+request is rejected. The textarea grows with its content and window width;
+scrolling belongs to STEP 03.
 The API protects file-writing and CLI routes with the loopback and same-site
 checks used for device management. A run has a 15-minute timeout; cancellation
 and shutdown terminate only the process group started for that run. Notes cannot
@@ -430,6 +464,7 @@ transcripts to a service:
 ```bash
 uv run --no-project --with playwright==1.57.0 python tests/ui_smoke.py http://127.0.0.1:8000 /tmp/devices.png webkit
 uv run --no-project --with playwright==1.57.0 python tests/workflow_ui_smoke.py http://127.0.0.1:8000 /tmp/workflow.png webkit
+uv run --no-project --with playwright==1.57.0 python tests/note_selection_ui_smoke.py http://127.0.0.1:8000 webkit /tmp/note-selection.png
 uv run --no-project --with playwright==1.57.0 python tests/select_ui_smoke.py http://127.0.0.1:8000 /tmp/selects.png webkit
 uv run --no-project --with playwright==1.57.0 python tests/panes_ui_smoke.py http://127.0.0.1:8000 /tmp/panes.png webkit
 ```

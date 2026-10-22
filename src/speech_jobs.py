@@ -10,6 +10,7 @@ import sqlite3
 import time
 
 from src.speech_pipeline import FAST_PIPELINES, RUNTIME_VERSION
+from src.speech_engines import ENGINE_PIPELINES, runtime_for
 from src.ssh_devices import discover_hosts, ssh_arguments
 
 
@@ -28,7 +29,7 @@ class SpeechJobs:
     def record(self, result):
         # Only numeric/runtime identity metadata; never persist recordings,
         # transcripts, filenames, SSH hosts, note IDs or GPU UUIDs here.
-        if result.get('runtime') != RUNTIME_VERSION or not result.get('segments') or not result.get('peak_process_mib'):
+        if result.get('runtime') != runtime_for(result.get('pipeline')) or not result.get('segments') or not result.get('peak_process_mib'):
             return
         positive = ('audio_seconds', 'inference_seconds', 'capacity_gib', 'peak_process_mib')
         if (result.get('pipeline') not in FAST_PIPELINES or not isinstance(result.get('batch'), int)
@@ -75,8 +76,9 @@ class SpeechJobs:
         request = {'model_key': pipeline, 'action': action, **options, 'audio_bytes': size,
                    **{key: (source / name).read_text() for key, name in
                       [('worker_source', 'speech_worker.py'), ('catalog_source', 'speech_pipeline.py'),
+                       ('engine_source', 'speech_engines.py'), ('engine_worker_source', 'speech_engine_worker.py'),
                        ('lifecycle_source', 'process_lifecycle.py'), ('runtime_source', 'runtime_environment.py')]}}
-        bootstrap = (source / 'speech_bootstrap.py').read_text()
+        bootstrap = (source / ('speech_engine_bootstrap.py' if pipeline in ENGINE_PIPELINES else 'speech_bootstrap.py')).read_text()
         process = await asyncio.create_subprocess_exec(*ssh_arguments(host), '-o', 'ClearAllForwardings=yes',
             '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=3', '--', host,
             'python3 -u -c ' + shlex.quote(bootstrap), stdin=asyncio.subprocess.PIPE,

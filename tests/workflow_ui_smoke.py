@@ -8,6 +8,9 @@ from playwright.async_api import async_playwright
 
 from ui_helpers import choose_option
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.summaries import DEFAULT_QUERY
+
 
 async def main():
     base = sys.argv[1]
@@ -24,7 +27,7 @@ async def main():
         ], 'speaker_names': {}, 'raw_segments': [], 'text_path': None, 'text_hash': None,
     }
     note['raw_segments'] = copy.deepcopy(note['segments'])
-    summary = {'phase': 'idle', 'default_prompt': '한국어로 핵심 내용, 결정 사항, 담당자별 할 일을 정리해 주세요. 중요한 내용에는 타임스탬프를 붙여 주세요.'}
+    summary = {'phase': 'idle', 'default_prompt': DEFAULT_QUERY}
     calls = []
     polls = 0
     errors = []
@@ -38,6 +41,7 @@ async def main():
             {'id':'codex','name':'Codex','installed':True,'ready':True,'message':'로그인됨'},
             {'id':'claude','name':'Claude','installed':False,'ready':False,'message':'CLI를 설치해 주세요.','install':'npm install -g @anthropic-ai/claude-code','login':'claude auth login','url':'https://code.claude.com/docs/en/quickstart'},
         ]))
+        await page.route('**/api/summary/default-prompt', lambda r:r.fulfill(json={'default_prompt':DEFAULT_QUERY}))
         await page.route('**/api/devices', lambda r: r.fulfill(json=[{'id':'local','name':'이 Mac','kind':'local','backend':'mlx','model_key':'mlx-8bit','model':'moss-mtd','remote_port':8001,'setup':{'phase':'ready'}}]))
         await page.route('**/api/local-model', lambda r: r.fulfill(json={'phase':'ready','model_key':'mlx-8bit','cache_dir':'/Users/tester/.cache/huggingface/hub'}))
         await page.route('**/api/notes', lambda r: r.fulfill(json=[note]))
@@ -59,14 +63,17 @@ async def main():
                 return await route.fulfill(json=summary)
             if action == 'summary':
                 if method == 'POST':
-                    summary.update(phase='running', provider=route.request.post_data_json['provider'], prompt=route.request.post_data_json['prompt'])
+                    body=route.request.post_data_json
+                    summary.update(phase='running', provider=body['provider'], additional_prompt=body['prompt'],
+                        use_default_prompt=body['use_default_prompt'],
+                        prompt='\n\n'.join(p for p in (DEFAULT_QUERY if body['use_default_prompt'] else '',body['prompt']) if p))
                     note['text_path'] = '/Users/tester/Downloads/cosMOSS-회의-eeeeeeee.txt'
                     polls = 0
                     return await route.fulfill(status=202, json=summary)
                 if summary['phase'] == 'running':
                     polls += 1
                     if polls > 2:
-                        summary.update(phase='done', result={'markdown_path':'/Users/tester/Downloads/cosMOSS-회의-eeeeeeee-요약.md','text':'# 핵심 내용\n녹음에서 노트 확인, 화자 지정, AI 요약으로 이어지는 흐름을 정리했습니다.\n\n결정 사항\n• 금요일까지 화자 설정 기능 완성 [01:02]\n• 다음 주 실제 사용 후 개선\n\n할 일\n• 지민: 화자 설정 마무리 · 금요일\n• 수빈: 요약 결과 확인 · 기한 미정', 'provider':'codex','source_hash':note['text_hash'],'completed_at':'2026-10-19T03:00:00Z'})
+                        summary.update(phase='done', result={'markdown_path':'/Users/tester/Downloads/cosMOSS-회의-eeeeeeee_요약.md','corrected_path':'/Users/tester/Downloads/cosMOSS-회의-eeeeeeee_보정.txt','corrected_text':'[01:02] 지민: 금요일까지 화자 설정을 마무리하겠습니다.','text':'# 핵심 내용\n녹음에서 노트 확인, 화자 지정, AI 요약으로 이어지는 흐름을 정리했습니다.\n\n결정 사항\n• 금요일까지 화자 설정 기능 완성 [01:02]\n• 다음 주 실제 사용 후 개선\n\n할 일\n• 지민: 화자 설정 마무리 · 금요일\n• 수빈: 요약 결과 확인', 'provider':'codex','source_hash':note['text_hash'],'completed_at':'2026-10-19T03:00:00Z'})
                 return await route.fulfill(json=summary)
             if method == 'PATCH':
                 note.update(route.request.post_data_json)
@@ -80,12 +87,27 @@ async def main():
             'created_at': note['created_at'], 'updated_at': note['created_at'],
         }]))
         await page.goto(base)
+        assert await page.locator('#use-default-summary-prompt').is_checked()
+        assert await page.locator('#summary-prompt').input_value() == ''
+        await page.locator('#show-default-summary-prompt').click()
+        await page.wait_for_function('document.querySelector("#default-summary-prompt-content").textContent.includes("{원본명}_보정.txt")')
+        assert await page.locator('#default-summary-prompt-content').inner_text() == DEFAULT_QUERY
+        if output:
+            await page.locator('#default-summary-prompt-dialog').screenshot(path=str(output.with_name(output.stem+'-default-prompt.png')))
+        await page.keyboard.press('Escape')
+        assert await page.locator('#default-summary-prompt-dialog').is_hidden()
         await page.locator('.note-item').wait_for()
         assert await page.locator('.note-item').count() == 1, 'Recording and result file appeared twice'
         assert await page.locator('.note-status').inner_text() == 'TXT'
         assert len(calls) == 1 and calls[0][0] == 'text-file', 'Legacy result was not automatically linked'
         calls.clear()
-        await page.locator('.note-item').click()
+        await page.locator('.note-select').click()
+        await page.wait_for_function('state.current && !state.openingNote')
+        assert await page.locator('#note-dialog').is_hidden(), 'Selecting a note opened the editor'
+        assert await page.locator('.note-select').get_attribute('aria-pressed') == 'true'
+        assert await page.locator('#run-summary').is_enabled()
+        assert not calls, 'Selection saved or summarized without an explicit action'
+        await page.locator('.note-edit').click()
         try:
             await page.locator('#editor').wait_for(state='visible', timeout=10000)
         except Exception as error:
@@ -129,23 +151,61 @@ async def main():
         assert await page.locator('#run-summary').is_disabled()
         assert 'claude auth login' in await page.locator('#cli-setup-command').inner_text()
         await choose_option(page, '#summary-provider', 'codex')
-        await page.locator('#summary-prompt').fill('한국어로 핵심 내용, 결정 사항, 담당자별 할 일을 정리해 주세요. 중요한 내용에는 타임스탬프를 붙여 주세요.')
+        prompt = page.locator('#summary-prompt')
+        assert await prompt.input_value() == ''
+        assert await page.locator('#use-default-summary-prompt').is_checked()
+        async def fits():
+            await page.wait_for_function('document.querySelector("#summary-prompt").scrollHeight <= document.querySelector("#summary-prompt").clientHeight + 1')
+            assert await prompt.evaluate('(e)=>getComputedStyle(e).overflowY') == 'hidden'
+        await fits()
+        initial_height = await prompt.evaluate('(e)=>e.clientHeight')
+        await prompt.fill(DEFAULT_QUERY + '\n추가 요청을 입력하고 모든 내용을 확인합니다.' * 25)
+        await fits()
+        assert await prompt.evaluate('(e)=>e.clientHeight') > initial_height
+        assert await page.locator('.summary-scroll').evaluate('(e)=>e.scrollHeight>e.clientHeight')
+        await prompt.fill('발표자별로 간결하게 정리해 주세요.')
+        await fits()
+        assert abs(await prompt.evaluate('(e)=>e.clientHeight') - initial_height) <= 2
+        await page.set_viewport_size({'width':1100,'height':950})
+        await fits()
+        await prompt.fill(DEFAULT_QUERY)
+        await fits()
+        assert await prompt.evaluate('(e)=>e.clientHeight') > initial_height
+        await page.set_viewport_size({'width':1480,'height':950})
+        await fits()
+        await prompt.fill('발표자별로 간결하게 정리해 주세요.')
+        await page.locator('#use-default-summary-prompt').uncheck()
+        assert await prompt.input_value() == '발표자별로 간결하게 정리해 주세요.'
+        assert await page.locator('#summary-prompt-label').inner_text() == '요청 내용'
+        await page.locator('.summary-scroll').evaluate('(e)=>e.scrollTop=0')
+        if output:
+            await page.screenshot(path=str(output.with_name(output.stem + '-prompt.png')), animations='disabled')
+        assert '전사문 보정·요약하기' in await page.locator('#run-summary').inner_text()
         await page.locator('#run-summary').click()
+        assert calls[-1][1]['use_default_prompt'] is False
+        assert calls[-1][1]['prompt'] == '발표자별로 간결하게 정리해 주세요.'
         await page.locator('#cancel-summary').wait_for(state='visible')
         await page.locator('#cancel-summary').click()
         await page.locator('#summary-status').filter(has_text='취소했습니다').wait_for()
+        await page.locator('#use-default-summary-prompt').check()
         await page.locator('#run-summary').click()
+        assert calls[-1][1]['use_default_prompt'] is True
+        assert calls[-1][1]['prompt'] == '발표자별로 간결하게 정리해 주세요.'
         await page.locator('#summary-result-wrap').wait_for(state='visible')
         assert '결정 사항' in await page.locator('#summary-result').inner_text()
         await page.locator('#reveal-summary').click()
-        await page.wait_for_function('window.__revealed?.endsWith("-요약.md")')
+        await page.wait_for_function('window.__revealed?.endsWith("_요약.md")')
+        await page.locator('#reveal-corrected').click()
+        await page.wait_for_function('window.__revealed?.endsWith("_보정.txt")')
+        await page.locator('#corrected-transcript-preview summary').click()
+        assert '금요일까지' in await page.locator('#corrected-transcript-result').inner_text()
         assert calls[-1][1]['directory'] == '/Users/tester/Downloads'
         assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.'
-        assert await page.locator('#summary-path-note').text_content() == '기본 경로에 AI 요약 md파일을 저장합니다.'
+        assert await page.locator('#summary-path-note').text_content() == '기본 경로에 보정 TXT·요약 MD를 저장합니다.'
         if output:
             await page.locator('#toast').evaluate("el => el.className = 'toast'")
             await page.screenshot(path=str(output), animations='disabled')
-        await page.locator('.note-item').click()
+        await page.locator('.note-edit').click()
         await page.locator('.segment-text').first.fill('본문을 수정했습니다.')
         await page.wait_for_function('document.querySelector("#summary-stale").classList.contains("hidden") === false')
         await page.locator('#close-note').click()

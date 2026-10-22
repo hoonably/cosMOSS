@@ -4,7 +4,7 @@ import re
 import platform
 import subprocess
 from functools import lru_cache
-from src.speech_pipeline import PIPELINES
+from src.speech_pipeline import PIPELINES, DEFAULT_PIPELINE
 
 ORIGINAL = 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
 MLX_8BIT = 'vanch007/mlx-MOSS-Transcribe-Diarize-8bit'
@@ -52,6 +52,7 @@ def recommendation(backend, memory_gib=None):
         options.update(prefill_step_size=256 if low else 512)
     else:
         key = 'cuda-original'
+        options['speech_pipeline'] = DEFAULT_PIPELINE
     options['chunk_minutes'] = default_chunk_minutes(backend, memory_gib)
     return dict(model_key=key, options=options)
 

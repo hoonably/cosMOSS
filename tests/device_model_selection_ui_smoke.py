@@ -44,6 +44,7 @@ async def main():
         await page.route('**/api/devices/new-server/worker',lambda r:r.fulfill(json={'phase':'installed' if prepared else 'unknown'}))
         await page.route('**/api/devices/new-server/status',lambda r:r.fulfill(json={'ok':prepared,'setup':{'phase':'installed' if prepared else 'idle'}}))
         await page.route('**/api/devices/new-server/speech-setup',install)
+        await page.route('**/api/devices/new-server/speech-setup?*',lambda r:r.fulfill(json={'phase':'installed'}))
         await page.route('**/api/local-model',lambda r:r.fulfill(json={'phase':'idle'}))
         await page.route('**/api/ssh/hosts',lambda r:r.fulfill(json={'hosts':['test-h200']}))
         await page.route('**/api/setup',setup)
@@ -53,6 +54,7 @@ async def main():
             'memory_total_mib':143771,'memory_free_mib':143000,'memory_used_mib':0,'utilization_percent':0,
             'processes':[],'process_info_known':True,'idle_candidate':True}], 'checked_at':datetime.now(timezone.utc).isoformat()}))
         await page.goto(base)
+        await page.wait_for_function('state.catalog?.models?.length > 0')
         local=page.locator('[data-device-id="local"]')
         assert await local.locator('[data-device-model]').input_value()==''
         assert await local.locator('[data-device-action="download"]').is_disabled()
@@ -68,18 +70,19 @@ async def main():
         assert await server.locator('[data-device-model]').input_value()==''
         assert await server.locator('.use-device').is_disabled()
         assert not installs and not setup_posts
-        await choose_option(page,'[data-device-model="new-server"]','speech:qwen-batch')
+        await choose_option(page,'[data-device-model="new-server"]','speech:qwen-transformers')
         await server.locator('[data-device-action="download"]:not([disabled])').wait_for()
-        assert selections[-1]=={'pipeline':'qwen-batch'}
+        assert selections[-1]=={'pipeline':'qwen-transformers'}
         assert not installs and not setup_posts
         await page.screenshot(path=png.replace('.png','-selected.png'),full_page=True)
         await server.locator('[data-device-action="download"]').click()
         await server.locator('.device-card-state.ready').wait_for()
-        assert installs==[{'pipeline':'qwen-batch'}]
+        assert installs==[{'pipeline':'qwen-transformers'}]
         assert await server.locator('.use-device').is_enabled()
         await server.locator('.use-device').click()
         assert await page.locator('#speech-pipeline').is_hidden()
-        assert await page.locator('#speech-chosen-model').inner_text()=='Qwen3-ASR + Nemotron'
+        assert await page.locator('#speech-pipeline').input_value()=='qwen-transformers'
+        assert await page.locator('#speech-pipeline').is_enabled()
         assert await page.locator('#prepare-speech').count()==0
         for width in (1440,1100,390):
             await page.set_viewport_size({'width':width,'height':1000})

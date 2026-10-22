@@ -80,6 +80,8 @@ def write_text(note: dict, directory: str = "", *, reuse_existing: bool = False)
         target = Path(note["text_path"])
         if not target.is_absolute() or target.suffix.lower().lstrip(".") not in FORMATS or target.is_symlink():
             raise ValueError("전사 파일 경로를 확인해 주세요.")
+        if not target.exists():
+            raise TextConflict("전사 파일이 이동되었거나 삭제되었습니다. 목록에서 파일을 다시 선택해 주세요.")
         if target.exists():
             actual_hash = digest(target.read_bytes())
             if actual_hash not in {note.get("text_hash"), content_hash}:

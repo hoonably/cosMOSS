@@ -6,19 +6,25 @@ from __future__ import annotations
 
 import math
 
+try:
+    from src.speech_engines import ENGINE_PIPELINES, ENGINE_VERSION
+except ModuleNotFoundError:
+    from speech_engines import ENGINE_PIPELINES, ENGINE_VERSION
+
 PIPELINES = [
-    {'key': 'moss-batch', 'name': 'MOSS · 빠른 전사', 'badge': '기본 추천',
-     'description': '약 3분 청크를 동시에 전사하고 Nemotron으로 화자를 구분합니다.',
-     'reference': 'H200 · 65분 녹음 1분 17초 · Peak 17.9 GiB'},
-    {'key': 'qwen-batch', 'name': 'Qwen3-ASR · 속도 우선', 'badge': '더 빠르게',
-     'description': '한국어 전사 → 시간 정렬 → Nemotron. 더 많은 VRAM을 사용하며 단어 시간이 겹칠 수 있습니다.',
-     'reference': 'H200 · 65분 녹음 47초 · Peak 31.3 GiB'},
-    {'key': 'moss-original', 'name': 'MOSS · 긴 문맥', 'badge': '기존 방식',
-     'description': '긴 청크를 순서대로 전사합니다. 화자는 나중에 재분리할 수 있습니다.',
-     'reference': 'H200 · 65분 녹음 8분 19초 · Peak 14.8 GiB'},
+    {'key': 'moss-sglang', 'name': 'MOSS · SGLang Omni · 전체', 'badge': '추천 · 서버 기본값',
+     'description': '전체 녹음의 문맥을 유지해 전사한 뒤 Nemotron으로 화자를 구분합니다. 최대 90분.',
+     'reference': 'H200 · 65분37초 · MOSS 추론 약1분36초 · KV 제한 시 Peak 약24.4 GiB'},
+    {'key': 'qwen-transformers', 'name': 'Qwen · Transformers · 3분 + 정렬', 'badge': '빠른 전사',
+     'description': '공식 SDK로 약 3분씩 전사한 뒤 시간 정렬과 Nemotron을 순서대로 실행합니다.',
+     'reference': 'H200 · 65분37초 · 초기화 포함 1분12초 · Peak 약31.3 GiB'},
+    {'key': 'moss-qwen-sequential', 'name': 'MOSS + Qwen · 순차 실행', 'badge': '보조 대본 비교',
+     'description': 'MOSS 전체 전사 → 모델 해제 → Qwen 약20분 보조 전사 → Nemotron. 본문은 MOSS를 유지합니다.',
+     'reference': 'H200 · 65분37초 · 초기화 포함 7분29초 · Peak 약35.2 GiB'},
 ]
-DEFAULT_PIPELINE = 'moss-batch'
-FAST_PIPELINES = {'moss-batch', 'qwen-batch'}
+DEFAULT_PIPELINE = 'moss-sglang'
+# Old saved jobs remain executable; new selections expose only PIPELINES.
+FAST_PIPELINES = {'moss-batch', 'qwen-batch'} | ENGINE_PIPELINES
 BATCHES = (1, 4, 8, 16, 24)
 CHUNK_SECONDS = 180
 RUNTIME_VERSION = 'speech-torch280-transformers5202-moss-e3bdd93f-v1'
@@ -52,6 +58,8 @@ def estimate_pipeline(key, duration, gpu, batch=0, observations=()):
         raise ValueError('전사 방식과 음성 길이를 확인해 주세요.')
     if batch not in (0, *BATCHES):
         raise ValueError('동시 청크 수를 다시 선택해 주세요.')
+    if key in ENGINE_PIPELINES:
+        return estimate_engine(key, duration, gpu, batch, observations)
     # Quiet boundaries may be five seconds earlier than the nominal cut.
     # Budget for that extra tail chunk instead of accidentally turning a
     # measured single batch into two GPU waves (65:37 has 23 actual chunks).
@@ -100,6 +108,52 @@ def estimate_pipeline(key, duration, gpu, batch=0, observations=()):
             'exceeds_free': bool(free is not None and peak > free),
             'capacity_kind': 'VRAM', 'time_seconds': max(1, time_seconds) if time_seconds is not None else None,
             'time_source': source, 'memory_source': 'reference-plus-headroom'}
+
+
+def estimate_engine(key, duration, gpu, batch, observations):
+    if key != 'qwen-transformers' and duration > 5400:
+        raise ValueError('MOSS 전체 입력은 90분 이하 녹음을 지원합니다. 녹음을 나누어 주세요.')
+    capacity = (gpu or {}).get('memory_total_mib')
+    capacity = capacity / 1024 if capacity else None
+    free = (gpu or {}).get('memory_free_mib')
+    free = free / 1024 if free is not None else None
+    if key == 'qwen-transformers':
+        legacy = estimate_pipeline('qwen-batch',duration,gpu,batch)
+        actual,chunks,peak = legacy['batch'],legacy['chunk_count'],legacy['memory_expected_gib']
+        seconds = 180
+    else:
+        # MOSS keeps one context; a combined preset batches only the auxiliary
+        # Qwen SDK20m cuts. Neither control splits MOSS into independent contexts.
+        chunks = 1
+        actual = 1 if key=='moss-sglang' else min(4,batch or 4,math.ceil(duration/1195))
+        peak = round((24.42 if key=='moss-sglang' else 35.23)*1.12+1,1)
+        seconds = duration
+    name = ' '.join((gpu or {}).get('name','').lower().removeprefix('nvidia ').split())
+    compatible = [r for r in observations if r.get('pipeline')==key and r.get('runtime')==ENGINE_VERSION
+                  and r.get('gpu_name')==name and r.get('batch')==actual and capacity
+                  and abs(r.get('capacity_gib',0)-capacity)<4]
+    elapsed,source = None,'unmeasured'
+    if compatible:
+        row=compatible[-1]
+        elapsed=round(row['inference_seconds']*duration/row['audio_seconds']+row['load_seconds'])
+        peak=max(peak,round(row['peak_process_gib']*1.12+1,1))
+        source='observed'
+    elif name=='h200' and capacity and capacity>=120:
+        # One recording, one run. Keep initialization constant; scale only the
+        # measured model work. Show as an estimate, never an accuracy ranking.
+        # MOSS uses the capped-KV run's initialization + ASR + one Nemotron,
+        # rather than borrowing the faster cold start of the uncapped engine.
+        load,work={'moss-sglang':(170,99),'qwen-transformers':(25,47.17),
+                   'moss-qwen-sequential':(175,273.79)}[key]
+        if key!='qwen-transformers' or actual>=min(23,chunks):
+            elapsed=round(load+work*duration/3937.1306875)
+            source='reference'
+    return dict(pipeline=key,batch=actual,requested_batch=batch,recommended_batch=actual,
+        chunk_count=chunks,chunk_seconds=seconds,memory_expected_gib=peak,memory_high_gib=peak,
+        capacity_gib=capacity,free_gib=free,budget_gib=round(capacity*.7,1) if capacity else None,
+        exceeds_budget=bool(capacity and peak>capacity*.7),exceeds_capacity=bool(capacity and peak>capacity),
+        exceeds_free=bool(free is not None and peak>free),capacity_kind='VRAM',time_seconds=elapsed,
+        time_source=source,memory_source='reference-plus-headroom')
 
 
 def attribute_speakers(items, turns):

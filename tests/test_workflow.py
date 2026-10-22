@@ -12,7 +12,8 @@ import httpx
 
 from src.store import NoteStore
 from src.text_files import save_text, speaker_changes, TextConflict
-from src.summaries import Summaries, command, provider_status
+from src.summaries import (Summaries, command, provider_status, DEFAULT_QUERY,
+                           PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, OUTPUT_SCHEMA, save_documents)
 
 
 def seed(store):
@@ -152,7 +153,8 @@ class SummaryTests(unittest.IsolatedAsyncioTestCase):
 
     def fake_cli(self, body):
         binary = self.root / 'fake cli'
-        binary.write_text('#!' + sys.executable + '\n' + body)
+        binary.write_text('#!' + sys.executable + '\nimport json\n'
+            'def documents(text):\n    return {"corrected_transcript":"[00:00] S01: 보정된 전사문", "summary_markdown":text}\n' + body)
         binary.chmod(0o755)
         self.enterContext(patch('src.summaries.executable', return_value=str(binary)))
         return binary
@@ -169,7 +171,7 @@ class SummaryTests(unittest.IsolatedAsyncioTestCase):
 source=sys.stdin.read()
 pathlib.Path({str(capture)!r}).write_text(source)
 time.sleep(.15)
-pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('금요일 배포. S02가 테스트.')
+pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(json.dumps(documents('금요일 배포. S02가 테스트.')))
 ''')
         self.start(self.note, 'codex', '요약해 줘; $(touch should-not-exist)')
         with self.assertRaises(ValueError):
@@ -181,17 +183,23 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('�
         self.assertNotIn('지민:', capture.read_text())
         self.assertIn('$(touch should-not-exist)', capture.read_text())
         self.assertIn('summary in Markdown', capture.read_text())
+        self.assertIn('corrected_transcript', capture.read_text())
         markdown = Path(result['result']['markdown_path'])
         self.assertEqual(markdown.parent, self.root / 'txt')
         self.assertEqual(markdown.suffix, '.md')
         self.assertEqual(markdown.read_text(), result['result']['text'] + '\n')
+        corrected = Path(result['result']['corrected_path'])
+        self.assertTrue(corrected.name.endswith('_보정.txt'))
+        self.assertTrue(markdown.name.endswith('_요약.md'))
+        self.assertEqual(corrected.read_text(), result['result']['corrected_text'] + '\n')
+        self.assertNotIn('보정된 전사문', Path(updated['text_path']).read_text())
         self.assertEqual(result['result']['source_hash'], self.note['text_hash'])
         self.assertTrue(result['stale'])
         restored = Summaries(self.manager.directory)
         self.assertEqual(restored.status(updated)['result']['text'], result['result']['text'])
 
     async def test_claude_json_result_and_error_are_distinguished(self):
-        self.fake_cli("import sys,json\nsys.stdin.read()\nprint(json.dumps({'result':'요약 완료','is_error':False}))\n")
+        self.fake_cli("import sys,json\nsys.stdin.read()\nprint(json.dumps({'structured_output':documents('요약 완료'),'is_error':False}))\n")
         self.start(self.note, 'claude', '요약')
         result = await self.completed()
         self.assertEqual(result['result']['text'], '요약 완료')
@@ -206,10 +214,10 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('�
         self.assertEqual(list(markdown.parent.glob('*.md')), [markdown])
 
     async def test_markdown_uses_selected_folder_and_never_overwrites_existing_files(self):
-        self.fake_cli("import sys,json\nsys.stdin.read()\nprint(json.dumps({'result':'# 요약\\n\\n- 할 일','is_error':False}))\n")
+        self.fake_cli("import sys,json\nsys.stdin.read()\nprint(json.dumps({'structured_output':documents('# 요약\\n\\n- 할 일'),'is_error':False}))\n")
         folder = self.root / 'chosen'
         folder.mkdir()
-        existing = folder / (Path(self.note['text_path']).stem + '-요약.md')
+        existing = folder / (Path(self.note['text_path']).stem + '_요약.md')
         outside = self.root / 'outside.md'
         outside.write_text('사용자 문서')
         existing.symlink_to(outside)
@@ -221,26 +229,72 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('�
         self.start(self.note, 'claude', '요약', folder)
         second = (await self.completed())['result']
         self.assertNotEqual(first['markdown_path'], second['markdown_path'])
+        self.assertEqual(Path(first['corrected_path']).stem.removesuffix('_보정-1'), Path(first['markdown_path']).stem.removesuffix('_요약-1'))
+        self.assertNotEqual(first['corrected_path'], second['corrected_path'])
         self.assertEqual(Path(first['markdown_path']).read_text(), '# 요약\n\n- 할 일\n')
         self.assertEqual(outside.read_text(), '사용자 문서')
         self.assertEqual(Path(self.note['text_path']).read_bytes(), source)
         self.assertFalse(list(folder.glob('.cosmoss-*')))
 
     async def test_default_is_downloads_and_save_failure_keeps_new_result(self):
-        self.fake_cli("import sys,json\nsys.stdin.read()\nprint(json.dumps({'result':'# 완료','is_error':False}))\n")
+        self.fake_cli("import sys,json\nsys.stdin.read()\nprint(json.dumps({'structured_output':documents('# 완료'),'is_error':False}))\n")
         downloads = self.root / 'Downloads'
         downloads.mkdir()
         with patch('src.summaries.Path.home', return_value=self.root):
             self.manager.start(self.note, 'claude', '요약')
             result = await self.completed()
         self.assertEqual(Path(result['result']['markdown_path']).parent, downloads)
-        with patch('src.summaries.save_markdown', side_effect=PermissionError('권한 없음')):
+        with patch('src.summaries.save_documents', side_effect=PermissionError('권한 없음')):
             self.start(self.note, 'claude', '다시 요약')
             result = await self.completed()
         self.assertEqual(result['phase'], 'error')
-        self.assertIn('MD 파일을 저장하지 못했습니다', result['error'])
+        self.assertIn('결과 파일을 저장하지 못했습니다', result['error'])
         self.assertEqual(result['result']['text'], '# 완료')
+        self.assertIn('보정된 전사문', result['result']['corrected_text'])
         self.assertNotIn('markdown_path', result['result'])
+        self.assertNotIn('corrected_path', result['result'])
+
+    async def test_incomplete_or_malformed_results_do_not_publish_files(self):
+        for value in ('# 요약만 반환', '{"summary_markdown":"# 요약"}',
+                      '{"corrected_transcript":"", "summary_markdown":"# 요약"}'):
+            self.fake_cli('import sys\nsys.stdin.read()\nprint(json.dumps({"result":' + repr(value) + '}))\n')
+            self.start(self.note, 'claude', DEFAULT_QUERY)
+            result = await self.completed()
+            self.assertEqual(result['phase'], 'error')
+            self.assertFalse(result.get('result'))
+        self.assertEqual(list((self.root / 'txt').iterdir()), [Path(self.note['text_path'])])
+
+    def test_pair_save_collision_and_partial_failure_preserve_originals(self):
+        folder = self.root / 'txt'
+        existing = folder / '원본_보정.txt'
+        existing.write_text('이전 보정')
+        corrected, summary = save_documents(folder, '원본', '새 보정', '# 새 요약')
+        self.assertEqual(existing.read_text(), '이전 보정')
+        self.assertEqual(Path(corrected).name, '원본_보정-1.txt')
+        self.assertEqual(Path(summary).name, '원본_요약-1.md')
+        original_link = os.link
+        def fail_second(source, target):
+            if str(target).endswith('.md'):
+                raise PermissionError('MD 쓰기 실패')
+            original_link(source, target)
+        with patch('src.summaries.os.link', side_effect=fail_second), self.assertRaises(PermissionError):
+            save_documents(folder, '실패', '보정', '# 요약')
+        self.assertFalse(list(folder.glob('실패*')))
+        self.assertFalse(list(folder.glob('.cosmoss-*')))
+        self.assertEqual(Path(corrected).read_text(), '새 보정\n')
+
+    def test_default_migration_preserves_custom_prompts_and_history(self):
+        for old in (PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY):
+            self.manager._save(self.note['id'], {'phase':'done', 'prompt':old,
+                'result':{'prompt':old, 'source_hash':self.note['text_hash'], 'text':'이전 요약'}})
+            state = self.manager.status(self.note)
+            self.assertEqual(state['prompt'], DEFAULT_QUERY)
+            self.assertEqual(state['result']['prompt'], old)
+            self.assertTrue(state['use_default_prompt'])
+            self.assertEqual(state['additional_prompt'], '')
+        self.manager._save(self.note['id'], {'phase':'idle', 'prompt':'내가 수정한 요청'})
+        self.assertEqual(self.manager.status(self.note)['prompt'], '내가 수정한 요청')
+        self.assertFalse(self.manager.status(self.note)['use_default_prompt'])
 
     async def test_invalid_output_directory_does_not_start_cli(self):
         self.fake_cli('pass\n')
@@ -284,16 +338,20 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('�
         with self.assertRaises(ValueError): self.start(self.note, 'codex', '요약')
         self.assertFalse(self.manager.tasks)
 
-    def test_cli_args_disable_tools_and_never_use_permission_bypass(self):
+    def test_cli_args_allow_web_verification_and_never_use_permission_bypass(self):
         for provider in ('codex', 'claude'):
-            args = command(provider, '/path with spaces/' + provider, self.root / 'result.txt')
+            schema = self.root / 'schema.json'
+            args = command(provider, '/path with spaces/' + provider, self.root / 'result.txt', schema)
             self.assertNotIn('--dangerously-skip-permissions', args)
             self.assertNotIn('--dangerously-bypass-approvals-and-sandbox', args)
             if provider == 'codex':
                 self.assertIn('read-only', args)
                 self.assertIn('--ignore-user-config', args)
+                self.assertIn('--search', args)
+                self.assertEqual(args[args.index('--output-schema') + 1], str(schema))
             else:
-                self.assertEqual(args[args.index('--tools') + 1], '')
+                self.assertEqual(args[args.index('--tools') + 1], 'WebSearch,WebFetch')
+                self.assertEqual(json.loads(args[args.index('--json-schema') + 1]), OUTPUT_SCHEMA)
                 self.assertIn('--strict-mcp-config', args)
 
 
@@ -351,18 +409,39 @@ class WorkflowAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 409)
             self.assertFalse((self.root / 'txt').exists())
 
+    async def test_summary_default_checkbox_controls_only_the_user_request(self):
+        response = await self.client.get('/api/summary/default-prompt')
+        self.assertEqual(response.json()['default_prompt'], DEFAULT_QUERY)
+        base = '/api/notes/' + self.note['id'] + '/summary'
+        with patch.object(self.main, 'provider_status', new=AsyncMock(return_value={'ready':True})), \
+             patch.object(self.manager, 'start', return_value={'phase':'running'}) as start:
+            for use_default in (True, False):
+                response = await self.client.post(base, json={'provider':'codex', 'prompt':'짧게 정리해 주세요.',
+                    'use_default_prompt':use_default, 'directory':str(self.root/'txt')})
+                self.assertEqual(response.status_code, 202, response.text)
+                expected = DEFAULT_QUERY+'\n\n짧게 정리해 주세요.' if use_default else '짧게 정리해 주세요.'
+                self.assertEqual(start.call_args.args[2], expected)
+                self.assertEqual(start.call_args.kwargs, {'use_default_prompt':use_default,'additional_prompt':'짧게 정리해 주세요.'})
+            response = await self.client.post(base,json={'provider':'codex','use_default_prompt':True,'prompt':'','directory':str(self.root/'txt')})
+            self.assertEqual(response.status_code, 202, response.text)
+            self.assertEqual(start.call_args.args[2], DEFAULT_QUERY)
+            start.reset_mock()
+            response = await self.client.post(base,json={'provider':'codex','use_default_prompt':False,'prompt':'   '})
+            self.assertEqual(response.status_code, 409)
+            start.assert_not_called()
+
     async def test_summary_route_reads_named_txt_and_detects_subsequent_edits(self):
         binary = self.root / 'codex-fixture'
         capture = self.root / 'stdin.txt'
         binary.write_text('#!' + sys.executable + '\n' + f'''import pathlib,sys
 pathlib.Path({str(capture)!r}).write_text(sys.stdin.read())
-pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('금요일 배포')
+pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text({json.dumps({'corrected_transcript':'[00:00] 지민: 금요일 배포', 'summary_markdown':'금요일 배포'}, ensure_ascii=False)!r})
 ''')
         binary.chmod(0o755)
         base = '/api/notes/' + self.note['id']
         self.store.update(self.note['id'], speaker_names={'S01': '지민'})
         with patch.object(self.main, 'provider_status', new=AsyncMock(return_value={'ready': True})), patch('src.summaries.executable', return_value=str(binary)):
-            response = await self.client.post(base + '/summary', json={'provider': 'codex', 'prompt': '할 일 정리', 'directory': str(self.root / 'txt')})
+            response = await self.client.post(base + '/summary', json={'provider': 'codex', 'prompt': '할 일 정리', 'use_default_prompt':False, 'directory': str(self.root / 'txt')})
             self.assertEqual(response.status_code, 202, response.text)
             self.assertEqual(response.json()['phase'], 'running')
             task = self.manager.tasks.get(self.note['id'])
@@ -370,17 +449,26 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('�
         result = (await self.client.get(base + '/summary')).json()
         self.assertEqual(result['result']['text'], '금요일 배포')
         markdown = Path(result['result']['markdown_path'])
+        corrected = Path(result['result']['corrected_path'])
+        self.assertEqual(corrected.read_text(), '[00:00] 지민: 금요일 배포\n')
         self.assertEqual(markdown.parent, self.root / 'txt')
         self.assertEqual(markdown.read_text(), '금요일 배포\n')
         self.assertFalse(result['stale'])
         self.assertIn('지민: 금요일', capture.read_text())
         self.assertIn('할 일 정리', capture.read_text())
+        self.assertNotIn(DEFAULT_QUERY, capture.read_text())
+        self.assertFalse(result['use_default_prompt'])
+        self.assertEqual(result['additional_prompt'], '할 일 정리')
+        restored = Summaries(self.manager.directory).status(self.store.get(self.note['id']))
+        self.assertFalse(restored['use_default_prompt'])
+        self.assertEqual(restored['additional_prompt'], '할 일 정리')
         await self.client.patch(base, json={'speaker_names': {'S01': '새 이름'}})
         self.assertTrue((await self.client.get(base + '/summary')).json()['stale'])
         exported = Path(self.store.get(self.note['id'])['text_path'])
         self.assertEqual((await self.client.delete(base)).status_code, 204)
         self.assertTrue(exported.exists(), 'Deleting the app note deleted an exported user TXT')
         self.assertTrue(markdown.exists(), 'Deleting the app note deleted an exported summary')
+        self.assertTrue(corrected.exists(), 'Deleting the app note deleted the corrected transcript')
         self.assertFalse(self.manager._path(self.note['id']).exists())
 
 

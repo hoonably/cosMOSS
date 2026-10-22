@@ -129,7 +129,7 @@ def main():
                     (root / 'runtime-ready').write_text(VERSION)
         if not python.is_file():
             raise RuntimeError('먼저 선택한 모델의 준비하기를 눌러 주세요.')
-        for name, source in [('worker.py', request['worker_source']), ('speech_pipeline.py', request['catalog_source']), ('process_lifecycle.py', request['lifecycle_source'])]:
+        for name, source in [('worker.py', request['worker_source']), ('speech_pipeline.py', request['catalog_source']), ('speech_engines.py', request['engine_source']), ('process_lifecycle.py', request['lifecycle_source'])]:
             (job / name).write_text(source)
         config = {key: request[key] for key in ('action', 'model_key', 'batch', 'language', 'hotwords', 'prompt') if key in request}
         config.update(audio=str(job / 'audio.wav'), result=str(job / 'result.json'))

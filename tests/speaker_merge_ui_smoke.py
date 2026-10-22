@@ -50,7 +50,7 @@ async def main():
             await page.route('**/api/devices', lambda r:r.fulfill(json=[{'id':'local','name':'이 Mac','kind':'local','backend':'mlx','model_key':'mlx-8bit','setup':{'phase':'idle'}}]))
             await page.route('**/api/local-model', lambda r:r.fulfill(json={'phase':'idle'}))
             await page.goto(base)
-            await page.locator(f'.note-item[data-id="{note_id}"]').click()
+            await page.locator(f'.note-item[data-id="{note_id}"] .note-edit').click()
             await page.locator('#edit-speakers').click()
             initial = store.get(note_id)
             initial_text = Path(initial['text_path']).read_bytes() if initial['text_path'] else None
@@ -122,7 +122,7 @@ async def main():
             await page.click('#cancel-speakers')
             await page.click('#close-note')
             await page.locator('#note-dialog').wait_for(state='hidden')
-            await page.get_by_role('button',name='기존 TXT 병합',exact=False).click()
+            await page.get_by_role('button',name='기존 TXT 병합 편집',exact=True).click()
             await page.click('#edit-speakers')
             await drag('S01','S02')
             assert '지민' in await page.locator('#speaker-merge-question').inner_text()

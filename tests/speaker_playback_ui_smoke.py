@@ -57,7 +57,7 @@ async def main():
         await page.route('**/api/summary/providers', lambda r:r.fulfill(json=[]))
         await page.route('**/api/notes', lambda r:r.fulfill(json=[store.get(identity)]))
         await page.goto(base)
-        await page.locator(f'.note-item[data-id="{identity}"]').click()
+        await page.locator(f'.note-item[data-id="{identity}"] .note-edit').click()
         await page.click('#edit-speakers')
         buttons = page.locator('[data-speaker-play]')
         player = page.locator('#speaker-preview-player')

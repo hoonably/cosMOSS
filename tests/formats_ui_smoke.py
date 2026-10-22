@@ -44,7 +44,7 @@ async def main():
             for fmt in ('srt','vtt'):
                 file=folder/f'기존 자막 {fmt.upper()}.{fmt}'
                 original=file.read_bytes()
-                await page.get_by_role('button',name='기존 자막 '+fmt.upper(),exact=False).first.click()
+                await page.get_by_role('button',name='기존 자막 '+fmt.upper()+' 편집',exact=True).click()
                 await page.locator('#note-dialog').wait_for(state='visible')
                 assert await page.locator('#text-document-format').inner_text()==fmt.upper()
                 assert await page.locator('#save-txt, #export-toggle').count()==0

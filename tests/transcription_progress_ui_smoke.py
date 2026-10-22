@@ -34,7 +34,7 @@ async def main():
         await page.route('**/api/notes', lambda r:r.fulfill(json=[note]))
         await page.route('**/api/notes/' + note['id'], lambda r:r.fulfill(json=note))
         await page.goto(base)
-        await page.locator('.note-item').click()
+        await page.locator('.note-edit').click()
         assert await page.locator('#progress-percent').inner_text() == '준비 중'
         assert await page.locator('#progress-elapsed').is_hidden()
         assert await page.locator('#processing-steps, #progress-count, #progress-audio, #model-progress').count() == 0

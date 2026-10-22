@@ -33,6 +33,23 @@ def original_cuda_configuration(device: dict[str, Any]) -> dict[str, Any]:
     return device
 
 
+def upgrade_speech_presets(device):
+    """Upgrade device defaults once at app startup; note snapshots stay intact."""
+    if device.get('backend') != 'cuda' or device.get('model_key') == 'custom':
+        return device
+    key = device.get('options', {}).get('speech_pipeline')
+    replacements = {'moss-batch':'moss-sglang','moss-original':'moss-sglang','qwen-batch':'qwen-transformers'}
+    if key is None and has_model_selection(device):
+        replacements[None] = 'moss-sglang'
+    if key not in replacements:
+        return device
+    pipeline = replacements[key]
+    repo = 'Qwen/Qwen3-ASR-1.7B' if pipeline=='qwen-transformers' else 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
+    return {**device,'model':repo,'model_id':repo,'model_key':'cuda-original','model_source':'cache',
+            'model_path':'','model_prepared':False,
+            'options':{**device.get('options',{}),'speech_pipeline':pipeline,'speech_batch':0}}
+
+
 class DeviceStore:
     def __init__(self, database: Path):
         self.database = database
@@ -42,7 +59,7 @@ class DeviceStore:
             connection.execute("CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, config TEXT NOT NULL)")
             for device_id, raw in connection.execute('SELECT id, config FROM devices').fetchall():
                 saved = json.loads(raw)
-                migrated = original_cuda_configuration(saved)
+                migrated = upgrade_speech_presets(original_cuda_configuration(saved))
                 if migrated != saved:
                     connection.execute('UPDATE devices SET config=? WHERE id=?', (json.dumps(migrated), device_id))
             local = {

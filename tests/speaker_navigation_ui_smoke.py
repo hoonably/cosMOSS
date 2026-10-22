@@ -54,7 +54,7 @@ async def main():
             for fmt in ('txt', 'srt'):
                 source = folder / f'긴 회의 {fmt.upper()}.{fmt}'
                 before = source.read_bytes()
-                await page.get_by_role('button', name=f'긴 회의 {fmt.upper()}', exact=False).click()
+                await page.get_by_role('button', name=f'긴 회의 {fmt.upper()} 편집', exact=True).click()
                 await page.click('#edit-speakers')
                 await page.locator('#speaker-dialog').wait_for(state='visible')
                 await position(0)

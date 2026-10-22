@@ -66,7 +66,7 @@ async def main():
             await route.fulfill(json={'phase':'done','result':result} if running else {'phase':'idle'})
         await page.route(f'**/api/notes/{identity}/diarization',jobs)
         await page.goto(base)
-        await page.locator(f'.note-item[data-id="{identity}"]').click()
+        await page.locator(f'.note-item[data-id="{identity}"] .note-edit').click()
         await page.click('#open-diarization')
         await page.locator('.diarization-gpu-choice input').first.wait_for()
         assert await page.locator('#diarization-model').input_value()=='nemotron-3'

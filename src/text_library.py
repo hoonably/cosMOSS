@@ -18,7 +18,8 @@ from src.subtitles import subtitle_fields, rename_subtitle_speakers
 SUPPORTED_FORMATS = {"txt", "srt", "vtt"}
 
 
-HEADER = re.compile(r"^\[(?P<time>\d+:\d{2}:\d{2}(?:\.\d+)?)\][ \t]*(?P<name>[^:\r\n]{1,60}):[ \t]*", re.MULTILINE)
+TXT_TIME = r"\d+:\d{2}:\d{2}(?:\.\d+)?"
+HEADER = re.compile(rf"^\[(?P<time>{TXT_TIME})(?:-(?P<end_time>{TXT_TIME}))?\][ \t]*(?P<name>[^:\r\n]{{1,60}}):[ \t]*", re.MULTILINE)
 
 
 def decode_text(content: bytes) -> tuple[str, str, bytes]:
@@ -47,7 +48,8 @@ def transcript_fields(text: str) -> tuple[list[dict], dict[str, str]]:
         hours, minutes, seconds = map(float, match["time"].split(":"))
         start = hours * 3600 + minutes * 60 + seconds
         end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
-        segments.append({"id": index, "start": start, "end": start, "speaker": key, "text": text[match.end():end].strip()})
+        finish = sum(float(p)*60**i for i,p in enumerate(reversed(match['end_time'].split(':')))) if match['end_time'] else start
+        segments.append({"id": index, "start": start, "end": finish, "speaker": key, "text": text[match.end():end].strip()})
     return segments, {key: label for label, key in labels.items()}
 
 
@@ -95,6 +97,7 @@ class TextLibrary:
         return {"id": note_id, "title": path.stem, "original_filename": path.name, "status": "done",
                 "source_type": "text_file", "text_path": str(path), "created_at": changed, "updated_at": changed,
                 "file_mtime_ns": info.st_mtime_ns, "file_size": info.st_size, "device_name": path.suffix[1:].upper(), "output_format": path.suffix[1:].lower(), "chunk_count": 1,
+                "file_version": f'{info.st_mtime_ns}:{info.st_size}',
                 "duration": None, "processing_seconds": None}
 
     def path(self, note_id):

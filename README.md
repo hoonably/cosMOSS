@@ -13,7 +13,7 @@ Apple Silicon · macOS 13 이상
 ## 주요 기능
 
 - **전사와 화자 구분** — 음성·영상에서 발언 내용, 시간, 화자를 정리합니다.
-- **서버 빠른 전사** — MOSS·Qwen3-ASR 중 전사 방식을 선택하고 Nemotron으로 화자를 구분합니다. VRAM에 맞춰 여러 청크를 동시에 처리합니다.
+- **서버 전사** — MOSS SGLang 전체 전사, Qwen 3분 전사·정렬, MOSS+Qwen 순차 비교 중 선택하고 Nemotron으로 화자를 구분합니다.
 - **편집과 저장** — 선택한 TXT·SRT·VTT 형식으로 자동 저장하고, 본문과 화자 이름을 다듬습니다. 기존 파일도 불러올 수 있습니다.
 - **목소리 프로필** — 5초 목소리를 등록하고 이름·화자 병합 추천을 검토해 선택한 항목만 승인합니다. `.mossvoice` 파일로 가져오고 공유할 수 있습니다.
 - **화자 재분리** — Nemotron 3 Diarization·pyannote Community-1으로 원본 녹음을 다시 분석하고, 승인한 발화의 화자만 반영합니다. [모델 준비·이용 동의](docs/USAGE.md#화자-다시-분리하기)
@@ -37,7 +37,7 @@ macOS가 실행을 차단하면 **시스템 설정 → 개인정보 보호 및 �
 ## 사용하기
 
 1. 사용할 장치에서 **노트 만들기**를 눌러 녹음 파일을 선택합니다.
-   NVIDIA 서버의 모델 선택에는 **MOSS + Nemotron**, **Qwen3-ASR + Nemotron**, **MOSS · 긴 문맥**이 있습니다. 왼쪽에서 선택·다운로드한 뒤 노트 만들기 창에서 GPU 번호를 고릅니다.
+   Mac은 **MOSS MLX**를 사용합니다. NVIDIA 서버에서는 **MOSS · SGLang Omni · 전체**(추천), **Qwen · Transformers · 3분 + 정렬**, **MOSS + Qwen · 순차 실행**을 선택할 수 있습니다. 왼쪽에서 선택·다운로드한 뒤 GPU 번호를 고릅니다. 노트 만들기에서도 예상값을 보고 이번 전사의 모델을 바꿀 수 있습니다. MOSS+Qwen의 보조 대본은 완료 노트에서 펼쳐 보고 TXT로 받을 수 있습니다.
 2. 전사된 내용을 확인하고 본문과 화자 이름을 다듬습니다.
 3. 처음 선택한 TXT·SRT·VTT 형식으로 기본 경로에 자동 저장됩니다. **AI 요약**으로 더 정리할 수 있습니다.
 
@@ -59,6 +59,6 @@ AI 요약을 실행하면 전사 내용을 선택한 AI 서비스로 전송합�
 
 ## Credits
 
-[JoNebula/moss-note](https://github.com/JoNebula/moss-note), [jiseungjeong/moss-note](https://github.com/jiseungjeong/moss-note), [ginjae/mac-moss](https://github.com/ginjae/mac-moss)를 바탕으로 만들었습니다. 전사에는 [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize)·[Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf), 화자 구분에는 [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)·[pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)을 사용합니다.
+[JoNebula/moss-note](https://github.com/JoNebula/moss-note), [jiseungjeong/moss-note](https://github.com/jiseungjeong/moss-note), [ginjae/mac-moss](https://github.com/ginjae/mac-moss)를 바탕으로 만들었습니다. 전사에는 [MOSS-Transcribe-Diarize](https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize)·[Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B), 화자 구분에는 [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)·[pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)을 사용합니다.
 
 [MIT License](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)

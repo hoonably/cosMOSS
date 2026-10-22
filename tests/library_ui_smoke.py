@@ -61,7 +61,7 @@ async def main():
             assert all(cards[i]['y']<cards[i+1]['y'] for i in range(len(cards)-1)), 'Notes did not form a vertical list'
             assert await page.locator('#note-list').evaluate('el=>el.scrollHeight>el.clientHeight'), 'Long note list did not scroll'
             if output: await page.screenshot(path=str(output.with_name(output.stem+'-list.png')))
-            await page.get_by_role('button', name='예전 회의', exact=False).first.click()
+            await page.get_by_role('button', name='예전 회의 편집', exact=True).click()
             await page.locator('#text-document-editor').wait_for(state='visible')
             assert await page.locator('#note-dialog').is_visible()
             assert await page.evaluate('document.activeElement.id') == 'note-dialog', 'Opening the note focused a form control'
@@ -102,7 +102,7 @@ async def main():
             await page.click('#run-summary')
             await page.get_by_text('기존 TXT 요약', exact=True).wait_for()
             assert summaries and structured.read_bytes() == before
-            await page.get_by_role('button', name='개인 메모', exact=False).first.click()
+            await page.get_by_role('button', name='개인 메모 편집', exact=True).click()
             assert await page.locator('#edit-speakers').is_disabled()
             assert await page.evaluate('window.__unsafe') is None
             plain.write_text('Finder에서 수정한 최신 내용')
@@ -121,7 +121,7 @@ async def main():
             await page.click('#save-location')
             await page.get_by_role('button', name='다른 폴더', exact=False).first.wait_for()
             assert await page.get_by_role('button', name='예전 회의', exact=False).count() == 0
-            await page.get_by_role('button', name='다른 폴더', exact=False).first.click()
+            await page.get_by_role('button', name='다른 폴더 편집', exact=True).click()
             await page.wait_for_function("document.querySelector('#text-document-body').value==='다른 저장 경로의 파일입니다.'")
             await page.locator('#text-document-body').focus()
             (other / '다른 폴더.txt').write_text('외부 앱에서 바꾼 내용')

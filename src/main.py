@@ -38,12 +38,14 @@ from src.processing_estimates import estimate_processing
 from src.process_lifecycle import watch_desktop_parent
 from src.performance_history import PerformanceHistory
 from src.speech_jobs import SpeechJobs
-from src.speech_pipeline import PIPELINES, FAST_PIPELINES, BATCHES, estimate_pipeline
+from src.speech_pipeline import PIPELINES, FAST_PIPELINES, BATCHES, DEFAULT_PIPELINE, estimate_pipeline
+from src.speech_engines import ENGINE_PIPELINES
 from src.remote_workers import RemoteWorkers
 from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host, gpu_warning_token
 from src.store import NoteStore
 from src.summaries import Summaries, provider_status, DEFAULT_QUERY
 from src.text_files import save_text, speaker_changes, write_text
+from src.note_files import read_file, convert_file, trash_file
 from src.text_library import TextLibrary
 from src.transcript import json_text, parse_transcript, plain_text, srt_text, vtt_text
 from src.voice_memos import VoiceMemos
@@ -129,7 +131,19 @@ class SpeakersRequest(TextFileRequest):
 
 class SummaryRequest(TextFileRequest):
     provider: Literal["codex", "claude"]
-    prompt: str = Field(default=DEFAULT_QUERY, min_length=1, max_length=20000)
+    prompt: str = Field(default="", max_length=20000)
+    use_default_prompt: bool = True
+
+
+class FileActionRequest(BaseModel):
+    text_hash: str | None = None
+    file_mtime_ns: int | None = None
+    file_size: int | None = None
+    file_version: str | None = None
+
+
+class ConvertFileRequest(FileActionRequest):
+    output_format: Literal['txt','srt','vtt']
 
 
 class VoiceProfileName(BaseModel):
@@ -157,13 +171,17 @@ class DiarizationSetupRequest(SSHHostRequest):
     model_key: Literal['nemotron-3', 'pyannote-community-1']
 
 
+ManagedSpeechPipelineKey = Literal['moss-batch', 'qwen-batch', 'moss-sglang', 'qwen-transformers', 'moss-qwen-sequential']
+SpeechPipelineKey = Literal['moss-batch', 'qwen-batch', 'moss-original', 'moss-sglang', 'qwen-transformers', 'moss-qwen-sequential']
+
+
 class SpeechSetupRequest(BaseModel):
-    pipeline: Literal['moss-batch', 'qwen-batch']
+    pipeline: ManagedSpeechPipelineKey
 
 
 class DeviceModelSelection(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    pipeline: Literal['moss-batch', 'qwen-batch', 'moss-original'] | None = None
+    pipeline: SpeechPipelineKey | None = None
     model_key: str = Field(default='', max_length=100)
 
 
@@ -968,7 +986,7 @@ async def transcribe_fast(note, device, started):
     # A resumed job reuses its original GPU UUID and configuration. The lock
     # still rejects another cosMOSS owner; no process is displaced.
     STORE.update(note['id'], progress_phase='preparing_model', normalized_path=str(normalized), duration=duration,
-                 chunk_seconds=180, chunk_count=plan['chunk_count'], bridge_count=0, pipeline_result={})
+                 chunk_seconds=plan['chunk_seconds'], chunk_count=plan['chunk_count'], bridge_count=0, pipeline_result={})
     ready = await SPEECH.execute(device['host'], key, 'inspect', lambda _: None)
     if ready['phase'] != 'installed':
         raise RuntimeError('왼쪽 처리 장치에서 선택한 모델을 먼저 다운로드해 주세요.')
@@ -977,7 +995,12 @@ async def transcribe_fast(note, device, started):
         nonlocal inference_started
         phase = event.get('phase')
         changes = {}
-        if phase in {'loading', 'transferring'}:
+        if phase == 'loading' and key in ENGINE_PIPELINES:
+            changes.update(progress_phase='transcribing', model_progress={'pipeline_phase':'loading', 'engine':event.get('engine')})
+            if not inference_started:
+                changes.update(inference_started_at=datetime.now(UTC).isoformat(), estimated_inference_seconds=plan['time_seconds'])
+                inference_started = True
+        elif phase in {'loading', 'transferring'}:
             changes['progress_phase'] = 'preparing_model'
         elif phase in {'transcribing', 'aligning', 'diarizing'}:
             changes.update(progress_phase='transcribing', model_progress={'pipeline_phase': phase},
@@ -992,6 +1015,7 @@ async def transcribe_fast(note, device, started):
     prompt = DEFAULT_PROMPT + (f"热词提示：{note['hotwords']}" if note.get('hotwords') else '')
     response = await SPEECH.execute(device['host'], key, 'run', on_event, audio=normalized,
                                    gpu_uuid=device['gpu_uuid'], batch=plan['batch'], language=note.get('language'),
+                                   allow_memory_risk=device['options'].get('allow_memory_risk', False),
                                    hotwords=note.get('hotwords'), prompt=prompt)
     result = response['result']
     STORE.update(note['id'], inference_finished_at=datetime.now(UTC).isoformat(), progress_phase='finalizing')
@@ -1006,7 +1030,7 @@ async def transcribe_fast(note, device, started):
     temporary.chmod(0o600)
     temporary.replace(diagnostic)
     SPEECH.record(result)
-    metrics = {key: value for key, value in result.items() if key not in {'segments', 'words', 'turns', 'asr_chunks'}}
+    metrics = {key: value for key, value in result.items() if key not in {'segments', 'words', 'turns', 'asr_chunks', 'auxiliary_transcript'}}
     matches, merges, voice_error = [], [], None
     if VOICE_PROFILES.settings()['enabled'] and (VOICE_PROFILES.documents() or VOICE_ENGINE.ready()):
         try:
@@ -1126,7 +1150,7 @@ def valid_basic_auth(header: str | None) -> bool:
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     local_action = (request.method == "POST" and request.url.path == "/api/notes") or request.url.path.startswith(("/api/diarization", "/api/voice-profiles", "/api/voice-memos", "/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/")) or (
-        request.url.path.startswith("/api/notes/") and any(part in {"diarization", "text-file", "speakers", "identify-speakers", "summary"} for part in request.url.path.split("/")[4:])
+        request.url.path.startswith("/api/notes/") and any(part in {"diarization", "text-file", "speakers", "identify-speakers", "summary", "trash", "convert"} for part in request.url.path.split("/")[4:])
     )
     if local_action:
         try:
@@ -1530,7 +1554,8 @@ async def choose_device_model(device_id: str, request: DeviceModelSelection):
             await LOCAL_MODELS.select(selected, options)
             device = DEVICES.configure(device_id, model_key=selected['key'], model_id=selected['repo'], model_selected=True, options=options)
         elif device['backend'] == 'cuda' and request.pipeline:
-            repo = 'Qwen/Qwen3-ASR-1.7B-hf' if request.pipeline == 'qwen-batch' else 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
+            repo = ('Qwen/Qwen3-ASR-1.7B' if request.pipeline == 'qwen-transformers' else
+                    'Qwen/Qwen3-ASR-1.7B-hf' if request.pipeline == 'qwen-batch' else 'OpenMOSS-Team/MOSS-Transcribe-Diarize')
             device = DEVICES.configure(device_id, model_key='cuda-original', model_selected=True, model_prepared=False,
                 model=repo, model_id=repo,
                 model_source='cache', model_path='',
@@ -1606,11 +1631,11 @@ def speech_device(device_id):
 
 @app.get('/api/speech/pipelines')
 def speech_pipelines():
-    return {'pipelines': PIPELINES, 'batches': BATCHES, 'default': 'moss-batch'}
+    return {'pipelines': PIPELINES, 'batches': BATCHES, 'default': DEFAULT_PIPELINE}
 
 
 @app.get('/api/devices/{device_id}/speech-setup')
-async def speech_setup(device_id: str, pipeline: Literal['moss-batch', 'qwen-batch']):
+async def speech_setup(device_id: str, pipeline: ManagedSpeechPipelineKey):
     device = speech_device(device_id)
     state = SPEECH.status(device['host'], pipeline)
     if state['phase'] not in {'idle', 'installed', 'error', 'cancelled'}:
@@ -1625,7 +1650,8 @@ async def speech_setup(device_id: str, pipeline: Literal['moss-batch', 'qwen-bat
 @app.post('/api/devices/{device_id}/speech-setup', status_code=202)
 def prepare_speech(device_id: str, request: SpeechSetupRequest):
     device = speech_device(device_id)
-    if not has_model_selection(device) or device.get('options', {}).get('speech_pipeline') != request.pipeline:
+    if (not has_model_selection(device) or device.get('model_key') == 'custom'
+            or (device.get('options', {}).get('speech_pipeline') != request.pipeline and request.pipeline not in ENGINE_PIPELINES)):
         raise HTTPException(409, '왼쪽 처리 장치에서 다운로드할 모델을 먼저 선택해 주세요.')
     try:
         return SPEECH.install(device['host'], request.pipeline)
@@ -1634,7 +1660,7 @@ def prepare_speech(device_id: str, request: SpeechSetupRequest):
 
 
 @app.get('/api/devices/{device_id}/speech-estimate')
-def speech_estimate(device_id: str, pipeline: Literal['moss-batch', 'qwen-batch'],
+def speech_estimate(device_id: str, pipeline: ManagedSpeechPipelineKey,
                     duration: float = Query(gt=0, le=365 * 86400, allow_inf_nan=False),
                     gpu_uuid: str = Query(min_length=5), batch: int = Query(default=0, ge=0, le=24)):
     speech_device(device_id)
@@ -2015,7 +2041,7 @@ async def create_note(
     gpu_confirmation: str = Form("", max_length=64),
     output_format: Literal["txt", "srt", "vtt"] = Form("txt"),
     output_directory: str = Form("", max_length=4096),
-    speech_pipeline: Literal['moss-original', 'moss-batch', 'qwen-batch'] | None = Form(None),
+    speech_pipeline: SpeechPipelineKey | None = Form(None),
     speech_batch: int = Form(0, ge=0, le=24),
     allow_memory_risk: bool = Form(False),
 ) -> dict[str, Any]:
@@ -2029,7 +2055,8 @@ async def create_note(
     if device.get('model_selected') is False and speech_pipeline is None:
         raise HTTPException(409, '왼쪽 처리 장치에서 모델을 선택하고 다운로드해 주세요.')
     selected_pipeline = device.get('options', {}).get('speech_pipeline')
-    if device.get('model_selected') is True and selected_pipeline and speech_pipeline and selected_pipeline != speech_pipeline:
+    if (device.get('model_selected') is True and selected_pipeline and speech_pipeline
+            and selected_pipeline != speech_pipeline and speech_pipeline not in ENGINE_PIPELINES):
         raise HTTPException(409, '선택한 전사 모델이 변경되었습니다. 왼쪽 모델을 확인한 뒤 다시 시작해 주세요.')
     speech_pipeline = speech_pipeline or device.get('options', {}).get('speech_pipeline') or 'moss-original'
     fast = speech_pipeline in FAST_PIPELINES
@@ -2090,13 +2117,19 @@ async def create_note(
             return
         if not duration or not math.isfinite(duration):
             raise HTTPException(422, '음성 길이를 먼저 확인해 주세요.')
-        plan = estimate_pipeline(speech_pipeline, duration, gpu, speech_batch, SPEECH.observations())
+        try:
+            plan = estimate_pipeline(speech_pipeline, duration, gpu, speech_batch, SPEECH.observations())
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
         if plan['exceeds_capacity']:
-            raise HTTPException(422, f"약 {plan['memory_expected_gib']:.1f} GiB가 필요합니다. 동시 청크 수를 줄여 주세요.")
+            raise HTTPException(422, f"약 {plan['memory_expected_gib']:.1f} GiB가 필요합니다. 더 큰 GPU 또는 다른 전사 방식을 선택해 주세요.")
         if plan['exceeds_budget'] and not allow_memory_risk:
             raise HTTPException(409, f"예상 Peak Memory가 전체 VRAM의 70%를 넘습니다. 경고를 확인하거나 동시 청크 수를 줄여 주세요.")
-        device['options'] = {**device.get('options', {}), 'speech_pipeline': speech_pipeline, 'speech_batch': speech_batch}
-        settings.update(device_snapshot_json=json.dumps(device, ensure_ascii=False), chunk_seconds=180)
+        device['options'] = {**device.get('options', {}), 'speech_pipeline': speech_pipeline, 'speech_batch': speech_batch, 'allow_memory_risk': allow_memory_risk}
+        if speech_pipeline in ENGINE_PIPELINES:
+            repo = 'Qwen/Qwen3-ASR-1.7B' if speech_pipeline == 'qwen-transformers' else 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
+            device.update(model=repo, model_id=repo, model_key='cuda-original', model_source='cache', model_path='')
+        settings.update(device_snapshot_json=json.dumps(device, ensure_ascii=False), chunk_seconds=plan['chunk_seconds'])
     if upload_id:
         try:
             upload = STORE.get_upload(upload_id)
@@ -2137,13 +2170,62 @@ def list_notes() -> list[dict[str, Any]]:
 @app.get("/api/text-library")
 def list_text_files(directory: str = Query(default="", max_length=4096)) -> list[dict[str, Any]]:
     try:
-        return TEXT_LIBRARY.scan(directory)
+        files = TEXT_LIBRARY.scan(directory)
+        owners = {}
+        for note in STORE.list():
+            if note['status']=='done' and note.get('text_path'):
+                owners.setdefault(note['text_path'],[]).append(note)
+        for file in files:
+            matches = sorted(owners.get(file['text_path'],[]),key=lambda n:n['created_at'],reverse=True)
+            if len(matches)>1 and file['file_size']<=32*1024*1024:
+                from src.text_files import digest
+                actual = digest(Path(file['text_path']).read_bytes())
+                matches = [n for n in matches if n.get('text_hash')==actual]
+            file['managed_note_id'] = matches[0]['id'] if matches else None
+        return files
     except (ValueError, OSError) as error:
         raise HTTPException(409, str(error)) from None
 
 
 def review_note(note_id: str) -> dict:
     return TEXT_LIBRARY.get(note_id) if TEXT_LIBRARY.is_document(note_id) else STORE.get(note_id)
+
+
+def file_action_source(note_id, request):
+    note = review_note(note_id)
+    related = [note_id] + [n['id'] for n in STORE.list() if n.get('text_path')==note.get('text_path')]
+    if any(SUMMARIES.busy(key) or DIARIZATION.busy('note:'+key) for key in related):
+        raise ValueError('이 파일의 AI 작업이 끝난 뒤 다시 시도해 주세요.')
+    version = dict(expected_hash=request.text_hash,mtime_ns=request.file_mtime_ns,size=request.file_size,file_version=request.file_version)
+    return note, version
+
+
+@app.post('/api/notes/{note_id}/trash',status_code=204)
+async def trash_note_file(note_id: str, request: FileActionRequest):
+    try:
+        note, version = file_action_source(note_id,request)
+        path, _ = read_file(note,**version)
+        # Keep the managed recording/history: restoring the file from Trash
+        # reconnects it. Only the file explicitly selected by the user is moved.
+        await asyncio.to_thread(trash_file,path)
+        return Response(status_code=204)
+    except KeyError:
+        raise HTTPException(404,'파일을 찾을 수 없습니다.') from None
+    except (ValueError,OSError) as error:
+        raise HTTPException(409,str(error)) from None
+
+
+@app.post('/api/notes/{note_id}/convert',status_code=201)
+def convert_note_file(note_id: str, request: ConvertFileRequest):
+    try:
+        note, version = file_action_source(note_id,request)
+        target = convert_file(note,request.output_format,**version)
+        files = TEXT_LIBRARY.scan(str(target.parent))
+        return next(file for file in files if file['text_path']==str(target))
+    except KeyError:
+        raise HTTPException(404,'파일을 찾을 수 없습니다.') from None
+    except (ValueError,OSError) as error:
+        raise HTTPException(409,str(error)) from None
 
 
 @app.get("/api/notes/{note_id}")
@@ -2234,6 +2316,11 @@ async def summary_providers() -> list[dict]:
     return list(await asyncio.gather(provider_status("codex"), provider_status("claude")))
 
 
+@app.get("/api/summary/default-prompt")
+def summary_default_prompt() -> dict:
+    return {"default_prompt": DEFAULT_QUERY}
+
+
 @app.get("/api/notes/{note_id}/summary")
 async def summary_status(note_id: str) -> dict:
     try:
@@ -2252,12 +2339,17 @@ async def start_summary(note_id: str, request: SummaryRequest) -> dict:
         note = review_note(note_id)
         if note["status"] != "done":
             raise ValueError("전사가 완료된 노트를 선택해 주세요.")
+        additional = request.prompt.strip()
+        prompt = "\n\n".join(part for part in (DEFAULT_QUERY if request.use_default_prompt else "", additional) if part)
+        if not prompt:
+            raise ValueError("기본 프롬프트를 선택하거나 직접 요청을 입력해 주세요.")
         status = await provider_status(request.provider)
         if not status["ready"]:
             raise ValueError(f"{status['name']}: {status['message']} {status['login'] if status['installed'] else status['install']}")
         if not TEXT_LIBRARY.is_document(note_id):
             note = save_text(STORE, note_id, request.directory)
-        return SUMMARIES.start(note, request.provider, request.prompt.strip() or DEFAULT_QUERY, request.directory)
+        return SUMMARIES.start(note, request.provider, prompt, request.directory,
+                               use_default_prompt=request.use_default_prompt, additional_prompt=additional)
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
     except (ValueError, OSError) as error:
@@ -2397,6 +2489,24 @@ async def delete_note(note_id: str) -> Response:
     SUMMARIES.forget(note_id)
     shutil.rmtree(note_dir, ignore_errors=True)
     return Response(status_code=204)
+
+
+@app.get('/api/notes/{note_id}/auxiliary-transcript')
+def auxiliary_transcript(note_id: str, download: bool = Query(default=False)):
+    try:
+        note = STORE.get(note_id)
+        source = STORE.resolve_path(note_id, note.get('normalized_path') or note['source_path'])
+        diagnostic = STORE.resolve_path(note_id, str(source.parent / 'speech-result.json'))
+        value = json.loads(diagnostic.read_text()).get('auxiliary_transcript')
+    except (KeyError, OSError, ValueError):
+        raise HTTPException(404, '이 노트의 Qwen 보조 대본이 없습니다.') from None
+    if not isinstance(value, dict) or not isinstance(value.get('text'), str):
+        raise HTTPException(404, '이 노트의 Qwen 보조 대본이 없습니다.')
+    if download:
+        return Response(value['text'], media_type='text/plain; charset=utf-8',
+            headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(note['title'] + ' - Qwen 보조 대본.txt'),
+                     'Cache-Control':'no-store'})
+    return JSONResponse({'text':value['text'],'model':'Qwen3-ASR 1.7B','aligned':False},headers={'Cache-Control':'no-store'})
 
 
 @app.get("/api/notes/{note_id}/media")

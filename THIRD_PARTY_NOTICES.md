@@ -54,16 +54,18 @@ vendored in the application repository. Their shipped licenses continue to apply
 - [torchaudio source and license](https://github.com/pytorch/audio)
 - [Pinned OpenMOSS helper source](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize/tree/e3bdd93f8ad58418e04659818efd5fd87a0bc486)
 
-## Batched CUDA speech pipelines
+## CUDA speech pipelines
 
 The separately installed speech runtime also downloads
-[Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B-hf) and
-[Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B-hf),
+[Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) and
+[Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B),
 both under Apache-2.0, and the Nemotron model listed below. Revisions are pinned
-in `src/speech_pipeline.py`. No weights are included in the Mac application.
+in `src/speech_engines.py` (legacy presets use `src/speech_pipeline.py`). No weights are included in the Mac application.
 The quiet-boundary splitting approach follows the official
 [Qwen3-ASR implementation](https://github.com/QwenLM/Qwen3-ASR) (Apache-2.0);
-cosMOSS implements sample-preserving cuts in `src/speech_worker.py`.
+new presets call the pinned SDK splitter directly. Legacy cuts remain in `src/speech_worker.py`.
+The MOSS server preset separately installs [SGLang Omni](https://github.com/sgl-project/sglang-omni)
+and [SGLang](https://github.com/sgl-project/sglang); their upstream licenses and dependencies remain in that server environment.
 Korean forced alignment uses the separately installed
 [soynlp](https://github.com/lovit/soynlp) package ([LGPL-3.0](https://github.com/lovit/soynlp/blob/master/LICENSE)); its license is retained with the
 server installation. Transformers, Accelerate, PyTorch, torchaudio, librosa,

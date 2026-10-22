@@ -3,8 +3,9 @@ const state = {
   appSetup: null, appSetupRequest: 0, appSetupChecking: false, appSetupTimer: null,
   libraryRequest: 0, libraryLoading: false, executionDeviceId: "local",
   textSaveAttempts: new Set(),
+  fileActionId: null, noteMenuId: null,
   environmentDeviceId: null, environments: {}, environmentRequests: new Set(), environmentSubmitting: false,
-  saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false, voiceIdentifying: false,
+  saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryTemplate: {prompt:"", useDefault:true}, summaryDefaultPrompt: "", summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false, voiceIdentifying: false,
   notes: [], current: null, saveTimer: null, pollTimer: null,
   pendingChanges: null, savePromise: null, noteRequest: 0, editRevision: 0, openingNote: null,
   transcriptView: "edited", maxUploadBytes: null, defaultChunkMinutes: 30, uploading: false, deletingId: null,
@@ -247,16 +248,32 @@ function escapeHtml(value = "") {
 }
 
 function renderList() {
+  const list = $("#note-list");
+  const focused = document.activeElement.closest?.(".note-item");
+  const focusedId = focused?.dataset.id;
+  const focusedControl = document.activeElement.matches(".note-edit") ? ".note-edit" : ".note-select";
+  const scrollTop = list.scrollTop;
   const query = $("#note-search").value.trim().toLowerCase();
   const notes = state.notes.filter(note => note.title.toLowerCase().includes(query));
   $("#note-count").textContent = state.notes.length;
-  $("#note-list").innerHTML = notes.length ? notes.map(note => `
-    <button class="note-item ${state.current?.id === note.id ? "active" : ""}" data-id="${escapeHtml(note.id)}" title="${escapeHtml(note.title)}" aria-pressed="${state.current?.id === note.id}" aria-haspopup="dialog" aria-controls="note-dialog">
-      <span class="note-item-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6M8 13h8M8 17h5"/></svg></span>
-      <span class="note-item-copy"><b>${escapeHtml(note.title)}</b><small><span>${formatDate(note.created_at)}</span><span class="note-status ${note.status}">${note.text_save_error ? "저장 실패" : note.status === "done" ? (note.output_format || "txt").toUpperCase() : noteStatus(note)}</span></small></span>
-      <svg class="note-item-open" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
-    </button>`).join("") : (query ? '<div class="empty-list">검색 결과가 없습니다</div>' : "");
-  document.querySelectorAll(".note-item").forEach(button => button.addEventListener("click", () => openNote(button.dataset.id)));
+  list.innerHTML = notes.length ? notes.map(note => {
+    const selected = state.current?.id === note.id;
+    const action = note.status === "done" ? "편집" : ["queued", "processing"].includes(note.status) ? "진행 보기" : "상태 보기";
+    return `
+    <div class="note-item ${selected ? "active" : ""}" data-id="${escapeHtml(note.id)}">
+      <button class="note-select" type="button" title="${escapeHtml(note.title)} 선택" aria-label="${escapeHtml(note.title)} 선택" aria-pressed="${selected}" aria-describedby="note-selection-hint">
+        <span class="note-item-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${selected ? '<path d="m6 12 4 4 8-8"/>' : '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6M8 13h8M8 17h5"/>'}</svg></span>
+        <span class="note-item-copy"><b>${escapeHtml(note.title)}</b><small><span>${formatDate(note.created_at)}</span><span class="note-status ${note.status}">${note.text_save_error ? "저장 실패" : note.status === "done" ? (note.output_format || "txt").toUpperCase() : noteStatus(note)}</span></small></span>
+      </button>
+      <button class="note-edit" type="button" aria-label="${escapeHtml(note.title)} ${action}" aria-haspopup="dialog" aria-controls="note-dialog">
+        <svg viewBox="0 0 24 24" aria-hidden="true">${note.status === "done" ? '<path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Zm0 0 4-1"/>' : '<path d="m9 6 6 6-6 6"/>'}</svg><span>${action}</span>
+      </button>
+    </div>`;
+  }).join("") : (query ? '<div class="empty-list">검색 결과가 없습니다</div>' : "");
+  list.querySelectorAll(".note-select").forEach(button => button.addEventListener("click", () => selectNote(button.closest(".note-item").dataset.id)));
+  list.querySelectorAll(".note-edit").forEach(button => button.addEventListener("click", () => openNote(button.closest(".note-item").dataset.id)));
+  list.scrollTop = scrollTop;
+  if (focusedId) list.querySelector(`.note-item[data-id="${CSS.escape(focusedId)}"] ${focusedControl}`)?.focus({preventScroll:true});
 }
 
 async function loadNotes() {
@@ -279,13 +296,25 @@ async function loadNotes() {
     }
     if (request !== state.libraryRequest) return;
     const imported = documents.status === "fulfilled" ? documents.value : [];
-    const managed = new Set(notes.value.map(note => note.text_path).filter(Boolean));
     const filePaths = new Set(imported.map(note => note.text_path));
-    const visible = notes.value.filter(note => documents.status !== "fulfilled" || note.status !== "done" || !note.text_path || filePaths.has(note.text_path));
+    const indexed = new Map(imported.map(file => [file.text_path,file]));
+    const seen = new Set();
+    const visible = notes.value.filter(note => {
+      if (note.status !== 'done' || !note.text_path) return true;
+      if (documents.status === 'fulfilled' && !filePaths.has(note.text_path)) return false;
+      const file = indexed.get(note.text_path);
+      if (file && 'managed_note_id' in file && file.managed_note_id !== note.id) return false;
+      if (seen.has(note.text_path)) return false;
+      seen.add(note.text_path);
+      if (file) Object.assign(note,{file_mtime_ns:file.file_mtime_ns,file_size:file.file_size,file_version:file.file_version});
+      return true;
+    });
+    const managed = new Set(visible.map(note => note.text_path).filter(Boolean));
     state.notes = [...visible, ...imported.filter(note => !managed.has(note.text_path))].sort((a, b) => b.created_at.localeCompare(a.created_at));
     $("#text-library-status").textContent = documents.status === "rejected" ? documents.reason.message : "";
     $("#text-library-status").classList.toggle("hidden", documents.status !== "rejected");
     renderList();
+    if (state.noteMenuId && !state.notes.some(n=>n.id===state.noteMenuId)) closeNoteMenu();
     const current = state.current;
     const saved = notes.value.find(note => note.id === current?.id);
     if (saved && (saved.text_path !== current.text_path || saved.text_save_error !== current.text_save_error)) {
@@ -299,10 +328,101 @@ async function loadNotes() {
   finally { if (request === state.libraryRequest) state.libraryLoading = false; }
 }
 
-async function openNote(id, quiet = false) {
+function closeNoteMenu(restoreFocus=false) {
+  const id=state.noteMenuId;
+  state.noteMenuId=null;
+  $('#note-context-menu').classList.add('hidden');
+  if (restoreFocus && id) document.querySelector(`.note-item[data-id="${CSS.escape(id)}"] .note-select`)?.focus({preventScroll:true});
+}
+
+function openNoteMenu(button,x,y) {
+  const note=state.notes.find(n=>n.id===button.dataset.id);
+  if (!note) return;
+  state.noteMenuId=note.id;
+  const menu=$('#note-context-menu'), format=(note.output_format||'txt').toLowerCase();
+  const busy=note.status!=='done' || !note.text_path || Boolean(state.fileActionId);
+  $('#note-context-title').textContent=note.title;
+  for (const item of menu.querySelectorAll('[data-convert-format]')) {
+    item.classList.toggle('hidden',item.dataset.convertFormat===format);
+    item.disabled=busy;
+  }
+  $('#trash-note-file').disabled=busy;
+  menu.classList.remove('hidden');
+  menu.style.left=`${Math.max(8,Math.min(x,innerWidth-menu.offsetWidth-8))}px`;
+  menu.style.top=`${Math.max(8,Math.min(y,innerHeight-menu.offsetHeight-8))}px`;
+  menu.querySelector('button:not(.hidden):not(:disabled)')?.focus({preventScroll:true});
+}
+
+$('#note-list').addEventListener('contextmenu',event=>{
+  event.preventDefault();
+  const button=event.target.closest('.note-item');
+  if (button) openNoteMenu(button,event.clientX,event.clientY);
+  else closeNoteMenu();
+});
+$('#note-list').addEventListener('keydown',event=>{
+  if (!(event.key==='ContextMenu' || (event.shiftKey && event.key==='F10'))) return;
+  const button=event.target.closest('.note-item');
+  if (!button) return;
+  event.preventDefault();
+  const rect=button.getBoundingClientRect();
+  openNoteMenu(button,rect.x+rect.width/2,rect.y+rect.height/2);
+});
+$('#note-context-menu').addEventListener('keydown',event=>{
+  const items=[...event.currentTarget.querySelectorAll('button:not(.hidden):not(:disabled)')];
+  if (event.key==='Escape') {event.preventDefault();closeNoteMenu(true);return;}
+  if (event.key==='Tab') {closeNoteMenu();return;}
+  if (!['ArrowDown','ArrowUp','Home','End'].includes(event.key) || !items.length) return;
+  event.preventDefault();
+  const index=items.indexOf(document.activeElement);
+  items[event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length].focus();
+});
+document.addEventListener('pointerdown',event=>{
+  if (!event.target.closest('#note-context-menu')) closeNoteMenu();
+});
+document.addEventListener('scroll',event=>{
+  if (!event.target.closest?.('#note-context-menu')) closeNoteMenu();
+},true);
+window.addEventListener('resize',()=>closeNoteMenu());
+
+async function actOnNoteFile(action,outputFormat) {
+  const id=state.noteMenuId;
+  let note=state.notes.find(n=>n.id===id);
+  closeNoteMenu();
+  if (!note || state.fileActionId) return;
+  state.fileActionId=id;
+  try {
+    if (state.current?.id===id && (state.pendingChanges || state.savePromise)) {
+      await flushSave();await loadNotes();note=state.notes.find(n=>n.id===id);
+      if (!note) throw Error('파일을 찾을 수 없습니다. 목록을 다시 확인해 주세요.');
+    }
+    const version={text_hash:note.text_hash,file_version:note.file_version,file_size:note.file_size};
+    await api(`/api/notes/${encodeURIComponent(id)}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...version,...(outputFormat?{output_format:outputFormat}:{})})});
+    if (action==='trash' && state.current?.id===id) {
+      state.current=null;clearTimeout(state.saveTimer);
+      $('#media-player').pause();$('#media-player').removeAttribute('src');
+      $('#workspace').classList.add('hidden');$('#note-dialog').close();selectSummaryNote(null);
+    }
+    await loadNotes();
+    toast(action==='trash'?'파일을 휴지통으로 옮겼습니다.':`${outputFormat.toUpperCase()} 변환본을 저장했습니다.`);
+  } catch(error) {toast(error.message,true);}
+  finally {state.fileActionId=null;}
+}
+document.querySelectorAll('[data-convert-format]').forEach(button=>button.addEventListener('click',()=>actOnNoteFile('convert',button.dataset.convertFormat)));
+$('#trash-note-file').addEventListener('click',()=>actOnNoteFile('trash'));
+
+function selectNote(id) {
+  return loadNote(id);
+}
+
+function openNote(id, quiet = false) {
+  return loadNote(id, {openEditor: !quiet, quiet});
+}
+
+async function loadNote(id, {openEditor = false, quiet = false} = {}) {
   if (state.deletingId) return;
   const request = ++state.noteRequest;
   state.openingNote = request;
+  renderSummary();
   clearTimeout(state.pollTimer);
   state.pollTimer = null;
   try {
@@ -317,13 +437,14 @@ async function openNote(id, quiet = false) {
       if (request !== state.noteRequest) return;
     } while (state.current?.id === id && state.editRevision !== revision);
     if (state.current?.id !== id) {
+      $("#media-player").pause();
       state.transcriptView = "edited";
       $("#transcript-search").value = "";
     }
     state.current = note;
     $("#workspace").classList.remove("hidden");
     const dialog = $("#note-dialog");
-    const opening = !quiet && !dialog.open;
+    const opening = openEditor && !dialog.open;
     if (opening) {
       $("#note-close-error").classList.add("hidden");
       dialog.showModal();
@@ -337,7 +458,10 @@ async function openNote(id, quiet = false) {
     if (!quiet) toast(error.message, true);
     if (["queued", "processing"].includes(state.current?.status) || state.notes.some(item => ["queued", "processing"].includes(item.status))) schedulePoll();
   } finally {
-    if (state.openingNote === request) state.openingNote = null;
+    if (state.openingNote === request) {
+      state.openingNote = null;
+      renderSummary();
+    }
   }
 }
 
@@ -351,7 +475,7 @@ async function closeNoteWindow() {
     await flushSave();
     $("#media-player").pause();
     $("#note-dialog").close();
-    const selected = [...document.querySelectorAll(".note-item")].find(button => button.dataset.id === state.current?.id);
+    const selected = document.querySelector(`.note-item[data-id="${CSS.escape(state.current?.id || "")}"] .note-edit`);
     (selected || $("#note-search")).focus({ preventScroll: true });
   } catch (_) {
     $("#note-close-error").textContent = "변경 내용을 저장하지 못했습니다. 저장 상태를 확인한 뒤 다시 닫아 주세요.";
@@ -489,6 +613,8 @@ function renderEditor() {
   player.pause();
   player.removeAttribute("src");
   if (file) {
+    $('#auxiliary-transcript').classList.add('hidden');
+    $('#speech-result').classList.add('hidden');
     const media = $("#media-player");
     media.pause();
     media.removeAttribute("src");
@@ -518,8 +644,16 @@ function renderEditor() {
     $("#chunk-notice").classList.add('hidden');
     const peak = speechResult.peak_process_mib ? ` · Peak ${(speechResult.peak_process_mib / 1024).toFixed(1)} GiB` : '';
     const uncertain = note.segments.filter(segment => segment.speaker === '미확인' || segment.speaker_uncertain).length;
-    $("#speech-result").textContent = `${speechResult.pipeline === 'qwen-batch' ? 'Qwen3-ASR' : 'MOSS'} + Nemotron · 모델 처리 ${clock(speechResult.inference_seconds)}${peak} · ${speechResult.chunk_count}청크 / 동시 ${speechResult.batch}개${uncertain ? ` · 화자 미확인 ${uncertain}개 발화` : ''}`;
+    $("#speech-result").textContent = `${{'moss-sglang':'MOSS · SGLang Omni · 전체','qwen-transformers':'Qwen · Transformers · 3분 + 정렬','moss-qwen-sequential':'MOSS + Qwen · 순차 실행','qwen-batch':'Qwen3-ASR'}[speechResult.pipeline] || 'MOSS'} + Nemotron · 모델 처리 ${clock(speechResult.inference_seconds)}${peak} · ${['moss-sglang','moss-qwen-sequential'].includes(speechResult.pipeline) ? 'MOSS 전체 1청크' : `${speechResult.chunk_count}청크 / 동시 ${speechResult.batch}개`}${uncertain ? ` · 화자 미확인 ${uncertain}개 발화` : ''}`;
   }
+  const auxiliary = $('#auxiliary-transcript');
+  auxiliary.classList.toggle('hidden', !speechResult?.has_auxiliary_transcript);
+  if (auxiliary.dataset.noteId !== note.id) {
+    auxiliary.open = false;
+    auxiliary.dataset.noteId = note.id;
+    $('#auxiliary-transcript-text').textContent = '';
+  }
+  $('#download-auxiliary-transcript').href = `/api/notes/${encodeURIComponent(note.id)}/auxiliary-transcript?download=true`;
   $("#speaker-panel").classList.toggle("hidden", !speakers.length);
   $("#speaker-panel").innerHTML = speakers.map(speaker => `
     <button type="button" class="speaker-chip" data-open-speaker="${escapeHtml(speaker)}" style="--speaker-color:${colors[speakerIndex[speaker] % colors.length]}">
@@ -962,7 +1096,7 @@ function renderFilePreparation() {
   const preparation = state.uploadPreparation;
   $("#upload-preparation").classList.toggle("hidden", !preparation);
   $("#upload-preparation").classList.toggle("failed", preparation?.status === "error");
-  $("#upload-form").querySelector("button[type=submit]").disabled = state.uploading || !executionDevice() || preparation?.status !== "ready" || (executionDevice()?.backend === "cuda" && !state.selectedGpu);
+  $("#upload-form").querySelector("button[type=submit]").disabled = state.uploading || !executionDevice() || preparation?.status !== "ready" || (executionDevice()?.backend === "cuda" && !state.selectedGpu) || !!window.cosmossSpeech?.blocked();
   $("#retry-preparation").classList.toggle("hidden", preparation?.status !== "error");
   if (!preparation) return;
   $("#upload-duration").textContent = Number.isFinite(preparation.duration) && preparation.duration > 0
@@ -1069,6 +1203,7 @@ $("#upload-form").addEventListener("submit", async event => {
   const preparation = state.uploadPreparation;
   if (preparation?.status !== "ready") return toast("전처리가 완료된 후 전사를 시작해 주세요.", true);
   const form = event.target;
+  if (window.cosmossSpeech?.blocked()) return toast('선택한 모델의 준비가 끝난 뒤 전사를 시작해 주세요.', true);
   const body = new FormData(form);
   body.delete("selected-gpu");
   if (!executionDevice()) return toast("처리 장치를 다시 선택해 주세요.", true);
@@ -1491,16 +1626,18 @@ function devicePresentation(device) {
     tone: ready ? "ready" : busy ? "busy" : "", ready };
 }
 
+function managedSpeechPipeline(key) { return ['moss-batch','qwen-batch','moss-sglang','qwen-transformers','moss-qwen-sequential'].includes(key); }
+
 function cardModelOptions(device) {
   const selected = device.model_selected !== false;
   const placeholder = `<option value="" disabled ${selected ? '' : 'selected'}>모델 선택…</option>`;
   if (device.backend === 'cuda') {
-    const current = device.options?.speech_pipeline || 'moss-original';
-    const presets = state.catalog?.speech_presets || [{key:'moss-batch',name:'MOSS + Nemotron · 기본 추천'}, {key:'qwen-batch',name:'Qwen3-ASR + Nemotron'}, {key:'moss-original',name:'MOSS · 긴 문맥'}];
-    return placeholder + presets.map(item => `<option value="speech:${item.key}" ${selected && device.model_key !== 'custom' && item.key === current ? 'selected' : ''}>${escapeHtml(item.key === 'moss-batch' ? 'MOSS + Nemotron · 추천' : item.key === 'qwen-batch' ? 'Qwen3-ASR + Nemotron · 속도 우선' : item.name)}</option>`).join('') + `<option value="custom" ${selected && device.model_key === 'custom' ? 'selected' : ''}>다른 MOSS 저장소…</option>`;
+    const current = device.options?.speech_pipeline || 'moss-sglang';
+    const presets = state.catalog?.speech_presets || [{key:'moss-sglang',name:'MOSS · SGLang Omni · 전체',badge:'추천 · 서버 기본값'}, {key:'qwen-transformers',name:'Qwen · Transformers · 3분 + 정렬'}, {key:'moss-qwen-sequential',name:'MOSS + Qwen · 순차 실행'}];
+    const legacy = selected && !presets.some(item=>item.key===current) ? `<option value="speech:${escapeHtml(current)}" selected>이전 전사 설정 · 새 모델을 선택해 주세요</option>` : '';
+    return placeholder + presets.map(item => `<option value="speech:${item.key}" ${selected && device.model_key !== 'custom' && item.key === current ? 'selected' : ''}>${escapeHtml(item.name + (item.badge ? ` · ${item.badge}` : ''))}</option>`).join('') + legacy;
   }
-  return placeholder + modelOptionsHtml(device.id, selected ? device.model_key || state.localModel?.model_key || 'mlx-8bit' : '', false)
-    + '<option disabled>Qwen3-ASR + Nemotron · NVIDIA 서버에서 지원</option>';
+  return placeholder + modelOptionsHtml(device.id, selected ? device.model_key || state.localModel?.model_key || 'mlx-8bit' : '', false);
 }
 
 function renderDevices() {
@@ -1511,7 +1648,7 @@ function renderDevices() {
     const worker = state.workerStates[device.id];
     const presentation = devicePresentation(device);
     const managed = device.backend === "cuda";
-    const fast = managed && ['moss-batch','qwen-batch'].includes(device.options?.speech_pipeline);
+    const fast = managed && managedSpeechPipeline(device.options?.speech_pipeline);
     const gpuActive = !!worker?.active_gpu_uuid || ["loading", "ready"].includes(worker?.phase);
     const cleanupPending = gpuActive || device.worker_cleanup_pending || worker?.worker_cleanup_pending || (["prepare", "stop"].includes(worker?.action) && ["error", "interrupted"].includes(worker?.phase));
     const busy = modelBusy(device.kind === 'local' ? state.localModel : worker) || state.modelSelectingId === device.id;
@@ -2007,7 +2144,7 @@ $("#registered-devices").addEventListener("click", async event => {
       if (device.model_selected === false) return toast('모델을 먼저 선택해 주세요.',true);
       const key = device.options?.speech_pipeline;
       let result;
-      if (device.backend === 'cuda' && ['moss-batch','qwen-batch'].includes(key)) {
+      if (device.backend === 'cuda' && managedSpeechPipeline(key)) {
         result = await api(`/api/devices/${encodeURIComponent(id)}/speech-setup`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pipeline:key})});
       } else {
         const source = id === 'local' ? state.localModel : device;
@@ -2122,6 +2259,7 @@ loadModelCatalog().catch(error => toast(error.message, true));
 loadNotes();
 setInterval(() => { if (!document.hidden && !state.libraryLoading) loadNotes(); }, 5000);
 loadSummaryProviders();
+loadSummaryDefaultPrompt().catch(() => {});
 renderSummary();
 refreshDevicePanel();
 setInterval(() => refreshDevicePanel(), 10000);
@@ -2451,6 +2589,29 @@ $("#save-speakers").addEventListener("click", async () => {
   finally { state.speakerSaving = false; controls.forEach(control => control.disabled = disabledBeforeSave.get(control)); $("#save-speakers").textContent = "저장"; }
 });
 
+async function loadSummaryDefaultPrompt() {
+  const result = await api("/api/summary/default-prompt");
+  state.summaryDefaultPrompt = result.default_prompt;
+  $("#default-summary-prompt-content").textContent = result.default_prompt;
+}
+function closeSummaryPromptDialog() {
+  const dialog = $("#default-summary-prompt-dialog");
+  if (!dialog.open) return;
+  dialog.close();
+  $("#show-default-summary-prompt").focus({preventScroll:true});
+}
+$("#show-default-summary-prompt").addEventListener("click", async () => {
+  const dialog = $("#default-summary-prompt-dialog");
+  if (!dialog.open) dialog.showModal();
+  $("#default-summary-prompt-title").focus({preventScroll:true});
+  if (!state.summaryDefaultPrompt) {
+    try { await loadSummaryDefaultPrompt(); }
+    catch (_) { $("#default-summary-prompt-content").textContent = "기본 프롬프트를 불러오지 못했습니다. 창을 닫고 다시 시도해 주세요."; }
+  }
+});
+$("#close-default-summary-prompt").addEventListener("click", closeSummaryPromptDialog);
+bindConfirmationDialog("#default-summary-prompt-dialog", closeSummaryPromptDialog);
+
 async function loadSummaryProviders() {
   $("#refresh-summary-providers").disabled = true;
   try { state.summaryProviders = await api("/api/summary/providers"); }
@@ -2463,9 +2624,47 @@ $("#summary-provider").addEventListener("change", () => {
   renderSummary();
 });
 try { const provider = localStorage.getItem("cosmoss.summaryProvider"); if (["codex", "claude"].includes(provider)) $("#summary-provider").value = provider; } catch (_) {}
-$("#summary-prompt").addEventListener("input", () => {
-  if (state.current) state.summaryDrafts[state.current.id] = $("#summary-prompt").value;
-});
+function fitSummaryPrompt() {
+  const input = $("#summary-prompt"), scroll = $(".summary-scroll");
+  if (!input.clientWidth) return;
+  const top = scroll.scrollTop;
+  input.style.height = "auto";
+  const style = getComputedStyle(input);
+  input.style.height = `${Math.ceil(input.scrollHeight + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth))}px`;
+  scroll.scrollTop = top;
+}
+let summaryPromptWidth = 0;
+let summaryPromptResizeFrame = null;
+new ResizeObserver(([entry]) => {
+  if (entry.contentRect.width !== summaryPromptWidth) {
+    summaryPromptWidth = entry.contentRect.width;
+    if (summaryPromptResizeFrame === null) summaryPromptResizeFrame = requestAnimationFrame(() => {
+      summaryPromptResizeFrame = null;
+      fitSummaryPrompt();
+    });
+  }
+}).observe($("#summary-prompt"));
+function saveSummaryDraft() {
+  const draft = {prompt:$("#summary-prompt").value, useDefault:$("#use-default-summary-prompt").checked};
+  if (state.current) state.summaryDrafts[state.current.id] = draft;
+  else state.summaryTemplate = draft;
+  renderSummary();
+  fitSummaryPrompt();
+}
+$("#summary-prompt").addEventListener("input", saveSummaryDraft);
+$("#use-default-summary-prompt").addEventListener("change", saveSummaryDraft);
+
+function summaryPromptOptions(result) {
+  if (!result?.prompt && !result?.result?.prompt) return {...state.summaryTemplate};
+  const prompt = result.prompt ?? result.result?.prompt;
+  const useDefault = result.use_default_prompt ?? (prompt === result.default_prompt);
+  return {useDefault, prompt:result.additional_prompt ?? (useDefault ? "" : prompt)};
+}
+
+function showSummaryDraft(draft) {
+  $("#summary-prompt").value = draft.prompt || "";
+  $("#use-default-summary-prompt").checked = draft.useDefault;
+}
 
 function selectSummaryNote(note) {
   const id = note?.id || null;
@@ -2473,7 +2672,8 @@ function selectSummaryNote(note) {
     clearTimeout(state.summaryTimer);
     ++state.summaryRequest;
     state.summaryNoteId = id;
-    $("#summary-prompt").value = id ? state.summaryDrafts[id] ?? state.summaryStates[id]?.prompt ?? "" : "";
+    $("#corrected-transcript-preview").open = false;
+    showSummaryDraft(id ? state.summaryDrafts[id] ?? summaryPromptOptions(state.summaryStates[id]) : state.summaryTemplate);
   }
   renderSummary();
   if (id) pollSummary(id);
@@ -2487,8 +2687,8 @@ async function pollSummary(id) {
     if (request !== state.summaryRequest || state.current?.id !== id) return;
     state.summaryStates[id] = result;
     if (!(id in state.summaryDrafts)) {
-      state.summaryDrafts[id] = result.prompt || result.result?.prompt || result.default_prompt;
-      $("#summary-prompt").value = state.summaryDrafts[id] || "";
+      state.summaryDrafts[id] = summaryPromptOptions(result);
+      showSummaryDraft(state.summaryDrafts[id]);
     }
     renderSummary();
     if (result.phase === "running") state.summaryTimer = setTimeout(() => pollSummary(id), 1000);
@@ -2505,6 +2705,7 @@ function renderSummary() {
   const info = state.summaryProviders.find(item => item.id === $("#summary-provider").value);
   const summary = note ? state.summaryStates[note.id] : null;
   const running = summary?.phase === "running";
+  const useDefault = $("#use-default-summary-prompt").checked;
   if (note) $("#delete-note").disabled = running || state.summarySubmitting || Boolean(state.cancellingId || state.restartingId || state.deletingId) || ["queued", "processing"].includes(note.status);
   $("#summary-provider-status").textContent = info ? `${info.name} · ${info.message}` : "CLI 연결을 확인하고 있습니다…";
   $("#summary-provider-status").classList.toggle("ready", Boolean(info?.ready));
@@ -2514,26 +2715,34 @@ function renderSummary() {
     $("#cli-setup-command").textContent = info.installed ? info.login : `${info.install}\n${info.login}`;
     $("#cli-docs").href = info.url;
   }
-  $("#run-summary").disabled = !info?.ready || note?.status !== "done" || running || state.summarySubmitting;
-  $("#run-summary span").textContent = state.summarySubmitting ? "요약 준비 중…" : running ? "기록을 정리하고 있어요…" : summary?.result ? "최신 파일로 다시 요약" : "Markdown으로 요약하기";
+  $("#run-summary").disabled = !info?.ready || note?.status !== "done" || running || state.summarySubmitting || Boolean(state.openingNote) || (!useDefault && !$("#summary-prompt").value.trim());
+  $("#run-summary span").textContent = state.openingNote ? "노트 불러오는 중…" : state.summarySubmitting ? "보정·요약 준비 중…" : running ? "기록을 정리하고 있어요…" : summary?.result ? "다시 보정·요약하기" : "전사문 보정·요약하기";
   $("#summary-provider").disabled = running || state.summarySubmitting;
   $("#summary-prompt").disabled = running || state.summarySubmitting;
+  $("#use-default-summary-prompt").disabled = running || state.summarySubmitting;
+  $("#summary-prompt-label").textContent = useDefault ? "추가 요청" : "요청 내용";
+  $("#summary-prompt-optional").classList.toggle("hidden", !useDefault);
+  $("#summary-prompt").placeholder = useDefault ? "추가로 요청할 내용을 적어 주세요." : "직접 요청할 내용을 적어 주세요.";
   $("#cancel-summary").classList.toggle("hidden", !running);
   $("#summary-source").textContent = !note ? "먼저 2단계에서 노트를 선택하세요." : note.status !== "done" ? "전사가 완료되면 이 노트를 요약할 수 있습니다." : note.text_path ? note.text_path.split("/").pop() : note.title;
   $("#summary-source").title = note?.status === "done" ? note.text_path || "실행할 때 전사 파일을 기본 경로에 저장합니다." : "";
-  const message = summary?.phase === "error" ? summary.error : summary?.phase === "cancelled" ? "요약을 취소했습니다. 다시 실행할 수 있습니다." : running ? `${summary.provider === "claude" ? "Claude" : "Codex"}가 전사 파일을 읽고 요약하고 있습니다. 다른 노트를 확인해도 작업은 계속됩니다.` : "";
+  const message = summary?.phase === "error" ? summary.error : summary?.phase === "cancelled" ? "보정·요약을 취소했습니다. 다시 실행할 수 있습니다." : running ? `${summary.provider === "claude" ? "Claude" : "Codex"}가 전사문을 보정하고 요약하고 있습니다. 다른 노트를 확인해도 작업은 계속됩니다.` : "";
   $("#summary-status").textContent = message || "";
   $("#summary-status").className = `summary-status${!message ? " hidden" : ""}${running ? " running" : ""}${summary?.phase === "error" ? " error" : ""}`;
   $("#summary-result-wrap").classList.toggle("hidden", !summary?.result);
   $("#summary-result").textContent = summary?.result?.text || "";
-  const markdownPath = summary?.result?.markdown_path;
-  $("#reveal-summary").classList.toggle("hidden", !markdownPath);
-  $("#reveal-summary span").textContent = markdownPath ? markdownPath.split("/").pop() : "";
-  $("#reveal-summary").title = markdownPath ? `${markdownPath}\n파인더에서 보기` : "파인더에서 보기";
+  $("#corrected-transcript-preview").classList.toggle("hidden", !summary?.result?.corrected_text);
+  $("#corrected-transcript-result").textContent = summary?.result?.corrected_text || "";
+  for (const [selector, path] of [["#reveal-summary", summary?.result?.markdown_path], ["#reveal-corrected", summary?.result?.corrected_path]]) {
+    $(selector).classList.toggle("hidden", !path);
+    $(`${selector} span`).textContent = path ? path.split("/").pop() : "";
+    $(selector).title = path ? `${path}\n파인더에서 보기` : "파인더에서 보기";
+  }
   if (summary?.result) {
     $("#summary-result-label").textContent = `${summary.result.provider === "claude" ? "Claude" : "Codex"} · ${formatDate(summary.result.completed_at)}`;
     $("#summary-stale").classList.toggle("hidden", !(summary.stale || summary.result.source_hash !== note.text_hash || note.status !== "done"));
   }
+  fitSummaryPrompt();
 }
 
 $("#run-summary").addEventListener("click", async () => {
@@ -2542,11 +2751,12 @@ $("#run-summary").addEventListener("click", async () => {
   state.summarySubmitting = true;
   const provider = $("#summary-provider").value;
   const prompt = $("#summary-prompt").value.trim();
+  const useDefault = $("#use-default-summary-prompt").checked;
   renderSummary();
   try {
     await flushSave();
     await saveLocationReady;
-    const result = await api(`/api/notes/${encodeURIComponent(id)}/summary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, ...(prompt ? { prompt } : {}), directory: state.saveDirectory }) });
+    const result = await api(`/api/notes/${encodeURIComponent(id)}/summary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, prompt, use_default_prompt:useDefault, directory: state.saveDirectory }) });
     state.summaryStates[id] = result;
     if (state.current?.id === id) {
       const note = await api(`/api/notes/${encodeURIComponent(id)}`);
@@ -2570,16 +2780,31 @@ $("#cancel-summary").addEventListener("click", async event => {
   } catch (error) { toast(error.message, true); }
   finally { $("#cancel-summary").disabled = false; }
 });
-$("#reveal-summary").addEventListener("click", async () => {
-  const path = state.current && state.summaryStates[state.current.id]?.result?.markdown_path;
+async function revealSummaryFile(key) {
+  const path = state.current && state.summaryStates[state.current.id]?.result?.[key];
   if (!path) return;
   const bridge = window.webkit?.messageHandlers?.revealTextFile;
   if (!bridge) return toast(path);
   try { await bridge.postMessage({ path }); }
-  catch (error) { toast(error.message || "MD 파일을 찾을 수 없습니다.", true); }
+  catch (error) { toast(error.message || "결과 파일을 찾을 수 없습니다.", true); }
+}
+$("#reveal-summary").addEventListener("click", () => revealSummaryFile("markdown_path"));
+$("#reveal-corrected").addEventListener("click", () => revealSummaryFile("corrected_path"));
+$("#copy-corrected").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#corrected-transcript-result").textContent); toast("보정 전사문을 복사했습니다."); }
+  catch (_) { toast("복사하지 못했습니다. 보정 전사문을 직접 선택해 복사해 주세요.", true); }
 });
 
 $("#copy-summary").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("#summary-result").textContent); toast("요약을 복사했습니다."); }
   catch (_) { toast("복사하지 못했습니다. 요약 내용을 직접 선택해 복사해 주세요.", true); }
+});
+
+$('#auxiliary-transcript').addEventListener('toggle', async event => {
+  if (!event.target.open || $('#auxiliary-transcript-text').textContent) return;
+  const id = event.target.dataset.noteId;
+  try {
+    const value = await api(`/api/notes/${encodeURIComponent(id)}/auxiliary-transcript`);
+    if (event.target.dataset.noteId === id) $('#auxiliary-transcript-text').textContent = value.text;
+  } catch (error) { toast(error.message,true); }
 });

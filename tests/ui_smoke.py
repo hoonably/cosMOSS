@@ -237,7 +237,7 @@ async def main():
         await page.wait_for_function("document.querySelector('#save-location-name').textContent === '노트'")
         assert '/Users/tester/Documents/노트' in await page.locator('#save-location').get_attribute('title')
         assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.'
-        assert await page.locator('#summary-path-note').text_content() == '기본 경로에 AI 요약 md파일을 저장합니다.'
+        assert await page.locator('#summary-path-note').text_content() == '기본 경로에 보정 TXT·요약 MD를 저장합니다.'
         await page.evaluate('window.__cancelSaveLocation = true')
         await page.click('#save-location')
         assert await page.locator('#save-location-name').inner_text() == '노트'

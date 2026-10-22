@@ -66,7 +66,7 @@ async def main():
             await route.fulfill(json=result)
         await page.route('**/identify-speakers', identify)
         await page.goto(base)
-        await page.locator(f'.note-item[data-id="{identity}"]').click()
+        await page.locator(f'.note-item[data-id="{identity}"] .note-edit').click()
         await page.click('#edit-speakers')
         await page.click('#identify-voice-speakers')
         await page.locator('#voice-review-dialog').wait_for(state='visible')
