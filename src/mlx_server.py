@@ -59,6 +59,7 @@ def load_once() -> Any:
             raise RuntimeError("이 Mac에서 전사하려면 Apple Silicon(macOS arm64)이 필요합니다.")
         from mlx_audio.stt.utils import load_model
         from src.mlx_kv_cache import configure_kv_cache
+        from src.mlx_weights import normalize_moss_convolutions
 
         if not MODEL_PATH.exists():
             raise RuntimeError(
@@ -66,6 +67,7 @@ def load_once() -> Any:
                 "./scripts/download-mlx-model.sh 를 실행하세요."
             )
         loaded_model = load_model(str(MODEL_PATH))
+        normalize_moss_convolutions(loaded_model)
         configure_kv_cache(loaded_model, bits=KV_CACHE_BITS)
         MODEL = loaded_model
     return MODEL
