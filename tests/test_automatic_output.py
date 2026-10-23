@@ -1,5 +1,6 @@
 """Save the selected result format without a browser or a second export step."""
 import asyncio
+from contextlib import asynccontextmanager
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,11 +37,19 @@ class AutomaticOutputTests(unittest.IsolatedAsyncioTestCase):
         source = self.store.resolve_path(note_id, self.store.get(note_id)['source_path'])
         target = ResolvedDevice(TranscriptionConfig.from_env({}), 'moss', '이 Mac', 'local')
         segments = [{'id': 0, 'start': 1, 'end': 3, 'speaker': 'S01', 'text': '회의 내용입니다.'}]
+        @asynccontextmanager
+        async def session(*args):
+            yield
+        diarization = {'result': {'turns': [{'start': 1, 'end': 3, 'speaker': '0'}],
+                                 'load_seconds': 1, 'inference_seconds': 1}}
         with patch.object(self.main, 'resolve_device', new=AsyncMock(return_value=target)), \
+             patch.object(self.main.LOCAL_MODELS, 'inference_session', new=session), \
+             patch.object(self.main.DIARIZATION.local, 'execute', new=AsyncMock(return_value=diarization)), \
+             patch.object(self.main, 'estimate_note_inference', return_value=30), \
              patch.object(self.main, 'run_audio_work', new=AsyncMock(side_effect=[None, 4., [(source, 0.)], []])), \
              patch.object(self.main, 'transcribe_chunk', new=AsyncMock(return_value=('[1][S01]회의 내용입니다.[3]', segments))) as inference:
             await self.main.transcribe(note_id)
-            self.assertEqual(inference.await_count, 1)
+            self.assertEqual(inference.await_count, 1, self.store.get(note_id).get('error'))
         return self.store.get(note_id)
 
     async def test_selected_format_and_directory_are_saved_on_completion_and_edits_use_same_file(self):

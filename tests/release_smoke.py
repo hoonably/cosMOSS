@@ -15,6 +15,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 
 
 def main():
@@ -60,8 +61,11 @@ def main():
                 headers['Content-Type'] = 'application/json'
             req = urllib.request.Request(base + path, data=json.dumps(body).encode() if body is not None else None,
                                          headers=headers, method=method)
-            with urllib.request.urlopen(req, timeout=20) as response:
-                return json.load(response)
+            try:
+                with urllib.request.urlopen(req, timeout=20) as response:
+                    return json.load(response)
+            except urllib.error.HTTPError as error:
+                raise AssertionError(f'{method} {path}: {error.code} {error.read().decode()}') from error
 
         with (root / 'backend.log').open('wb') as log:
             process = subprocess.Popen([str(resources / 'python/bin/python3.12'), '-m', 'uvicorn', 'src.main:app',

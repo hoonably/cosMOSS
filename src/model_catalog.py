@@ -10,7 +10,7 @@ ORIGINAL = 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
 MLX_8BIT = 'vanch007/mlx-MOSS-Transcribe-Diarize-8bit'
 MODELS = [
     dict(key='mlx-8bit', name='MOSS 0.9B · MLX 8bit', backend='mlx', repo=MLX_8BIT, bytes=1258427152, precision='auto', description='텍스트 디코더 8비트 · Mac 기본 추천'),
-    dict(key='mlx-4bit', name='MOSS 0.9B · MLX 4bit', backend='mlx', repo='vanch007/mlx-MOSS-Transcribe-Diarize-4bit', bytes=960434705, precision='auto', description='더 적은 메모리 · 양자화에 따른 결과 차이 가능'),
+    dict(key='mlx-4bit', name='MOSS 0.9B · MLX 4bit', backend='mlx', repo='vanch007/mlx-MOSS-Transcribe-Diarize-4bit', bytes=960434705, precision='auto', description='위험 · 실측에서 시간표시 오류와 긴 녹음의 출력 중단 확인'),
     dict(key='mlx-16bit', name='MOSS 0.9B · MLX 원본 16bit', backend='mlx', repo='vanch007/mlx-MOSS-Transcribe-Diarize', bytes=1817113512, precision='auto', description='원본 정밀도 · 메모리 사용량 증가'),
     dict(key='cuda-original', name='MOSS 0.9B · 원본 BF16 / FP16', backend='cuda', repo=ORIGINAL, bytes=1817113576, precision='auto', description='GPU가 지원하면 BF16, 그 외 FP16'),
 ]

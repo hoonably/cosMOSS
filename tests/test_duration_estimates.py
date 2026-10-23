@@ -62,6 +62,68 @@ class CalibrationTests(unittest.TestCase):
         self.assertGreater(long['memory_expected_gib'],0)
         self.assertTrue(long['calibration_extrapolated'])
 
+    def test_mac_combined_time_adds_one_full_recording_pass_and_hides_unmeasured_total_memory(self):
+        duration = 3937.1306875
+        for count in (1, 2, 4):
+            with self.subTest(count=count):
+                asr = estimate_processing(mac(), duration, count, local_hardware_info=M4, local_runtime=MLX_RUNTIME)
+                combined = estimate_processing(mac(local_diarization='nemotron-3'), duration, count,
+                                               local_hardware_info=M4, local_runtime=MLX_RUNTIME)
+                self.assertAlmostEqual(combined['diarization_time_seconds'], 36.90151841700026)
+                self.assertAlmostEqual(combined['diarization_inference_seconds'], 28.70422870799939)
+                self.assertAlmostEqual(combined['inference_seconds'] - asr['inference_seconds'], 28.70422870799939)
+                self.assertEqual(combined['time_seconds'], round(combined['inference_seconds'] + combined['setup_seconds']))
+                self.assertEqual(combined['asr_memory_expected_gib'], asr['memory_expected_gib'])
+                for field in ('memory_expected_gib', 'memory_low_gib', 'memory_high_gib', 'memory_raw_gib'):
+                    self.assertIsNone(combined[field])
+                self.assertFalse(combined['exceeds_capacity'])
+                self.assertEqual(combined['calibration_status'], 'provisional')
+                self.assertIsNone(combined['validation_time_error_percent'])
+                self.assertEqual(combined['diarization_time_source'], 'single-observation-projection')
+                self.assertIn('1회 측정', combined['calibration_note'])
+                self.assertIn('Nemotron 포함', combined['note'])
+
+    def test_mac_combined_nemotron_startup_is_fixed_and_projection_scales_by_whole_recording(self):
+        device = mac('mlx-16bit', local_diarization='nemotron-3')
+        short = estimate_processing(device, 300, 1, local_hardware_info=M4, local_runtime=MLX_RUNTIME)
+        long = estimate_processing(device, 3600, 4, local_hardware_info=M4, local_runtime=MLX_RUNTIME)
+        self.assertEqual(short['diarization_setup_seconds'], long['diarization_setup_seconds'])
+        self.assertAlmostEqual(long['diarization_inference_seconds'] / short['diarization_inference_seconds'], 12)
+        self.assertTrue(short['calibration_extrapolated'])
+        self.assertTrue(long['calibration_extrapolated'])
+        # The ASR-only 16-bit curve is checked, but the combined pipeline is not.
+        self.assertEqual(short['calibration_status'], 'provisional')
+
+    def test_mac_combined_unknown_conditions_do_not_fall_back_to_asr_only_predictions(self):
+        device = mac(local_diarization='nemotron-3')
+        cases = [
+            (device, {**M4, 'name':'Apple M2'}, MLX_RUNTIME),
+            (device, {**M4, 'memory_gib':32}, MLX_RUNTIME),
+            (device, None, MLX_RUNTIME),
+            (device, M4, 'other-runtime'),
+            (mac(local_diarization='nemotron-3', kv_bits=0), M4, MLX_RUNTIME),
+            ({**device, 'model_source':'folder', 'model_path':'/custom/model'}, M4, MLX_RUNTIME),
+        ]
+        for config, hardware, runtime in cases:
+            with self.subTest(config=config, hardware=hardware, runtime=runtime):
+                estimate = estimate_processing(config, 3600, 2, local_hardware_info=hardware, local_runtime=runtime)
+                self.assertIsNone(estimate['time_seconds'])
+                self.assertIsNone(estimate['memory_expected_gib'])
+                self.assertEqual(estimate['time_source'], 'unmeasured')
+                self.assertEqual(estimate['diarization_time_source'], 'unmeasured')
+        low = estimate_processing(mac('mlx-4bit', local_diarization='nemotron-3'), 3600, 1,
+                                  local_hardware_info=M4, local_runtime=MLX_RUNTIME)
+        self.assertIsNone(low['time_seconds'])
+        self.assertIsNone(low['inference_seconds'])
+
+    def test_local_marker_does_not_change_saved_asr_only_or_remote_mlx_estimates(self):
+        remote = {**mac(local_diarization='nemotron-3'), 'id':'remote-mac'}
+        remote_result = estimate_processing(remote, 1800, 1, local_hardware_info=M4, local_runtime=MLX_RUNTIME)
+        asr_result = estimate_processing(mac(), 1800, 1, local_hardware_info=M4, local_runtime=MLX_RUNTIME)
+        self.assertEqual(remote_result['time_seconds'], asr_result['time_seconds'])
+        self.assertEqual(remote_result['memory_expected_gib'], asr_result['memory_expected_gib'])
+        self.assertNotIn('diarization_time_source', asr_result)
+
     def test_mac_does_not_mix_hardware_models_precision_or_software(self):
         for hardware in ({**M4,'name':'Apple M4 Pro'},{**M4,'name':'Apple M2'},{**M4,'memory_gib':32},None):
             self.assertIsNone(mac_estimate(mac(),1800,1,hardware,MLX_RUNTIME))
@@ -123,10 +185,15 @@ class CalibrationAPITests(unittest.IsolatedAsyncioTestCase):
                     response=await client.get('/api/devices/local/estimate',params={'duration':3600,'count':2})
                 self.assertEqual(response.status_code,200,response.text)
                 preview=response.json()
-                self.assertEqual(preview['memory_expected_gib'],4.9)
-                frozen=main.estimate_note_inference({'device_snapshot_json':json.dumps(device)},3600,2)
+                self.assertIsNone(preview['memory_expected_gib'])
+                self.assertEqual(preview['asr_memory_expected_gib'],4.9)
+                snapshot = {**device, 'options':{**device.get('options', {}), 'local_diarization':'nemotron-3'}}
+                frozen=main.estimate_note_inference({'device_snapshot_json':json.dumps(snapshot)},3600,2)
                 self.assertEqual(frozen,preview['time_seconds'])
                 self.assertEqual(preview['calibration_model'],'mlx-8bit')
+                historical = main.estimate_note_inference({'device_snapshot_json':json.dumps(device)},3600,2)
+                self.assertLess(historical, frozen)
+                self.assertAlmostEqual(frozen - historical, preview['diarization_time_seconds'], delta=1)
 
     async def test_local_custom_folder_does_not_inherit_catalog_model_timings(self):
         from src import main

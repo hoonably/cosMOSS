@@ -21,8 +21,28 @@ Nemotron. Alignment runs after Qwen exit, with a PyTorch allocator budget below
 its observed process peak and adaptive batches. Raw Qwen token IDs and natural
 EOS are checked before accepting outputs. Auxiliary text is private in
 `speech-result.json` and fetched only through the per-note auxiliary endpoint;
-it never overwrites the MOSS body. Mac MLX remains independent. The old
+it never overwrites the MOSS body. Mac MLX uses its native ASR runtime, followed
+by the same whole-recording Nemotron attribution policy. The old
 `speech_bootstrap.py` / `speech_worker.py` are retained for saved legacy jobs.
+
+## Mac transcription bundle
+
+New local jobs snapshot `options.local_diarization="nemotron-3"`. They transcribe
+all MLX chunks, unload the ASR model, run Nemotron once on the full recording,
+then associate the original ASR text/timestamps with the speaker timeline. The
+server attribution rules are shared: ambiguous/overlapping turns remain
+unidentified instead of inheriting the nearest speaker. Nemotron does not repair
+ASR text or timing errors. Historical jobs without the marker retain their
+MOSS-only behavior and estimates.
+
+The explicit model-download action prepares both the selected MLX checkpoint
+and the isolated Nemotron runtime. Selection alone downloads nothing. Readiness
+requires both stages, caches are reused, and preparation does not keep a model
+resident. The same note dialog supports per-note model choice and estimates on
+Mac and server; only GPU and chunk controls differ. Local background jobs hold
+one Mac resource through ASR, unload, diarization and cleanup, so multiple
+recordings run sequentially and cancellation cannot release it while a child
+still owns the device.
 
 The app takes a per-note snapshot of the preset and requested batch. Automatic
 batch plans budget for quiet-boundary cuts up to five seconds early, avoiding an
@@ -181,9 +201,10 @@ Hugging Face uses `~/.cache/huggingface/hub` by default and honors `HF_HOME` and
 Speaker re-diarization lives in `src/diarization*.py`, `src/local_diarization.py` and `static/diarization.js`.
 Nemotron FP32 is the default. The other two UI presets use Community-1 with
 automatic or explicit speaker count; they are one model, not two checkpoints.
-The optional Mac Nemotron runtime is isolated under the configured runtime root,
+The Mac Nemotron runtime is isolated under the configured runtime root,
 uses MPS when available (otherwise CPU), and does not install a transcription
-model. Its child watches the backend parent and is reaped on cancellation.
+model itself. It is also reused by the local transcription bundle. Its child
+watches the backend parent and is reaped on cancellation.
 Mac process peak RSS is reported as RAM, never as CUDA VRAM.
 It has a separate, versioned per-SSH-user runtime and pinned model revisions,
 and never changes the active MOSS runtime. Setup explicitly downloads on the
@@ -252,25 +273,41 @@ and use atomic replacement. File-backed summaries read the actual source bytes
 without invoking the audio-note TXT serializer. `test_text_library.py` and
 `library_ui_smoke.py` cover indexing, edits, conflict protection and summary flow.
 The review list selects notes without opening the editor; its separate edit
-button opens the note dialog. `note_selection_ui_smoke.py` checks direct summary
+button opens the note dialog and its Trash icon uses the same version/busy-checked
+file action as the context menu. `note_selection_ui_smoke.py` checks direct summary
 handoff, per-note drafts, explicit editing, concurrent selections, load errors,
 and focus retention during list refreshes in WebKit and Chromium.
 
-`NoteCleanup` links deletion to every note and document index entry owning the
-exported path. The Trash route checks the viewed file version and all related
-jobs before moving the export and managed upload directories to macOS Trash,
-then removes SQLite note/index rows, summary states and diarization JSON. It
-never removes the user's external source audio, voice profiles, model caches,
-separate exports or anonymous performance samples. Trash failures retain
-remaining records so cleanup can retry. Restoring only the transcript restores
-a regular library document, not the removed audio-note history.
+`RecoverableNoteCleanup` links deletion to every note and document index entry
+owning the exported path. Version/busy checks precede archiving a transcript in
+`data/recycle-bin/`. `data/note-retention.sqlite3` records durable wall-clock
+deletion timestamps; audio, note rows, summary and diarization state stay hidden
+for seven days. Document IDs are reserved so a new file at the old pathname
+cannot inherit the deleted file's history. `/api/trash` and its restore route
+expose recoverable items; all other note routes reject hidden IDs.
 
-A lifespan task checks missing completed exports every 30 seconds with a
-60-second grace period. It skips inaccessible/noncanonical parent folders,
-symlinks and active jobs. Same-folder renames are relinked using indexed file
-identity/mtime/size or a managed transcript hash; ambiguous matches are retained.
-`test_note_cleanup.py` covers cleanup scope, shared owners, active work, failed
-Trash/retry, restored files, renames, unavailable folders and path containment.
+A lifespan task checks missing exports every 30 seconds with a 60-second grace
+period. Missing or moved files retain their private data for seven days too.
+The original directory and user-selected library directory are checked for
+unique file-identity or exact-content matches before scans/purges. Inaccessible
+folders, symlinks, active jobs and ambiguous matches defer cleanup. Expiration
+removes only the retained transcript and app-owned audio/records, preserving
+external source audio, Voice Memos, profiles, caches, separate exports and
+anonymous performance samples. `test_note_retention.py` and note-file API tests
+cover recovery, expiry, ownership, failure retry and retained IDs.
+
+`job_scheduler.py` dispatches immutable note snapshots by GPU UUID. Current
+finite server jobs can run on distinct GPUs while each GPU stays FIFO; Mac
+jobs serialize on one local resource. Legacy persistent workers use conservative
+shared locks. Cancellation keeps the resource claimed until GPU cleanup ends.
+`POST /api/notes/batch` validates selected uploads against one GPU inventory and
+queues consumed uploads only after the batch has been checked; partial errors
+leave failed uploads available for retry. Consuming an upload is atomic, so a
+repeated request cannot duplicate work. The STEP 02 background job list does not
+change the selected note or reopen its editor. Library summary markers derive
+from persisted summary results/source hashes, including after app restart.
+`test_job_scheduler.py`, `test_batch_notes.py`, `test_note_markers.py` and the
+background/batch UI smoke tests cover these flows without model inference.
 
 `scripts/build-mac-app.sh` builds a development launcher referencing its checkout
 via `CosMOSSProjectRoot` in Info.plist. `scripts/build-mac-release.sh` builds a
@@ -426,7 +463,8 @@ validation, dynamic device cards and control heights in Chromium and WebKit.
 `src/text_files.py` tracks each exported TXT's path and SHA-256 digest. Explicit
 speaker saves write the TXT before committing names; later note edits update the
 same file. External edits cause a conflict rather than an overwrite. Deleting a
-note removes its managed audio and summary, but preserves its exported TXT.
+note moves its transcript into the app recycle bin and retains its managed audio
+and summary for the seven-day recovery period.
 
 New-note submissions pin `output_format` and `output_directory`. After inference,
 the backend atomically writes that file before publishing the completed note;
@@ -461,13 +499,19 @@ only WebSearch/WebFetch allowed, MCP disabled and configuration sources empty. B
 temporary working directories and disable session persistence. The final result,
 source digest, prompt, and status are saved in `data/summaries/<note-id>.json`.
 Both providers return a schema-constrained object containing the complete corrected
-transcript and Markdown summary. The app validates both fields and publishes
-`<stem>_보정.txt` and `<stem>_요약.md` without replacing any existing file; collisions
-advance both suffixes together, and a failed second publication rolls back the first.
+transcript and Markdown summary. The app validates both fields and publishes one
+`<stem>_요약.md`, starting with the summary and ending with a closed `<details>`
+transcript toggle. Correction still precedes summarization in the AI request;
+the app controls the final document order. The transcript is fenced as literal text with a delimiter longer than any
+backtick run in the content. Publication never replaces existing files or symlinks;
+collisions advance a numeric suffix, and failed publication removes temporary files.
 Original files stay unchanged. Legacy saved summaries remain readable and custom
 prompts are preserved when upgrading an unchanged default. A checked-by-default
-checkbox includes the default request; its help dialog reads the shared default
-without requiring a selected note. The editor holds only additional instructions.
+checkbox includes the saved default request; its help dialog edits it without
+requiring a selected note. Preferences are atomically saved in
+`data/summary-preferences.json`; restoring the recommendation resets the saved
+default. A run snapshots its base prompt before provider checks, so editing the
+preference cannot change a running request. The STEP 03 editor holds only additional instructions.
 Disabling the checkbox sends only the edited user request, and an empty custom-only
 request is rejected. The textarea grows with its content and window width;
 scrolling belongs to STEP 03.
@@ -522,14 +566,35 @@ Device/GPU tests and a browser smoke test are documented in [DEVICES.md](DEVICES
 
 ## Processing estimates
 
-The note dialog has a wide two-column layout: GPU selection on the left,
-audio and note/chunk settings on the right with the start button below them.
-Below 850px it stacks GPU selection, settings and the start button.
+The note dialog has a 45:55 two-column layout: model, processing controls and
+estimates on the left, audio/note settings and the start button on the right.
+The server adds GPU selection on the left; longer GPU lists scroll internally.
+Narrow windows stack the columns.
 CUDA chunk controls and estimate requests wait for a GPU number, so an unknown
 hardware guess cannot appear as the selected server's expected latency.
 The MLX dialog requests the selected model/count estimate after file preparation.
 Only a matching measured Mac profile supplies displayed numerical predictions;
 unmatched hardware, model folders or advanced settings say `추가 측정 필요`.
+
+For local jobs marked `local_diarization="nemotron-3"`, `processing_estimates.py`
+adds the Mac Nemotron reference only on Apple M4 with 16 GiB and a matching MLX
+calibration. The single 2026-10-21 MPS observation used 3937.1306875 seconds of
+audio: 28.704228708 seconds of inference and 36.901518417 seconds of fresh-process
+wall time. The provisional additive estimate is
+`8.197289709 + 28.704228708 * duration / 3937.1306875` seconds, once per recording,
+regardless of MLX chunk count. Both components include process/model preparation,
+but exclude initial downloads and file transfer. A single observation does not
+validate linear scaling or the combined pipeline; the API marks its status
+provisional and clears the ASR-only validation error for the combined prediction.
+Other hardware or unmatched ASR configurations have no combined time estimate.
+
+No combined MPS/unified-memory peak has been measured. Combined estimates return
+`memory_expected_gib`, `memory_high_gib`, `memory_low_gib` and `memory_raw_gib` as
+null with `memory_source="combined-unified-memory-unmeasured"`. Matched ASR-only
+memory remains available under `asr_memory_expected_gib` / `asr_memory_raw_gib`
+for diagnostics, never as the total. Nemotron process RSS is not substituted for
+MPS allocation. Saved MOSS-only jobs without the marker retain their original
+memory estimates.
 
 `src/duration_calibrations.json` contains the public numerical export of the
 2026-10-23 duration study, consumed by `src/duration_estimates.py`. It includes

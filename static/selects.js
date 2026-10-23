@@ -11,7 +11,9 @@
 
   function optionParts(option) {
     const text = option?.label || "선택하세요";
-    return { text: text.replace(/ · 추천$/, ""), recommended: text.endsWith(" · 추천") };
+    if (option?.hasAttribute("data-badge")) return { text, badge: option.dataset.badge };
+    const badge = text.match(/ · (추천|위험)$/)?.[1] || "";
+    return { text: badge ? text.slice(0, -(badge.length + 3)) : text, badge };
   }
   function key(select) { return select.id || (select.dataset.deviceModel ? `device:${select.dataset.deviceModel}` : null); }
   function enabled(option) { return !!option && !option.disabled && !option.hidden && !option.closest("optgroup[disabled], optgroup[hidden]"); }
@@ -23,10 +25,12 @@
     const option = select.selectedOptions[0];
     const parts = optionParts(option);
     setText(value, parts.text);
-    badge.hidden = !parts.recommended;
+    setText(badge, parts.badge);
+    badge.hidden = !parts.badge;
+    badge.classList.toggle("is-danger", parts.badge === "위험");
     const disabled = select.matches(":disabled");
     if (button.disabled !== disabled) button.disabled = disabled;
-    button.title = option?.label || "선택하세요";
+    button.title = parts.text + (parts.badge ? ` · ${parts.badge}` : "");
     button.setAttribute("aria-required", String(select.required));
     const description = select.getAttribute("aria-describedby");
     if (description !== button.getAttribute("aria-describedby")) {
@@ -90,7 +94,7 @@
   function renderMenu() {
     if (!opened) return;
     const { widget, menu } = opened;
-    const signature = JSON.stringify([widget.select.selectedIndex, ...[...widget.select.options].map(option => [option.value, option.label, enabled(option), option.hidden, !!option.closest("optgroup[hidden]")])]);
+    const signature = JSON.stringify([widget.select.selectedIndex, ...[...widget.select.options].map(option => [option.value, option.label, option.dataset.badge, enabled(option), option.hidden, !!option.closest("optgroup[hidden]")])]);
     if (opened.signature === signature) { position(); return; }
     opened.signature = signature;
     menu.replaceChildren();
@@ -106,12 +110,13 @@
       row.dataset.value = option.value;
       const text = document.createElement("span");
       text.className = "custom-select-option-text";
-      text.textContent = optionParts(option).text;
+      const parts = optionParts(option);
+      text.textContent = parts.text;
       row.append(text);
-      if (optionParts(option).recommended) {
+      if (parts.badge) {
         const badge = document.createElement("span");
-        badge.className = "custom-select-badge";
-        badge.textContent = "추천";
+        badge.className = `custom-select-badge${parts.badge === "위험" ? " is-danger" : ""}`;
+        badge.textContent = parts.badge;
         row.append(badge);
       }
       const tick = document.createElement("span");
@@ -276,7 +281,7 @@
       if (record.type === "attributes") return target?.tagName === "FIELDSET" || (opened && target?.contains(opened.widget.button));
       return [...record.addedNodes, ...record.removedNodes].some(node => node.nodeType === Node.ELEMENT_NODE && (node.matches("select") || node.querySelector("select")));
     })) refresh();
-  }).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["disabled", "selected", "value", "label", "hidden", "open", "class", "aria-label", "aria-describedby", "required"] });
+  }).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["disabled", "selected", "value", "label", "data-badge", "hidden", "open", "class", "aria-label", "aria-describedby", "required"] });
   document.addEventListener("pointerdown", event => {
     if (opened && !opened.menu.contains(event.target) && !opened.widget.wrapper.contains(event.target)) close();
   }, true);

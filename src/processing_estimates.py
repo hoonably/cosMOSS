@@ -13,8 +13,68 @@ from src.performance_history import matching_profile, seed_profiles
 from src.duration_estimates import mac_estimate
 
 GIB = 1024 ** 3
-ESTIMATE_VERSION = 'measured-profiles-20261023-v4'
+ESTIMATE_VERSION = 'measured-profiles-20261024-v5'
 CUDA_CONTEXT_HEADROOM_GIB = 1.0
+
+# One FP32/MPS observation on Apple M4, 16 GiB. This is an additive time
+# reference, not a measured end-to-end MLX + Nemotron profile. See
+# docs/performance/2026-10-21-h200-diarization.md, "Mac 실행 확인".
+MAC_NEMOTRON_AUDIO_SECONDS = 3937.1306875
+MAC_NEMOTRON_INFERENCE_SECONDS = 28.70422870799939
+MAC_NEMOTRON_WALL_SECONDS = 36.90151841700026
+
+
+def add_local_diarization_estimate(result, measured, duration, hardware):
+    """Compose sequential work without relabeling ASR-only memory as total."""
+    if measured:
+        result.update(measured)
+    result.update(
+        asr_memory_expected_gib=result['memory_expected_gib'],
+        asr_memory_raw_gib=result.get('memory_raw_gib'),
+        memory_expected_gib=None, memory_low_gib=None, memory_high_gib=None,
+        memory_raw_gib=None, memory_source='combined-unified-memory-unmeasured',
+        memory_note='MOSS MLX + Nemotron의 통합 메모리 Peak는 추가 측정이 필요합니다.',
+        diarization_model='nemotron-3', diarization_time_seconds=None,
+        diarization_inference_seconds=None, diarization_setup_seconds=None,
+        diarization_time_source='unmeasured',
+        note='Nemotron 포함 · 모델 준비 포함 · 최초 다운로드·파일 전송 제외',
+        exceeds_capacity=False, exceeds_free=False,
+    )
+    hardware = hardware or {}
+    capacity = hardware.get('memory_gib')
+    matching_diarization_hardware = (hardware.get('name') == 'Apple M4'
+                                    and isinstance(capacity, (int, float))
+                                    and math.isfinite(capacity) and abs(capacity - 16) <= .5)
+    if not measured or not matching_diarization_hardware:
+        result.update(time_source='unmeasured', time_seconds=None,
+                      calibration_note='MOSS MLX + Nemotron · 이 Mac과 설정은 추가 측정 필요')
+        return result
+    # mac_estimate has already checked the matching Apple M4 16-GiB hardware,
+    # pinned ASR runtime/revision and settings. Nemotron runs once on the whole
+    # recording, so its startup and audio work must not be multiplied by chunks.
+    startup = MAC_NEMOTRON_WALL_SECONDS - MAC_NEMOTRON_INFERENCE_SECONDS
+    work = MAC_NEMOTRON_INFERENCE_SECONDS * duration / MAC_NEMOTRON_AUDIO_SECONDS
+    result.update(
+        asr_time_seconds=measured['time_seconds'],
+        asr_validation_time_error_percent=measured.get('validation_time_error_percent'),
+        validation_time_error_percent=None,
+        diarization_time_seconds=startup + work,
+        diarization_inference_seconds=work, diarization_setup_seconds=startup,
+        diarization_time_source='single-observation-projection',
+        diarization_reference_seconds=MAC_NEMOTRON_AUDIO_SECONDS,
+        calibration_status='provisional',
+        calibration_extrapolated=measured['calibration_extrapolated'] or abs(duration - MAC_NEMOTRON_AUDIO_SECONDS) > 1,
+        calibration_note='실측 참고 · Nemotron 1회 측정으로 추정 · 전체 처리 시간 검증 전',
+    )
+    if measured['time_seconds'] is None:
+        result.update(time_seconds=None, inference_seconds=None,
+                      calibration_note='실측 참고 · 긴 청크 전사 시간은 추가 측정 필요 · Nemotron 1회 측정')
+    else:
+        inference = measured['inference_seconds'] + work
+        setup = measured['setup_seconds'] + startup
+        result.update(inference_seconds=inference, setup_seconds=setup,
+                      time_seconds=max(1, round(inference + setup)))
+    return result
 
 
 def profile_points(samples, kind, field):
@@ -71,6 +131,9 @@ def estimate_processing(device, duration, count, gpu=None, local_memory_gib=None
                   note='초기 추정 · 모델 준비·파일 전송 제외')
     if backend == 'mlx':
         measured = mac_estimate(device, duration, count, local_hardware_info, local_runtime)
+        if device.get('id') == 'local' and options.get('local_diarization') == 'nemotron-3':
+            result['capacity_gib'] = local_memory_gib or (local_hardware_info or {}).get('memory_gib')
+            return add_local_diarization_estimate(result, measured, duration, local_hardware_info)
         if measured:
             result.update(measured)
             result['capacity_gib'] = local_memory_gib or (local_hardware_info or {}).get('memory_gib')

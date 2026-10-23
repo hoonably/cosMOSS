@@ -90,8 +90,8 @@ async def main():
         assert await page.locator('#use-default-summary-prompt').is_checked()
         assert await page.locator('#summary-prompt').input_value() == ''
         await page.locator('#show-default-summary-prompt').click()
-        await page.wait_for_function('document.querySelector("#default-summary-prompt-content").textContent.includes("{원본명}_보정.txt")')
-        assert await page.locator('#default-summary-prompt-content').inner_text() == DEFAULT_QUERY
+        await page.wait_for_function('document.querySelector("#default-summary-prompt-content").value.includes("Markdown 문서 하나")')
+        assert await page.locator('#default-summary-prompt-content').input_value() == DEFAULT_QUERY
         if output:
             await page.locator('#default-summary-prompt-dialog').screenshot(path=str(output.with_name(output.stem+'-default-prompt.png')))
         await page.keyboard.press('Escape')
@@ -200,13 +200,14 @@ async def main():
         assert '결정 사항' in await page.locator('#summary-result').inner_text()
         await page.locator('#reveal-summary').click()
         await page.wait_for_function('window.__revealed?.endsWith("_요약.md")')
+        # Legacy two-file results can still reveal their previous correction file.
         await page.locator('#reveal-corrected').click()
         await page.wait_for_function('window.__revealed?.endsWith("_보정.txt")')
         await page.locator('#corrected-transcript-preview summary').click()
         assert '금요일까지' in await page.locator('#corrected-transcript-result').inner_text()
         assert calls[-1][1]['directory'] == '/Users/tester/Downloads'
         assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.'
-        assert await page.locator('#summary-path-note').text_content() == '기본 경로에 보정 TXT·요약 MD를 저장합니다.'
+        assert await page.locator('#summary-path-note').text_content() == '보정 전사문을 포함한 요약 Markdown을 저장합니다.'
         if output:
             await page.locator('#toast').evaluate("el => el.className = 'toast'")
             await page.screenshot(path=str(output), animations='disabled')

@@ -28,7 +28,7 @@ def main():
         root = pathlib.Path(directory)
         feed = (ROOT / "appcast.xml").read_text()
         (root / "appcast.xml").write_text(feed)
-        (root / "tampered.xml").write_text(feed.replace("<title>0.1.0</title>", "<title>tampered</title>"))
+        (root / "tampered.xml").write_text(feed.replace("<title>cosMOSS</title>", "<title>tampered</title>", 1))
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=directory))
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:

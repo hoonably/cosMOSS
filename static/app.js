@@ -3,16 +3,16 @@ const state = {
   appSetup: null, appSetupRequest: 0, appSetupChecking: false, appSetupTimer: null,
   libraryRequest: 0, libraryLoading: false, executionDeviceId: "local",
   textSaveAttempts: new Set(),
-  fileActionId: null, noteMenuId: null,
+  fileActionId: null, noteMenuId: null, trashRequest: 0, trashRestoring: new Set(),
   environmentDeviceId: null, environments: {}, environmentRequests: new Set(), environmentSubmitting: false,
-  saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryTemplate: {prompt:"", useDefault:true}, summaryDefaultPrompt: "", summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false, voiceIdentifying: false,
+  saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryTemplate: {prompt:"", useDefault:true}, summaryDefaultPrompt: "", summaryRecommendedPrompt: "", summaryPromptLoading: false, summaryPromptSaving: false, summaryPromptRequest: 0, summaryPromptEditorRequest: 0, summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false, voiceIdentifying: false,
   notes: [], current: null, saveTimer: null, pollTimer: null,
   pendingChanges: null, savePromise: null, noteRequest: 0, editRevision: 0, openingNote: null,
   maxUploadBytes: null, defaultChunkMinutes: 30, uploading: false, deletingId: null,
-  elapsedAnchor: null, elapsedTimer: null,
-  uploadPreparation: null, uploadChunkCount: null, cancellingId: null, restartingId: null, cancellationNoteId: null, deletionNoteId: null,
+  elapsedAnchor: null, elapsedTimer: null, backgroundTimer: null, backgroundAnchors: new Map(), jobActions: new Map(),
+  uploadPreparation: null, uploadBatch: [], uploadChunkCount: null, cancellingId: null, restartingId: null, cancellationNoteId: null, deletionNoteId: null,
   estimateKey: null, estimateTimer: null, estimateController: null, chunkDefaultSaving: false,
-  voiceMemos: [], voiceMemoSelected: null, voiceMemoRequest: 0, voiceMemoLoading: false, voiceMemoController: null,
+  voiceMemos: [], voiceMemoSelected: new Set(), voiceMemoRequest: 0, voiceMemoLoading: false, voiceMemoController: null,
   devices: [], deviceStatus: {}, sshProbeHost: null, sshRequest: 0, healthChecking: false,
   deviceModelRevisions: {}, modelSelectingId: null,
   gpuTimer: null, gpuAbort: null, gpuInventory: [], selectedGpu: null, gpuApproval: null, gpuWarningResolve: null, workerStates: {}, workerTimers: {},
@@ -117,7 +117,7 @@ $("#check-app-update").addEventListener("click", async () => {
 
 window.prepareForAppUpdate = async () => {
   if (window.cosmossVoiceProfiles?.busy || state.voiceIdentifying) return false;
-  if (state.uploading || state.uploadPreparation || $("#voice-memo-dialog").open || state.speakerDraft || state.speakerSaving || state.summarySubmitting || state.addingDevice) return false;
+  if (state.uploading || state.uploadPreparation || state.uploadBatch.length || $("#voice-memo-dialog").open || state.speakerDraft || state.speakerSaving || state.summarySubmitting || state.addingDevice) return false;
   try { await flushSave(); }
   catch (_) { return false; }
   return !state.pendingChanges && !state.savePromise;
@@ -251,30 +251,147 @@ function renderList() {
   const list = $("#note-list");
   const focused = document.activeElement.closest?.(".note-item");
   const focusedId = focused?.dataset.id;
-  const focusedControl = document.activeElement.matches(".note-edit") ? ".note-edit" : ".note-select";
+  const focusedControl = document.activeElement.matches(".note-trash") ? ".note-trash" : document.activeElement.matches(".note-edit") ? ".note-edit" : ".note-select";
   const scrollTop = list.scrollTop;
   const query = $("#note-search").value.trim().toLowerCase();
-  const notes = state.notes.filter(note => note.title.toLowerCase().includes(query));
-  $("#note-count").textContent = state.notes.length;
+  const completed = state.notes.filter(note => note.status === "done");
+  const notes = completed.filter(note => note.title.toLowerCase().includes(query));
+  $("#note-count").textContent = completed.length;
   list.innerHTML = notes.length ? notes.map(note => {
     const selected = state.current?.id === note.id;
-    const action = note.status === "done" ? "편집" : ["queued", "processing"].includes(note.status) ? "진행 보기" : "상태 보기";
+    const action = "편집";
+    const summary = noteSummaryStatus(note);
     return `
     <div class="note-item ${selected ? "active" : ""}" data-id="${escapeHtml(note.id)}">
       <button class="note-select" type="button" title="${escapeHtml(note.title)} 선택" aria-label="${escapeHtml(note.title)} 선택" aria-pressed="${selected}" aria-describedby="note-selection-hint">
         <span class="note-item-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${selected ? '<path d="m6 12 4 4 8-8"/>' : '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6M8 13h8M8 17h5"/>'}</svg></span>
-        <span class="note-item-copy"><b>${escapeHtml(note.title)}</b><small><span>${formatDate(note.created_at)}</span><span class="note-status ${note.status}">${note.text_save_error ? "저장 실패" : note.status === "done" ? (note.output_format || "txt").toUpperCase() : noteStatus(note)}</span></small></span>
+        <span class="note-item-copy"><b>${escapeHtml(note.title)}</b><small><span>${formatDate(note.created_at)}</span><span class="note-status ${note.status}">${note.text_save_error ? "저장 실패" : note.status === "done" ? (note.output_format || "txt").toUpperCase() : noteStatus(note)}</span></small><span class="note-summary-badge ${summary.status}" title="${escapeHtml(summary.description)}">${escapeHtml(summary.label)}</span></span>
       </button>
       <button class="note-edit" type="button" aria-label="${escapeHtml(note.title)} ${action}" aria-haspopup="dialog" aria-controls="note-dialog">
         <svg viewBox="0 0 24 24" aria-hidden="true">${note.status === "done" ? '<path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Zm0 0 4-1"/>' : '<path d="m9 6 6 6-6 6"/>'}</svg><span>${action}</span>
       </button>
+      <button class="note-trash" type="button" aria-label="${escapeHtml(note.title)} 휴지통으로 이동" title="최근 삭제로 이동 · 앱 기록과 보관된 녹음을 7일 동안 복구할 수 있습니다." ${note.status !== 'done' || !note.text_path || state.fileActionId || summary.status === 'running' || (state.summarySubmitting && selected) ? 'disabled' : ''}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg>
+      </button>
     </div>`;
-  }).join("") : (query ? '<div class="empty-list">검색 결과가 없습니다</div>' : "");
+  }).join("") : (query ? '<div class="empty-list">검색 결과가 없습니다</div>' : '<div class="empty-list">전사가 끝난 노트가 여기에 표시됩니다.</div>');
   list.querySelectorAll(".note-select").forEach(button => button.addEventListener("click", () => selectNote(button.closest(".note-item").dataset.id)));
   list.querySelectorAll(".note-edit").forEach(button => button.addEventListener("click", () => openNote(button.closest(".note-item").dataset.id)));
+  list.querySelectorAll('.note-trash').forEach(button => button.addEventListener('click', () => actOnNoteFile('trash', null, button.closest('.note-item').dataset.id)));
   list.scrollTop = scrollTop;
   if (focusedId) list.querySelector(`.note-item[data-id="${CSS.escape(focusedId)}"] ${focusedControl}`)?.focus({preventScroll:true});
 }
+
+function noteSummaryStatus(note) {
+  const cached = state.summaryStates[note.id];
+  const status = note.summary_status || (cached?.phase === "running" ? "running" : cached?.stale ? "stale" : cached?.result ? "done" : cached?.phase === "error" ? "error" : cached?.phase === "cancelled" ? "cancelled" : "not_started");
+  const labels = {not_started:"요약 전", running:"요약 중", done:"요약 완료", stale:"다시 요약 필요", error:"요약 실패", cancelled:"요약 취소됨"};
+  const description = status === "done" && note.summary_completed_at ? `3단계 요약 완료 · ${formatDate(note.summary_completed_at)}`
+    : status === "stale" ? "요약 이후 전사문이 수정되었습니다. 3단계에서 다시 요약해 주세요."
+    : status === "not_started" ? "3단계 AI 요약을 아직 진행하지 않은 노트입니다." : `3단계 · ${labels[status] || labels.not_started}`;
+  return {status, label:labels[status] || labels.not_started, description};
+}
+
+function updateNoteSummaryStatus(id, summary) {
+  const note = state.notes.find(note => note.id === id);
+  if (!note) return;
+  note.summary_status = summary.phase === "running" ? "running" : summary.phase === "error" ? "error" : summary.phase === "cancelled" ? "cancelled"
+    : summary.result ? (summary.stale || (note.text_hash && summary.result.source_hash !== note.text_hash) ? "stale" : "done") : "not_started";
+  note.summary_completed_at = summary.result?.completed_at || null;
+  renderList();
+}
+
+function backgroundJobPhase(note) {
+  if (note.status === "queued") return "전사 순서 대기 중";
+  if (note.status === "error") return "전사 실패";
+  if (note.status === "cancelled") return "전사 취소됨";
+  if (note.inference_finished_at) return "노트 마무리 중";
+  if (note.model_progress?.pipeline_phase === "aligning") return "단어 시간 정렬 중";
+  if (note.model_progress?.pipeline_phase === "diarizing") return "화자 구분 중";
+  return {normalizing:"녹음 준비 중", preparing_model:"모델 준비 중", transcribing:"음성 전사 중", linking:"음성 전사 중"}[note.progress_phase] || "음성 전사 중";
+}
+
+function backgroundElapsed(note) {
+  if (note.inference_elapsed_seconds == null || note.status === 'queued') {
+    state.backgroundAnchors.delete(note.id);
+    return null;
+  }
+  const running = note.status === "processing" && !note.inference_finished_at && ["transcribing", "linking"].includes(note.progress_phase);
+  const previous = state.backgroundAnchors.get(note.id), key = note.inference_started_at;
+  if (previous?.note !== note) {
+    const at = note._elapsedReceivedAt ?? performance.now(), sample = Number(note.inference_elapsed_seconds);
+    const seconds = running && previous?.key === key ? Math.max(sample,elapsedSeconds(previous,at)) : sample;
+    state.backgroundAnchors.set(note.id,{note,key,seconds,at,running});
+  }
+  return elapsedSeconds(state.backgroundAnchors.get(note.id));
+}
+
+function updateBackgroundProgress() {
+  for (const note of state.notes.filter(note => note.status !== "done")) {
+    const card = document.querySelector(`.background-job[data-id="${CSS.escape(note.id)}"]`);
+    if (!card) continue;
+    const elapsed = backgroundElapsed(note);
+    const progress = transcriptionProgress(note, elapsed ?? 0);
+    const active = ["queued", "processing"].includes(note.status);
+    const percent = progress.waiting ? (note.status === "queued" ? "대기" : "준비 중") : progress.indeterminate ? "진행 중" : `${progress.percent}%`;
+    card.querySelector('.job-percent').textContent = active ? percent : statusText(note.status);
+    const track = card.querySelector('.job-progress');
+    track.classList.toggle('indeterminate', active && progress.indeterminate);
+    track.classList.toggle('hidden', !active);
+    track.querySelector('i').style.width = active && progress.indeterminate ? '' : `${progress.percent}%`;
+    if (progress.indeterminate) track.removeAttribute('aria-valuenow');
+    else track.setAttribute('aria-valuenow', String(progress.percent));
+    track.setAttribute('aria-valuetext', `${backgroundJobPhase(note)}${progress.indeterminate ? '' : ` · 예상 ${progress.percent}%`}`);
+    const timing = [elapsed == null ? '' : `경과 ${clock(elapsed)}`, progress.estimate ? `예상 ${clock(progress.estimate)}` : ''].filter(Boolean).join(' · ');
+    card.querySelector('.job-timing').textContent = active ? timing : '';
+    card.querySelector('.job-detail').textContent = note.status === "error" ? (note.error || "장치 연결을 확인한 후 다시 시도해 주세요.")
+      : note.status === "cancelled" ? "보관된 녹음으로 다시 시작할 수 있어요."
+      : note.status === "queued" ? "앞선 작업이 끝나면 자동으로 시작됩니다."
+      : progress.complete ? "전사 결과를 노트에 저장하고 있어요."
+      : progress.percent >= 99 ? "모델의 완료 응답을 기다리고 있어요."
+      : "";
+  }
+}
+
+function renderBackgroundJobs() {
+  const order = {processing:0,queued:1,error:2,cancelled:2};
+  const jobs = state.notes.filter(note => note.status !== "done").sort((a,b) => (order[a.status] ?? 3) - (order[b.status] ?? 3) || a.created_at.localeCompare(b.created_at));
+  const section = $('#background-jobs'), list = $('#background-job-list');
+  for (const id of state.backgroundAnchors.keys()) if (!jobs.some(note=>note.id===id)) state.backgroundAnchors.delete(id);
+  const focused = document.activeElement.closest?.('.background-job');
+  const focusedId = focused?.dataset.id, focusedAction = document.activeElement.dataset?.jobAction;
+  const top = list.scrollTop;
+  section.classList.toggle('hidden', !jobs.length);
+  const running = jobs.filter(note => note.status === 'processing').length, queued = jobs.filter(note => note.status === 'queued').length;
+  $('#background-jobs-count').textContent = [running ? `${running}개 진행` : '', queued ? `${queued}개 대기` : '', !running && !queued && jobs.length ? `${jobs.length}개 중단` : ''].filter(Boolean).join(' · ');
+  list.innerHTML = jobs.map(note => {
+    const active = ['queued', 'processing'].includes(note.status), action = state.jobActions.get(note.id);
+    const busy = !!action;
+    return `<article class="background-job ${escapeHtml(note.status)}" data-id="${escapeHtml(note.id)}" aria-label="${escapeHtml(note.title)} 전사 작업">
+      <div class="job-heading"><div><strong title="${escapeHtml(note.title)}">${escapeHtml(note.title)}</strong><span>${escapeHtml(note.device_name || '이 Mac')} · ${backgroundJobPhase(note)}</span></div><span class="job-percent"></span></div>
+      <div class="job-progress" role="progressbar" aria-label="${escapeHtml(note.title)} 예상 전사 진행률" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+      <div class="job-footer"><span class="job-timing"></span><div class="job-actions">${active ? `<button type="button" data-job-action="cancel" ${busy ? 'disabled' : ''}>${action === 'cancel' ? '취소 중…' : '취소'}</button>` : `<button type="button" data-job-action="restart" ${busy ? 'disabled' : ''}>${action === 'restart' ? '시작 중…' : '다시 시작'}</button><button type="button" data-job-action="remove" ${busy ? 'disabled' : ''}>${action === 'remove' ? '정리 중…' : '삭제'}</button>`}</div></div>
+      <p class="job-detail"></p>
+    </article>`;
+  }).join('');
+  list.scrollTop = top;
+  if (focusedId && focusedAction) {
+    const card = list.querySelector(`.background-job[data-id="${CSS.escape(focusedId)}"]`);
+    (card?.querySelector(`[data-job-action="${focusedAction}"]`) || card?.querySelector('.job-actions button') || (jobs.length ? list : $('#note-search'))).focus({preventScroll:true});
+  }
+  updateBackgroundProgress();
+  if (jobs.some(note => note.status === 'processing') && !state.backgroundTimer) state.backgroundTimer = setInterval(updateBackgroundProgress, 1000);
+  else if (!jobs.some(note => note.status === 'processing')) {clearInterval(state.backgroundTimer);state.backgroundTimer = null;}
+}
+
+$('#background-job-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-job-action]');
+  if (!button || button.disabled) return;
+  const id = button.closest('.background-job').dataset.id;
+  if (button.dataset.jobAction === 'cancel') openCancellationDialog(id);
+  if (button.dataset.jobAction === 'restart') restartTranscription(id);
+  if (button.dataset.jobAction === 'remove') openDeletionDialog(id);
+});
 
 async function loadNotes() {
   const request = ++state.libraryRequest;
@@ -310,10 +427,18 @@ async function loadNotes() {
       return true;
     });
     const managed = new Set(visible.map(note => note.text_path).filter(Boolean));
+    const previouslyActive = new Set(state.notes.filter(note => ["queued", "processing"].includes(note.status)).map(note => note.id));
     state.notes = [...visible, ...imported.filter(note => !managed.has(note.text_path))].sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const completed = state.notes.filter(note => note.status === 'done' && previouslyActive.has(note.id));
+    if (completed.length) {
+      const message = completed.length === 1 ? `‘${completed[0].title}’ 전사가 완료되어 노트에 추가했습니다.` : `${completed.length}개 전사가 완료되어 노트에 추가했습니다.`;
+      $('#background-job-announcement').textContent = message;
+      toast(message);
+    }
     $("#text-library-status").textContent = documents.status === "rejected" ? documents.reason.message : "";
     $("#text-library-status").classList.toggle("hidden", documents.status !== "rejected");
     renderList();
+    renderBackgroundJobs();
     if (state.noteMenuId && !state.notes.some(n=>n.id===state.noteMenuId)) closeNoteMenu();
     const current = state.current;
     const saved = notes.value.find(note => note.id === current?.id);
@@ -323,7 +448,7 @@ async function loadNotes() {
     }
     const latest = imported.find(note => note.id === current?.id);
     if (latest && current?.source_type === "text_file" && latest.file_mtime_ns !== current.file_mtime_ns && !state.pendingChanges && !state.savePromise && !state.openingNote && !state.speakerDraft && document.activeElement !== $("#text-document-body")) openNote(current.id, true);
-    if (!state.pollTimer && state.notes.some(note => ["queued", "processing"].includes(note.status))) schedulePoll();
+    if (!state.pollTimer && backgroundWorkPending()) schedulePoll();
   } catch (error) { toast(error.message, true); }
   finally { if (request === state.libraryRequest) state.libraryLoading = false; }
 }
@@ -384,12 +509,12 @@ document.addEventListener('scroll',event=>{
 },true);
 window.addEventListener('resize',()=>closeNoteMenu());
 
-async function actOnNoteFile(action,outputFormat) {
-  const id=state.noteMenuId;
+async function actOnNoteFile(action,outputFormat,id=state.noteMenuId) {
   let note=state.notes.find(n=>n.id===id);
   closeNoteMenu();
   if (!note || state.fileActionId) return;
   state.fileActionId=id;
+  renderList();
   try {
     if (state.current?.id===id && (state.pendingChanges || state.savePromise)) {
       await flushSave();await loadNotes();note=state.notes.find(n=>n.id===id);
@@ -402,10 +527,11 @@ async function actOnNoteFile(action,outputFormat) {
       $('#media-player').pause();$('#media-player').removeAttribute('src');
       $('#workspace').classList.add('hidden');$('#note-dialog').close();selectSummaryNote(null);
     }
+    if (action==='trash') { delete state.summaryStates[id]; delete state.summaryDrafts[id]; }
     await loadNotes();
-    toast(action==='trash'?'파일과 보관된 녹음을 휴지통으로 옮기고 내부 기록을 정리했습니다.':`${outputFormat.toUpperCase()} 변환본을 저장했습니다.`);
+    toast(action==='trash'?'최근 삭제로 옮겼습니다. 7일 동안 복구할 수 있어요.':`${outputFormat.toUpperCase()} 변환본을 저장했습니다.`);
   } catch(error) {toast(error.message,true);}
-  finally {state.fileActionId=null;}
+  finally {state.fileActionId=null;renderList();}
 }
 document.querySelectorAll('[data-convert-format]').forEach(button=>button.addEventListener('click',()=>actOnNoteFile('convert',button.dataset.convertFormat)));
 $('#trash-note-file').addEventListener('click',()=>actOnNoteFile('trash'));
@@ -452,10 +578,10 @@ async function loadNote(id, {openEditor = false, quiet = false} = {}) {
     if (opening) dialog.focus({ preventScroll: true });
     selectSummaryNote(note);
     renderList();
-    if (["queued", "processing"].includes(note.status) || state.notes.some(item => ["queued", "processing"].includes(item.status))) schedulePoll();
+    if (["queued", "processing"].includes(note.status) || backgroundWorkPending()) schedulePoll();
   } catch (error) {
     if (!quiet) toast(error.message, true);
-    if (["queued", "processing"].includes(state.current?.status) || state.notes.some(item => ["queued", "processing"].includes(item.status))) schedulePoll();
+    if (["queued", "processing"].includes(state.current?.status) || backgroundWorkPending()) schedulePoll();
   } finally {
     if (state.openingNote === request) {
       state.openingNote = null;
@@ -641,9 +767,12 @@ function renderEditor() {
   $("#speech-result").classList.toggle('hidden', !speechResult?.pipeline);
   if (speechResult?.pipeline) {
     $("#chunk-notice").classList.add('hidden');
-    const peak = speechResult.peak_process_mib ? ` · Peak ${(speechResult.peak_process_mib / 1024).toFixed(1)} GiB` : '';
+    const localMlx = speechResult.pipeline === 'moss-mlx';
+    const peak = !localMlx && speechResult.peak_process_mib ? ` · Peak ${(speechResult.peak_process_mib / 1024).toFixed(1)} GiB` : '';
+    const model = {'mlx-8bit':'MOSS · MLX 8bit','mlx-4bit':'MOSS · MLX 4bit','mlx-16bit':'MOSS · MLX 16bit'}[speechResult.model_key] || 'MOSS · MLX';
+    const chunks = localMlx ? `${speechResult.chunk_count || note.chunk_count || 1}청크 · 순차 실행` : ['moss-sglang','moss-qwen-sequential'].includes(speechResult.pipeline) ? 'MOSS 전체 1청크' : `${speechResult.chunk_count}청크 / 동시 ${speechResult.batch}개`;
     const uncertain = note.segments.filter(segment => segment.speaker === '미확인' || segment.speaker_uncertain).length;
-    $("#speech-result").textContent = `${{'moss-sglang':'MOSS · SGLang Omni · 전체','qwen-transformers':'Qwen · Transformers · 3분 + 정렬','moss-qwen-sequential':'MOSS + Qwen · 순차 실행','qwen-batch':'Qwen3-ASR'}[speechResult.pipeline] || 'MOSS'} + Nemotron · 모델 처리 ${clock(speechResult.inference_seconds)}${peak} · ${['moss-sglang','moss-qwen-sequential'].includes(speechResult.pipeline) ? 'MOSS 전체 1청크' : `${speechResult.chunk_count}청크 / 동시 ${speechResult.batch}개`}${uncertain ? ` · 화자 미확인 ${uncertain}개 발화` : ''}`;
+    $("#speech-result").textContent = `${localMlx ? model : {'moss-sglang':'MOSS · SGLang Omni · 전체','qwen-transformers':'Qwen · Transformers · 3분 + 정렬','moss-qwen-sequential':'MOSS + Qwen · 순차 실행','qwen-batch':'Qwen3-ASR'}[speechResult.pipeline] || 'MOSS'} + Nemotron · 모델 처리 ${clock(speechResult.inference_seconds)}${peak} · ${chunks}${uncertain ? ` · 화자 미확인 ${uncertain}개 발화` : ''}`;
   }
   const auxiliary = $('#auxiliary-transcript');
   auxiliary.classList.toggle('hidden', !speechResult?.has_auxiliary_transcript);
@@ -764,16 +893,16 @@ async function flushSave() {
   updateSaveState();
 }
 
+function backgroundWorkPending() {
+  return state.notes.some(note => ["queued", "processing"].includes(note.status) || note.summary_status === "running");
+}
+
 function schedulePoll() {
   clearTimeout(state.pollTimer);
   state.pollTimer = setTimeout(async () => {
     state.pollTimer = null;
-    const id = state.current?.id;
-    const previous = state.current?.status;
-    if (id && state.cancellingId !== id && state.restartingId !== id && !state.openingNote && ["queued", "processing"].includes(previous)) await openNote(id, true);
-    await loadNotes();
-    if (id && state.current?.id === id && previous !== "done" && state.current.status === "done") toast("전사가 완료되었습니다.");
-    if (state.notes.some(note => ["queued", "processing"].includes(note.status))) schedulePoll();
+    if (!state.libraryLoading) await loadNotes();
+    if (backgroundWorkPending()) schedulePoll();
   }, 1000);
 }
 
@@ -802,7 +931,7 @@ async function openHome() {
     // flushSave keeps the draft and reports the error before navigation.
   } finally {
     if (state.openingNote === request) state.openingNote = null;
-    if (state.notes.some(note => ["queued", "processing"].includes(note.status))) schedulePoll();
+    if (backgroundWorkPending()) schedulePoll();
   }
 }
 
@@ -887,7 +1016,7 @@ const fileInput = $("#audio-file");
 $("#choose-voice-memo").addEventListener("click", () => {
   if (state.uploading) return;
   state.voiceMemos = [];
-  state.voiceMemoSelected = null;
+  state.voiceMemoSelected = new Set();
   $("#voice-memo-access").classList.add('hidden');
   $("#voice-memo-privacy").classList.toggle('hidden', !window.webkit?.messageHandlers?.openVoiceMemoPrivacy);
   $("#voice-memo-search").value = "";
@@ -902,9 +1031,11 @@ function renderVoiceMemos() {
   $("#voice-memo-list").innerHTML = records.map(item => {
     const date = item.created_at ? formatDate(item.created_at) : "";
     const detail = [date, item.duration ? clock(item.duration) : "", item.size ? `${(item.size / 1024 / 1024).toFixed(1)} MB` : "", item.available ? "" : "이 Mac에 다운로드 필요"].filter(Boolean).join(" · ");
-    return `<label class="voice-memo-item"><input type="radio" name="voice-memo" value="${escapeHtml(item.id)}" ${item.id === state.voiceMemoSelected ? "checked" : ""} ${item.available ? "" : "disabled"}><span class="voice-memo-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-16v20m4-16v12m4-8v4"/></svg></span><span class="voice-memo-info"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(detail)}</small></span><span class="voice-memo-check" aria-hidden="true"></span></label>`;
+    return `<label class="voice-memo-item"><input type="checkbox" name="voice-memo" value="${escapeHtml(item.id)}" ${state.voiceMemoSelected.has(item.id) ? "checked" : ""} ${item.available ? "" : "disabled"}><span class="voice-memo-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-16v20m4-16v12m4-8v4"/></svg></span><span class="voice-memo-info"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(detail)}</small></span><span class="voice-memo-check" aria-hidden="true"></span></label>`;
   }).join("") || (state.voiceMemoLoading || !$("#voice-memo-access").classList.contains('hidden') ? "" : `<p class="voice-memo-empty">${search ? "검색 결과가 없습니다." : "불러올 녹음이 없습니다."}</p>`);
-  $("#import-voice-memo").disabled = state.voiceMemoLoading || !records.some(item => item.id === state.voiceMemoSelected && item.available);
+  const selected = state.voiceMemos.filter(item => state.voiceMemoSelected.has(item.id) && item.available);
+  $("#import-voice-memo").disabled = state.voiceMemoLoading || !selected.length;
+  $("#import-voice-memo").firstChild.textContent = selected.length ? `${selected.length}개 녹음 가져오기 ` : "선택한 녹음 가져오기 ";
   $("#refresh-voice-memos").disabled = state.voiceMemoLoading;
 }
 async function loadVoiceMemos() {
@@ -924,7 +1055,7 @@ async function loadVoiceMemos() {
     if (request !== state.voiceMemoRequest || !$("#voice-memo-dialog").open) return;
     state.voiceMemos = result.recordings;
     $("#voice-memo-access").classList.toggle('hidden', !result.permission_required);
-    if (!state.voiceMemos.some(item => item.id === state.voiceMemoSelected && item.available)) state.voiceMemoSelected = null;
+    state.voiceMemoSelected = new Set([...state.voiceMemoSelected].filter(id => state.voiceMemos.some(item => item.id === id && item.available)));
     $("#voice-memo-status").textContent = result.permission_required
       ? "macOS에서 음성 메모 데이터 접근을 차단했습니다."
       : result.metadata_unavailable ? "녹음 제목을 읽지 못해 파일명으로 표시합니다."
@@ -938,7 +1069,13 @@ async function loadVoiceMemos() {
   }
 }
 $("#voice-memo-search").addEventListener('input', renderVoiceMemos);
-$("#voice-memo-list").addEventListener('change', event => { state.voiceMemoSelected = event.target.value; $("#import-voice-memo").disabled = false; });
+$("#voice-memo-list").addEventListener('change', event => {
+  if (event.target.checked) state.voiceMemoSelected.add(event.target.value);
+  else state.voiceMemoSelected.delete(event.target.value);
+  const selected = state.voiceMemos.filter(item => state.voiceMemoSelected.has(item.id) && item.available);
+  $("#import-voice-memo").disabled = !selected.length;
+  $("#import-voice-memo").firstChild.textContent = selected.length ? `${selected.length}개 녹음 가져오기 ` : "선택한 녹음 가져오기 ";
+});
 $("#refresh-voice-memos").addEventListener('click', loadVoiceMemos);
 $("#close-voice-memo").addEventListener('click', () => $("#voice-memo-dialog").close());
 $("#voice-memo-dialog").addEventListener('close', () => { state.voiceMemoRequest++; state.voiceMemoController?.abort(); state.voiceMemoLoading = false; });
@@ -957,11 +1094,11 @@ window.addEventListener('cosmoss-voice-memo-permission-return', () => {
   if ($('#voice-memo-dialog').open && !state.voiceMemoLoading) loadVoiceMemos();
 });
 $("#import-voice-memo").addEventListener('click', () => {
-  const item = state.voiceMemos.find(item => item.id === state.voiceMemoSelected && item.available);
-  if (!item || state.voiceMemoLoading) return;
+  const items = state.voiceMemos.filter(item => state.voiceMemoSelected.has(item.id) && item.available);
+  if (!items.length || state.voiceMemoLoading) return;
   fileInput.value = "";
   $("#voice-memo-dialog").close();
-  showFile({ name: `${item.title}.m4a`, size: item.size }, item);
+  showFiles(items.map(item => ({file:{name:`${item.title}.m4a`,size:item.size},voiceMemo:item})));
 });
 function resetDropZone() {
   fileInput.required = true;
@@ -990,15 +1127,59 @@ function releaseFileMetadata(preparation) {
 function deletePreparedFile(id) {
   if (id) return api(`/api/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
 }
-function cancelFilePreparation() {
-  const preparation = state.uploadPreparation;
-  state.uploadPreparation = null;
-  if (!preparation) return;
-  clearTimeout(preparation.timer);
-  preparation.controller.abort();
-  releaseFileMetadata(preparation);
-  deletePreparedFile(preparation.id);
+function uploadPreparations() {
+  return state.uploadBatch.length ? state.uploadBatch : state.uploadPreparation ? [state.uploadPreparation] : [];
 }
+function selectedPreparations() { return uploadPreparations().filter(item => item.selected !== false && !item.submitted); }
+function preparationIsCurrent(preparation) { return uploadPreparations().includes(preparation); }
+function cancelFilePreparation() {
+  const preparations = uploadPreparations();
+  state.uploadPreparation = null;
+  state.uploadBatch = [];
+  for (const preparation of preparations) {
+    clearTimeout(preparation.timer);
+    preparation.controller?.abort();
+    releaseFileMetadata(preparation);
+    if (!preparation.submitted) deletePreparedFile(preparation.id);
+  }
+}
+function selectPrimaryPreparation() {
+  const selected = selectedPreparations();
+  state.uploadPreparation = selected.reduce((longest, item) => !longest || (item.duration || 0) > (longest.duration || 0) ? item : longest, null);
+}
+function renderUploadBatch() {
+  const files = uploadPreparations(), selected = selectedPreparations();
+  const box = $('#upload-batch'), list = $('#upload-batch-list');
+  box.classList.toggle('hidden', files.length < 2);
+  if (files.length) {
+    $('#drop-title').textContent = files.length > 1 ? `${files.length}개 녹음 선택됨` : files[0].file.name;
+    $('#drop-copy').textContent = `${(files.reduce((sum,item)=>sum+(item.file.size || 0),0) / 1024 / 1024).toFixed(1)} MB${files.length > 1 ? ' · 아래에서 선택 확인' : ''}`;
+  }
+  $('#upload-batch-count').textContent = `${selected.length} / ${files.length}개 선택`;
+  $('#upload-batch-help').textContent = selected.length > 1
+    ? `가장 긴 녹음 기준 예상값 · ${state.uploadPreparation?.file.name || ''} · 파일마다 길이에 맞춰 청크를 나눕니다.`
+    : '체크한 녹음만 전사합니다.';
+  const top = list.scrollTop, focused = document.activeElement.closest?.('[data-upload-index]');
+  const focusedIndex = focused?.dataset.uploadIndex, focusedTag = document.activeElement.tagName;
+  list.innerHTML = files.map((item, index) => `<div class="upload-batch-item" data-upload-index="${index}"><label><input type="checkbox" ${item.selected !== false ? 'checked' : ''} ${state.uploading ? 'disabled' : ''}><span><strong>${escapeHtml(item.file.name)}</strong><small>${item.duration ? clock(item.duration)+' · ' : ''}${escapeHtml(item.submitError || ({queued:'준비 대기',uploading:'불러오는 중…',preparing:'전처리 중…',ready:'준비 완료',error:item.error || '준비 실패'}[item.status] || item.status))}</small></span></label>${item.status === 'error' ? '<button type="button" data-retry-upload>다시 시도</button>' : ''}</div>`).join('');
+  list.scrollTop = top;
+  if (focusedIndex) list.querySelector(`[data-upload-index="${focusedIndex}"] ${focusedTag === 'BUTTON' ? 'button' : 'input'}`)?.focus({preventScroll:true});
+  const title = $('#upload-form input[name="title"]');
+  title.disabled = state.uploading || selected.length > 1;
+  title.placeholder = selected.length > 1 ? '각 파일명으로 자동 생성' : '파일명으로 자동 생성';
+}
+$('#upload-batch-list').addEventListener('change', event => {
+  const row = event.target.closest('[data-upload-index]');
+  if (!row || state.uploading) return;
+  uploadPreparations()[Number(row.dataset.uploadIndex)].selected = event.target.checked;
+  selectPrimaryPreparation();state.uploadChunkCount = null;renderFilePreparation();
+});
+$('#upload-batch-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-retry-upload]');
+  if (!button || state.uploading) return;
+  const preparation = uploadPreparations()[Number(button.closest('[data-upload-index]').dataset.uploadIndex)];
+  if (preparation?.status === 'error') prepareFile(preparation);
+});
 function uploadChunkDefaultMinutes() {
   const device = executionDevice();
   const value = device?.options?.chunk_minutes ?? state.modelMetadata[device?.id]?.options?.chunk_minutes ?? 30;
@@ -1045,6 +1226,7 @@ function clearUploadEstimate() {
   state.estimateController?.abort();
   state.estimateKey = null;
   $("#upload-estimates").classList.add('hidden');
+  $('#upload-estimate-memory').title = '';
   $("#upload-estimates").classList.remove('needs-gpu-selection', 'is-pending');
 }
 function renderEstimateCalibration(estimate) {
@@ -1062,6 +1244,7 @@ function scheduleUploadEstimate(plan) {
     box.classList.remove('hidden', 'is-over-capacity');
     box.classList.add('needs-gpu-selection');
     $('#upload-estimate-memory').textContent = '-';
+    $('#upload-estimate-memory').title = '';
     $('#upload-estimate-time').textContent = '-';
     $('#upload-estimate-note').textContent = '';
     $('#upload-memory-warning').classList.add('hidden');
@@ -1071,7 +1254,8 @@ function scheduleUploadEstimate(plan) {
   if (window.cosmossSpeech?.active()) return window.cosmossSpeech.estimate();
   const duration = state.uploadPreparation.duration;
   const hardware = state.gpuDeviceId === device.id ? state.gpuInventory.map(item => [item.name, item.memory_total_mib]) : [];
-  const key = JSON.stringify([device.id, device.model_key, device.options, device.hardware, hardware, duration, plan.count, gpu?.uuid, gpu?.name, gpu?.memory_total_mib, gpu?.memory_used_mib, gpu?.memory_free_mib]);
+  const selectedModel = window.cosmossSpeech?.selectedModel() || device.model_key;
+  const key = JSON.stringify([device.id, selectedModel, device.options, device.hardware, hardware, duration, plan.count, gpu?.uuid, gpu?.name, gpu?.memory_total_mib, gpu?.memory_used_mib, gpu?.memory_free_mib]);
   if (state.estimateKey === key) return;
   clearTimeout(state.estimateTimer);
   state.estimateController?.abort();
@@ -1086,6 +1270,7 @@ function scheduleUploadEstimate(plan) {
     const controller = new AbortController();
     state.estimateController = controller;
     const query = new URLSearchParams({duration, count:plan.count});
+    if (device.kind === 'local' && selectedModel) query.set('model_key', selectedModel);
     if (gpu?.uuid && device.backend === 'cuda') query.set('gpu_uuid', gpu.uuid);
     try {
       const estimate = await api(`/api/devices/${encodeURIComponent(device.id)}/estimate?${query}`, {signal:controller.signal});
@@ -1097,8 +1282,9 @@ function scheduleUploadEstimate(plan) {
         box.classList.add('is-pending');
         return;
       }
-      const memory = estimate.memory_expected_gib != null ? `약 ${estimate.memory_expected_gib.toFixed(1)} GiB` : '추정 불가';
+      const memory = estimate.memory_expected_gib != null ? `약 ${estimate.memory_expected_gib.toFixed(1)} GiB` : '추가 측정 필요';
       $('#upload-estimate-memory').textContent = memory;
+      $('#upload-estimate-memory').title = estimate.memory_note || '';
       $('#upload-estimate-time').textContent = estimate.time_seconds != null ? `약 ${clock(estimate.time_seconds)}` : '추가 측정 필요';
       renderEstimateCalibration(estimate);
       box.classList.toggle('is-over-capacity', !!estimate.exceeds_capacity);
@@ -1126,167 +1312,176 @@ for (const [selector, step] of [["#increase-upload-chunks", 1], ["#decrease-uplo
   });
 }
 function renderFilePreparation() {
+  if (state.uploadBatch.length) selectPrimaryPreparation();
   renderUploadChunks();
+  renderUploadBatch();
   const preparation = state.uploadPreparation;
+  const selected = selectedPreparations();
   $("#upload-preparation").classList.toggle("hidden", !preparation);
   $("#upload-preparation").classList.toggle("failed", preparation?.status === "error");
-  $("#upload-form").querySelector("button[type=submit]").disabled = state.uploading || !executionDevice() || preparation?.status !== "ready" || (executionDevice()?.backend === "cuda" && !state.selectedGpu) || !!window.cosmossSpeech?.blocked();
+  $("#upload-form").querySelector("button[type=submit]").disabled = state.uploading || !executionDevice() || !selected.length || selected.some(item => item.status !== "ready") || (executionDevice()?.backend === "cuda" && !state.selectedGpu) || !!window.cosmossSpeech?.blocked();
   $("#retry-preparation").classList.toggle("hidden", preparation?.status !== "error");
+  if (!state.uploading) $('#upload-form button[type=submit]').firstChild.textContent = selected.length > 1 ? `${selected.length}개 순서대로 전사하기 ` : '전사 시작하기 ';
   if (!preparation) return;
   $("#upload-duration").textContent = Number.isFinite(preparation.duration) && preparation.duration > 0
     ? `음성 길이 ${clock(preparation.duration)}` : "음성 길이 확인 중…";
-  $("#upload-preparation-status").textContent = {
-    uploading: "파일 업로드 중…", preparing: "전처리 중…",
-    ready: "전처리 완료 · 전사를 시작할 수 있어요", error: preparation.error,
-  }[preparation.status];
+  $("#upload-preparation-status").textContent = selected.length > 1
+    ? `${selected.filter(item => item.status === 'ready').length} / ${selected.length}개 준비 완료 · 가장 긴 녹음 기준`
+    : {queued:"파일 준비 대기 중…",uploading:"파일 업로드 중…",preparing:"전처리 중…",ready:preparation.submitError || "전처리 완료 · 전사를 시작할 수 있어요",error:preparation.error}[preparation.status];
 }
 async function pollFilePreparation(preparation) {
-  if (state.uploadPreparation !== preparation) return;
-  try {
-    const upload = await api(`/api/uploads/${encodeURIComponent(preparation.id)}`, { signal: preparation.controller.signal });
-    if (state.uploadPreparation !== preparation) return;
+  while (preparationIsCurrent(preparation) && preparation.status === 'preparing') {
+    const upload = await api(`/api/uploads/${encodeURIComponent(preparation.id)}`, {signal:preparation.controller.signal});
+    if (!preparationIsCurrent(preparation)) return;
     preparation.status = upload.status;
     if (Number.isFinite(upload.duration) && upload.duration > 0) preparation.duration = upload.duration;
     preparation.error = upload.error;
     renderFilePreparation();
-    if (upload.status === "preparing") preparation.timer = setTimeout(() => pollFilePreparation(preparation), 1000);
-  } catch (error) {
-    if (state.uploadPreparation !== preparation) return;
-    preparation.status = "error";
-    preparation.error = error.message;
-    renderFilePreparation();
+    if (upload.status === 'preparing') await new Promise(resolve => setTimeout(resolve, 1000));
   }
 }
-async function showFile(file, voiceMemo = null) {
-  cancelFilePreparation();
-  state.uploadChunkCount = null;
-  if (!file) return resetDropZone();
-  try { validateFile(file); } catch (error) {
-    fileInput.value = "";
-    resetDropZone();
-    return toast(error.message, true);
-  }
-  $("#drop-title").textContent = file.name;
-  fileInput.required = !voiceMemo;
-  $("#drop-copy").textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB`;
-  const preparation = { file, voiceMemo, id: null, status: "uploading", duration: voiceMemo?.duration ?? null, controller: new AbortController() };
-  state.uploadPreparation = preparation;
+async function prepareFile(preparation) {
+  if (!preparationIsCurrent(preparation)) return;
+  const retryId = preparation.status === 'error' ? preparation.id : null;
+  preparation.status = 'uploading';preparation.submitError = null;
   renderFilePreparation();
-  // Browser metadata can show duration before the upload completes. ffprobe
-  // supplies the authoritative duration for formats the browser cannot read.
-  if (!voiceMemo) {
-  const audio = new Audio();
-  preparation.audio = audio;
-  preparation.objectUrl = URL.createObjectURL(file);
-  audio.preload = "metadata";
-  audio.addEventListener("loadedmetadata", () => {
-    if (state.uploadPreparation === preparation && Number.isFinite(audio.duration) && audio.duration > 0) {
-      preparation.duration = audio.duration;
-      renderFilePreparation();
-    }
-    releaseFileMetadata(preparation);
-  }, { once: true });
-  audio.addEventListener("error", () => releaseFileMetadata(preparation), { once: true });
-  audio.src = preparation.objectUrl;
-  }
   try {
+    if (retryId) {await deletePreparedFile(retryId);preparation.id = null;preparation.controller = new AbortController();}
     await refreshAppSetup(true);
-    if (state.uploadPreparation !== preparation) return;
-    const body = new FormData();
-    if (!voiceMemo) body.set("file", file);
+    if (!preparationIsCurrent(preparation)) return;
+    const body = new FormData(), voiceMemo = preparation.voiceMemo;
+    if (!voiceMemo) body.set('file',preparation.file);
     const upload = await api(voiceMemo ? '/api/voice-memos/import' : '/api/uploads', {
-      method: 'POST', signal: preparation.controller.signal,
-      ...(voiceMemo ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: voiceMemo.id, version: voiceMemo.version }) } : { body }),
+      method:'POST',signal:preparation.controller.signal,
+      ...(voiceMemo ? {headers:{'Content-Type':'application/json'},body:JSON.stringify({id:voiceMemo.id,version:voiceMemo.version})} : {body}),
     });
-    if (state.uploadPreparation !== preparation) {
-      deletePreparedFile(upload.id);
-      return;
-    }
-    preparation.id = upload.id;
-    preparation.status = upload.status;
+    if (!preparationIsCurrent(preparation)) {deletePreparedFile(upload.id);return;}
+    preparation.id = upload.id;preparation.status = upload.status;preparation.error = upload.error;
     if (Number.isFinite(upload.duration) && upload.duration > 0) preparation.duration = upload.duration;
-    preparation.error = upload.error;
     renderFilePreparation();
-    if (upload.status === "preparing") await pollFilePreparation(preparation);
+    if (upload.status === 'preparing') await pollFilePreparation(preparation);
   } catch (error) {
-    if (state.uploadPreparation !== preparation) return;
-    preparation.status = "error";
-    preparation.error = error.message;
-    renderFilePreparation();
+    if (!preparationIsCurrent(preparation)) return;
+    preparation.status = 'error';preparation.error = error.message;renderFilePreparation();
   }
 }
-$("#retry-preparation").addEventListener("click", () => {
+async function showFiles(entries) {
+  if (!entries.length) return;
+  try {
+    if (entries.length > 100) throw Error('한 번에 최대 100개 녹음을 선택할 수 있습니다.');
+    entries.forEach(({file}) => validateFile(file));
+  } catch(error) {return toast(error.message,true);}
+  cancelFilePreparation();state.uploadChunkCount = null;
+  if (entries.length > 1) $('#upload-form input[name="title"]').value = '';
+  state.uploadBatch = entries.map(({file,voiceMemo=null}) => ({file,voiceMemo,id:null,selected:true,status:'queued',duration:voiceMemo?.duration ?? null,controller:new AbortController()}));
+  selectPrimaryPreparation();
+  fileInput.required = false;
+  $('#drop-title').textContent = entries.length > 1 ? `${entries.length}개 녹음 선택됨` : entries[0].file.name;
+  $('#drop-copy').textContent = `${(entries.reduce((sum,item)=>sum+item.file.size,0) / 1024 / 1024).toFixed(1)} MB${entries.length > 1 ? ' · 아래에서 선택 확인' : ''}`;
+  renderFilePreparation();
+  const files = [...state.uploadBatch];
+  // Normalize one file at a time; multiple long recordings must not multiply
+  // ffmpeg memory use before the user even starts the transcription queue.
+  for (const preparation of files) {
+    if (!preparationIsCurrent(preparation)) break;
+    await prepareFile(preparation);
+  }
+}
+function showFile(file,voiceMemo=null) {
+  if (!file) {cancelFilePreparation();return resetDropZone();}
+  return showFiles([{file,voiceMemo}]);
+}
+$('#retry-preparation').addEventListener('click', () => {
   const preparation = state.uploadPreparation;
-  showFile(preparation?.voiceMemo ? preparation.file : fileInput.files[0], preparation?.voiceMemo);
+  if (preparation?.status === 'error') prepareFile(preparation);
 });
-fileInput.addEventListener("change", () => showFile(fileInput.files[0]));
+fileInput.addEventListener('change', () => showFiles([...fileInput.files].map(file=>({file}))));
 ["dragenter", "dragover"].forEach(name => dropZone.addEventListener(name, event => { event.preventDefault(); if (!state.uploading) dropZone.classList.add("dragging"); }));
 ["dragleave", "drop"].forEach(name => dropZone.addEventListener(name, event => { event.preventDefault(); dropZone.classList.remove("dragging"); }));
 dropZone.addEventListener("drop", event => {
   if (state.uploading || !event.dataTransfer.files.length) return;
   const files = new DataTransfer();
-  files.items.add(event.dataTransfer.files[0]);
+  for (const file of event.dataTransfer.files) files.items.add(file);
   fileInput.files = files.files;
-  showFile(fileInput.files[0]);
+  showFiles([...fileInput.files].map(file=>({file})));
 });
 
 $("#upload-form").addEventListener("submit", async event => {
   event.preventDefault();
   if (state.uploading) return;
-  try { validateFile(state.uploadPreparation?.file); } catch (error) { return toast(error.message, true); }
-  const preparation = state.uploadPreparation;
-  if (preparation?.status !== "ready") return toast("전처리가 완료된 후 전사를 시작해 주세요.", true);
-  const form = event.target;
-  if (window.cosmossSpeech?.blocked()) return toast('선택한 모델의 준비가 끝난 뒤 전사를 시작해 주세요.', true);
-  const body = new FormData(form);
-  body.delete("selected-gpu");
-  if (!executionDevice()) return toast("처리 장치를 다시 선택해 주세요.", true);
-  body.set("device_id", executionDevice().id);
+  const preparations = selectedPreparations();
+  try { if (!preparations.length) validateFile(null);preparations.forEach(item => validateFile(item.file)); }
+  catch(error) {return toast(error.message,true);}
+  if (preparations.some(item => item.status !== 'ready')) return toast('선택한 녹음의 준비가 끝난 후 시작해 주세요.',true);
+  const form = event.target, device = executionDevice();
+  if (!device) return toast('처리 장치를 다시 선택해 주세요.',true);
+  if (window.cosmossSpeech?.blocked()) return toast('선택한 모델의 준비가 끝난 뒤 전사를 시작해 주세요.',true);
+  const body = new FormData(form), chunkSeconds = uploadChunkPlan()?.seconds;
+  body.delete('selected-gpu');body.delete('file');
+  body.set('device_id',device.id);
   window.cosmossSpeech?.form(body);
-  body.set("output_directory", state.saveDirectory || "~/Downloads");
-  if (executionDevice()?.backend === "cuda") {
-    if (!state.selectedGpu || state.gpuDeviceId !== executionDevice().id) return toast("이번 전사에 사용할 GPU를 선택해 주세요.", true);
-    body.set("gpu_uuid", state.selectedGpu.uuid);
-    if (state.gpuApproval?.uuid === state.selectedGpu.uuid && state.gpuApproval.token === state.selectedGpu.busy_confirmation)
-      body.set("gpu_confirmation", state.gpuApproval.token);
+  body.set('output_directory',state.saveDirectory || '~/Downloads');
+  const fastSpeech = !!window.cosmossSpeech?.active();
+  if (device.backend === 'cuda') {
+    if (!state.selectedGpu || state.gpuDeviceId !== device.id) return toast('이번 전사에 사용할 GPU를 선택해 주세요.',true);
+    body.set('gpu_uuid',state.selectedGpu.uuid);
+    if (state.gpuApproval?.uuid === state.selectedGpu.uuid && state.gpuApproval.token === state.selectedGpu.busy_confirmation) body.set('gpu_confirmation',state.gpuApproval.token);
   }
-  body.delete("file");
-  body.set("upload_id", preparation.id);
-  state.uploading = true;
-  stopGpuMonitor();
-  const button = form.querySelector("button[type=submit]");
-  const fields = [...form.elements];
-  const disabledBeforeUpload = new Map(fields.map(field => [field, field.disabled]));
-  fields.forEach(field => field.disabled = true);
-  button.firstChild.textContent = "전사 시작 중… ";
+  const chunkCount = preparation => Math.min(1000,Math.max(1,Math.ceil(preparation.duration / chunkSeconds - 1e-9)));
+  const fields = [...form.elements], disabledBeforeUpload = new Map(fields.map(field=>[field,field.disabled]));
+  const button = form.querySelector('button[type=submit]');
+  state.uploading = true;stopGpuMonitor();fields.forEach(field=>field.disabled=true);
+  button.firstChild.textContent = '전사 대기열에 추가 중… ';
+  let pending = [...preparations], added = 0;
   try {
     await flushSave();
-    let note;
-    while (!note) {
-      try { note = await api("/api/notes", { method: "POST", body }); }
-      catch (error) {
-        if (error.status !== 409 || error.detail?.code !== "gpu_confirmation_required") throw error;
-        const gpu = error.detail.gpu;
-        if (!(await confirmBusyGpu(gpu))) return;
-        body.set("gpu_confirmation", gpu.busy_confirmation);
+    while (pending.length) {
+      let result;
+      if (pending.length === 1) {
+        const preparation = pending[0], single = new FormData();
+        for (const [key,value] of body) single.set(key,value);
+        single.set('upload_id',preparation.id);
+        if (!fastSpeech && chunkSeconds) single.set('chunk_count',String(chunkCount(preparation)));
+        try {result = {notes:[{upload_id:preparation.id,note:await api('/api/notes',{method:'POST',body:single})}],errors:[]};}
+        catch(error) {result = {notes:[],errors:[{upload_id:preparation.id,error:error.message,detail:error.detail,status_code:error.status}]};}
+      } else {
+        const shared = Object.fromEntries(body.entries());delete shared.chunk_count;delete shared.title;
+        result = await api('/api/notes/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...shared,items:pending.map(item=>({upload_id:item.id,...(!fastSpeech && chunkSeconds ? {chunk_count:chunkCount(item)} : {})}))})});
       }
+      for (const accepted of result.notes || []) {
+        const preparation = pending.find(item=>item.id === accepted.upload_id);
+        if (preparation && !preparation.submitted) {preparation.submitted=true;releaseFileMetadata(preparation);added++;}
+      }
+      pending = pending.filter(item=>!item.submitted);
+      for (const preparation of pending) preparation.submitError = result.errors?.find(error=>error.upload_id === preparation.id)?.error || '대기열에 추가하지 못했습니다. 다시 시도해 주세요.';
+      await loadNotes();
+      const warning = result.errors?.find(error=>error.detail?.code === 'gpu_confirmation_required');
+      if (warning && pending.length && (await confirmBusyGpu(warning.detail.gpu))) {
+        body.set('gpu_confirmation',warning.detail.gpu.busy_confirmation);
+        continue;
+      }
+      break;
     }
-    releaseFileMetadata(preparation);
-    state.uploadPreparation = null;
-    $("#upload-dialog").close();
-    form.reset();
-    resetDropZone();
-    $("#note-search").value = "";
-    await loadNotes();
-    await openNote(note.id);
-    toast("전사 대기열에 추가했습니다.");
-  } catch (error) { toast(error.message, true); }
-  finally {
+    if (!pending.length) {
+      cancelFilePreparation();
+      $('#upload-dialog').close();form.reset();resetDropZone();
+      toast(added > 1 ? `${added}개 녹음을 백그라운드 전사에 추가했습니다. 선택한 장치에서 순서대로 진행합니다.` : '백그라운드 전사에 추가했습니다. 다른 노트를 계속 정리할 수 있어요.');
+    } else {
+      state.uploadBatch = uploadPreparations().filter(item=>!item.submitted);
+      selectPrimaryPreparation();
+      if (!fastSpeech && chunkSeconds && state.uploadPreparation?.duration) state.uploadChunkCount = String(chunkCount(state.uploadPreparation));
+      toast(added ? `${added}개 추가 완료 · 남은 ${pending.length}개는 오류를 확인한 뒤 다시 시작해 주세요.` : pending[0].submitError,true);
+    }
+  } catch(error) {
+    // Successful items are removed immediately so a retry never resubmits them.
+    state.uploadBatch = uploadPreparations().filter(item=>!item.submitted);selectPrimaryPreparation();
+    if (!fastSpeech && chunkSeconds && state.uploadPreparation?.duration) state.uploadChunkCount = String(chunkCount(state.uploadPreparation));
+    toast(error.message,true);
+  } finally {
     state.uploading = false;
-    fields.forEach(field => field.disabled = disabledBeforeUpload.get(field));
-    button.firstChild.textContent = "전사 시작하기 ";
+    fields.forEach(field=>field.disabled=disabledBeforeUpload.get(field));
     renderFilePreparation();
-    if ($("#upload-dialog").open) syncExecutionGpu();
+    if ($('#upload-dialog').open) syncExecutionGpu();
   }
 });
 
@@ -1330,46 +1525,55 @@ function bindConfirmationDialog(selector, close) {
   });
 }
 
-function openCancellationDialog() {
-  if (!state.current || state.cancellingId || state.restartingId || state.deletingId) return;
-  if (!["queued", "processing"].includes(state.current.status)) return;
+function jobNote(id) {
+  return state.notes.find(note => note.id === id) || (state.current?.id === id ? state.current : null);
+}
+
+function openCancellationDialog(noteId = state.current?.id) {
+  const note = jobNote(noteId);
+  if (!note || state.jobActions.has(noteId) || !["queued", "processing"].includes(note.status)) return;
   const dialog = $("#cancel-dialog");
   if (dialog.open) return;
-  state.cancellationNoteId = state.current.id;
-  $("#cancel-dialog-note-title").textContent = state.current.title;
+  state.cancellationNoteId = noteId;
+  $("#cancel-dialog-note-title").textContent = note.title;
   dialog.showModal();
 }
 
 function closeCancellationDialog() {
+  const noteId = state.cancellationNoteId;
   state.cancellationNoteId = null;
   const dialog = $("#cancel-dialog");
   if (dialog.open) dialog.close();
+  if (noteId) document.querySelector(`.background-job[data-id="${CSS.escape(noteId)}"] [data-job-action="cancel"]`)?.focus({preventScroll:true});
 }
 
-async function cancelTranscription(noteId) {
-  if (!state.current || state.cancellingId || state.restartingId || state.deletingId) return;
-  if (state.current.id !== noteId) return;
-  if (!["queued", "processing"].includes(state.current.status)) return;
-  const id = state.current.id;
-  state.cancellingId = id;
-  ++state.noteRequest;
-  renderTranscriptionControls(state.current);
+async function runTranscriptionAction(id, action) {
+  const note = jobNote(id);
+  const allowed = action === "cancel" ? ["queued", "processing"] : ["error", "cancelled"];
+  if (!note || state.jobActions.has(id) || !allowed.includes(note.status)) return;
+  state.jobActions.set(id, action);
+  renderBackgroundJobs();
   try {
-    await flushSave();
-    const note = await api(`/api/notes/${encodeURIComponent(id)}/cancel`, { method: "POST" });
-    if (state.current?.id === id) state.current = note;
+    const updated = await api(`/api/notes/${encodeURIComponent(id)}/${action}`, {method:"POST"});
+    // A background job never changes the selected editor or its pending draft.
+    if (state.current?.id === id && !state.pendingChanges && !state.savePromise) {
+      state.current = updated;
+      if ($("#note-dialog").open) renderWorkspace();
+    }
     await loadNotes();
-    toast("전사를 취소했습니다.");
-  } catch (error) {
-    toast(`전사를 취소하지 못했습니다. ${error.message}`, true);
-  } finally {
-    state.cancellingId = null;
-    if (state.current?.id === id) renderWorkspace();
-    else if (state.current) renderTranscriptionControls(state.current);
-    if (state.notes.some(note => ["queued", "processing"].includes(note.status))) schedulePoll();
+    toast(action === "cancel" ? "전사를 취소했습니다. 보관된 녹음으로 다시 시작할 수 있어요." : "백그라운드 전사에 다시 추가했습니다.");
+  } catch (error) { toast(`${action === "cancel" ? "전사를 취소하지" : "다시 시작하지"} 못했습니다. ${error.message}`, true); }
+  finally {
+    state.jobActions.delete(id);
+    renderBackgroundJobs();
+    if (backgroundWorkPending()) schedulePoll();
   }
 }
-$("#cancel-transcription").addEventListener("click", openCancellationDialog);
+
+function cancelTranscription(noteId) { return runTranscriptionAction(noteId, "cancel"); }
+function restartTranscription(noteId = state.current?.id) { return runTranscriptionAction(noteId, "restart"); }
+
+$("#cancel-transcription").addEventListener("click", () => openCancellationDialog());
 $("#keep-transcribing").addEventListener("click", closeCancellationDialog);
 $("#close-cancel-dialog").addEventListener("click", closeCancellationDialog);
 $("#confirm-cancel-transcription").addEventListener("click", async () => {
@@ -1378,39 +1582,16 @@ $("#confirm-cancel-transcription").addEventListener("click", async () => {
   if (noteId) await cancelTranscription(noteId);
 });
 bindConfirmationDialog("#cancel-dialog", closeCancellationDialog);
+$("#restart-transcription").addEventListener("click", () => restartTranscription());
 
-async function restartTranscription() {
-  if (!state.current || state.restartingId || state.cancellingId || state.deletingId) return;
-  if (!["cancelled", "error"].includes(state.current.status)) return;
-  const id = state.current.id;
-  state.restartingId = id;
-  ++state.noteRequest;
-  renderTranscriptionControls(state.current);
-  try {
-    await flushSave();
-    const note = await api(`/api/notes/${encodeURIComponent(id)}/restart`, { method: "POST" });
-    if (state.current?.id === id) state.current = note;
-    await loadNotes();
-    toast("전사 대기열에 다시 추가했습니다.");
-  } catch (error) {
-    toast(`다시 시작하지 못했습니다. ${error.message}`, true);
-  } finally {
-    state.restartingId = null;
-    if (state.current?.id === id) renderWorkspace();
-    else if (state.current) renderTranscriptionControls(state.current);
-    if (state.notes.some(note => ["queued", "processing"].includes(note.status))) schedulePoll();
-  }
-}
-$("#restart-transcription").addEventListener("click", restartTranscription);
-
-function openDeletionDialog() {
-  if (!state.current || state.deletingId || state.cancellingId || state.restartingId) return;
-  if (["queued", "processing"].includes(state.current.status)) return;
+function openDeletionDialog(noteId = state.current?.id) {
+  const note = jobNote(noteId);
+  if (!note || state.jobActions.has(noteId) || ["queued", "processing"].includes(note.status)) return;
   const dialog = $("#delete-dialog");
   if (dialog.open) return;
-  state.deletionNoteId = state.current.id;
-  $("#delete-dialog-note-title").textContent = state.pendingChanges?.id === state.current.id
-    ? state.pendingChanges.changes.title ?? state.current.title : state.current.title;
+  state.deletionNoteId = noteId;
+  $("#delete-dialog-note-title").textContent = state.pendingChanges?.id === noteId
+    ? state.pendingChanges.changes.title ?? note.title : note.title;
   dialog.showModal();
 }
 
@@ -1421,39 +1602,14 @@ function closeDeletionDialog() {
 }
 
 async function deleteNote(noteId) {
-  if (!state.current || state.deletingId || state.cancellingId || state.restartingId) return;
-  if (state.current.id !== noteId || ["queued", "processing"].includes(state.current.status)) return;
-  const note = state.current;
-  state.deletingId = note.id;
-  ++state.noteRequest;
-  clearTimeout(state.pollTimer);
-  state.pollTimer = null;
-  const controls = [...document.querySelectorAll(".app-shell button, #workspace button, #workspace input, #workspace textarea")];
-  const disabled = controls.map(control => control.disabled);
-  controls.forEach(control => control.disabled = true);
-  try {
-    await flushSave();
-    await api(`/api/notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
-    if (state.pendingChanges?.id === note.id) state.pendingChanges = null;
-    clearTimeout(state.saveTimer);
-    if (state.current?.id === note.id) {
-      state.current = null;
-      $("#media-player").pause();
-      $("#media-player").removeAttribute("src");
-      $("#workspace").classList.add("hidden");
-      $("#note-dialog").close();
-      selectSummaryNote(null);
-    }
-    await loadNotes();
-    toast("노트를 삭제했습니다.");
-  } catch (error) { toast(error.message, true); }
-  finally {
-    state.deletingId = null;
-    controls.forEach((control, index) => control.disabled = disabled[index]);
-    if (["queued", "processing"].includes(state.current?.status) || state.notes.some(item => ["queued", "processing"].includes(item.status))) schedulePoll();
-  }
+  const note = jobNote(noteId);
+  if (!note || state.jobActions.has(noteId) || ['queued','processing'].includes(note.status)) return;
+  state.jobActions.set(noteId,'remove');
+  renderBackgroundJobs();
+  try { await actOnNoteFile('trash', null, noteId); }
+  finally {state.jobActions.delete(noteId);renderBackgroundJobs();}
 }
-$("#delete-note").addEventListener("click", openDeletionDialog);
+$("#delete-note").addEventListener("click", () => openDeletionDialog());
 $("#keep-note").addEventListener("click", closeDeletionDialog);
 $("#close-delete-dialog").addEventListener("click", closeDeletionDialog);
 $("#confirm-delete-note").addEventListener("click", async () => {
@@ -1462,6 +1618,36 @@ $("#confirm-delete-note").addEventListener("click", async () => {
   if (noteId) await deleteNote(noteId);
 });
 bindConfirmationDialog("#delete-dialog", closeDeletionDialog);
+
+async function loadTrash() {
+  const request = ++state.trashRequest;
+  $('#trash-status').textContent = '최근 삭제한 노트를 불러오고 있어요…';
+  try {
+    const entries = await api('/api/trash');
+    if (request !== state.trashRequest || !$('#trash-dialog').open) return;
+    $('#trash-status').textContent = entries.length ? `${entries.length}개 보관 중` : '최근 삭제한 노트가 없습니다.';
+    $('#trash-list').innerHTML = entries.map(entry => {
+      const days = Math.max(0,Math.ceil((new Date(entry.expires_at).getTime() - Date.now()) / 86400000));
+      return `<article class="trash-item" data-id="${escapeHtml(entry.id)}"><div><strong>${escapeHtml(entry.title)}</strong><small>${formatDate(entry.deleted_at)} 삭제 · ${days ? `${days}일 후` : '곧'} 앱 기록 정리</small>${entry.can_restore === false ? '<p class="trash-reconnect-note">파일을 원래 폴더로 돌려놓으면 다시 연결됩니다.</p>' : ''}</div><button class="ghost-button" type="button" data-restore-trash ${entry.can_restore === false || state.trashRestoring.has(entry.id) ? 'disabled' : ''}>${state.trashRestoring.has(entry.id) ? '복구 중…' : '복구'}</button></article>`;
+    }).join('');
+  } catch (error) { if (request === state.trashRequest) $('#trash-status').textContent = error.message; }
+}
+$('#open-trash').addEventListener('click', () => {$('#trash-dialog').showModal();$('#trash-title').focus({preventScroll:true});loadTrash();});
+$('#close-trash').addEventListener('click', () => $('#trash-dialog').close());
+$('#trash-dialog').addEventListener('close', () => {state.trashRequest++;$('#open-trash').focus({preventScroll:true});});
+$('#trash-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-restore-trash]');
+  if (!button || button.disabled) return;
+  const id = button.closest('.trash-item').dataset.id;
+  if (state.trashRestoring.has(id)) return;
+  state.trashRestoring.add(id);button.disabled = true;button.textContent = '복구 중…';
+  try {
+    await api(`/api/trash/${encodeURIComponent(id)}/restore`,{method:'POST'});
+    await loadNotes();
+    toast('노트를 복구했습니다.');
+  } catch(error) {toast(error.message,true);}
+  finally {state.trashRestoring.delete(id);if ($('#trash-dialog').open) await loadTrash();}
+});
 
 function executionDevice() {
   return state.devices.find(device => device.id === state.executionDeviceId);
@@ -1476,8 +1662,16 @@ function stopGpuMonitor() {
 function syncExecutionGpu() {
   const device = executionDevice();
   const managed = device?.backend === "cuda";
+  const hasCompute = managed || device?.kind === 'local';
   $('#upload-dialog').classList.toggle('has-execution-gpu', managed);
+  $('#upload-dialog').classList.toggle('has-compute-options', hasCompute);
+  $('#upload-compute').classList.toggle('hidden', !hasCompute);
   $("#execution-gpu").classList.toggle("hidden", !managed);
+  // Keep the same controls and form values when switching between Mac and GPU
+  // devices; only their containing column changes.
+  const processing = $('#upload-processing');
+  const destination = hasCompute ? $('#upload-compute') : $('#upload-processing-home');
+  if (processing.parentElement !== destination) destination.append(processing);
   if (state.gpuDeviceId !== device?.id) {
     stopGpuMonitor();
     state.selectedGpu = null;
@@ -1635,7 +1829,7 @@ function devicePresentation(device) {
   const worker = state.workerStates[device.id];
   const status = state.deviceStatus[device.id];
   if (device.model_selected === false) return {label:'모델을 선택해 주세요',tone:'',ready:false};
-  if (device.kind === 'local' && state.localModel?.phase === 'ready') return {label:'모델 준비됨',tone:'ready',ready:true};
+  if (device.kind === 'local' && ['ready','installed'].includes(state.localModel?.phase)) return {label:'모델 준비됨',tone:'ready',ready:true};
   if (device.kind === "local" && localModelBusy()) return {
     label: "모델 준비 중", tone: "busy", ready: false,
   };
@@ -1667,9 +1861,9 @@ function cardModelOptions(device) {
   const placeholder = `<option value="" disabled ${selected ? '' : 'selected'}>모델 선택…</option>`;
   if (device.backend === 'cuda') {
     const current = device.options?.speech_pipeline || 'moss-sglang';
-    const presets = state.catalog?.speech_presets || [{key:'moss-sglang',name:'MOSS · SGLang Omni · 전체',badge:'추천 · 서버 기본값'}, {key:'qwen-transformers',name:'Qwen · Transformers · 3분 + 정렬'}, {key:'moss-qwen-sequential',name:'MOSS + Qwen · 순차 실행'}];
+    const presets = state.catalog?.speech_presets || [{key:'moss-sglang',name:'MOSS · SGLang Omni',badge:'추천'}, {key:'qwen-transformers',name:'Qwen · Transformers',badge:'빠른 전사'}, {key:'moss-qwen-sequential',name:'MOSS + Qwen',badge:'보조 대본 비교'}];
     const legacy = selected && !presets.some(item=>item.key===current) ? `<option value="speech:${escapeHtml(current)}" selected>이전 전사 설정 · 새 모델을 선택해 주세요</option>` : '';
-    return placeholder + presets.map(item => `<option value="speech:${item.key}" ${selected && device.model_key !== 'custom' && item.key === current ? 'selected' : ''}>${escapeHtml(item.name + (item.badge ? ` · ${item.badge}` : ''))}</option>`).join('') + legacy;
+    return placeholder + presets.map(item => `<option value="speech:${item.key}" data-badge="${escapeHtml(item.badge || '')}" ${selected && device.model_key !== 'custom' && item.key === current ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('') + legacy;
   }
   return placeholder + modelOptionsHtml(device.id, selected ? device.model_key || state.localModel?.model_key || 'mlx-8bit' : '', false);
 }
@@ -1694,7 +1888,7 @@ function renderDevices() {
         ${device.kind === "ssh" ? `<button class="icon-button danger" data-device-action="remove" type="button" aria-label="${escapeHtml(device.name)} 제거" title="장치 제거" ${busy ? "disabled" : ""}><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg></button>` : ""}
       </div>
       <div class="device-card-state ${presentation.tone}"><i aria-hidden="true"></i><span>${escapeHtml(presentation.label)}</span>${(device.kind === "local" || managed) && !fast && device.model_selected !== false ? `<button class="device-environment-link${runtimeState(device.id)?.ready ? " is-ready" : ""}" data-device-action="environment" type="button" aria-haspopup="dialog" title="uv · Python venv · 필수 패키지 확인 및 설치">${runtimeState(device.id)?.ready ? "uv · venv ✓" : "실행 환경"}</button>` : ""}</div>
-      ${device.kind === "local" || managed ? `<label class="field device-model-field"><span>전사 모델 <small class="device-chunk-size">${device.model_selected === false ? '선택 후 다운로드' : fast ? '화자 구분 · Nemotron' : escapeHtml(deviceKnobSummary(device))}</small></span><select data-device-model="${escapeHtml(device.id)}" ${busy ? "disabled" : ""}>${cardModelOptions(device)}</select></label>
+      ${device.kind === "local" || managed ? `<label class="field device-model-field"><span>전사 모델 <small class="device-chunk-size">${device.model_selected === false ? '선택 후 다운로드' : fast || device.kind === 'local' ? '화자 구분 · Nemotron' : escapeHtml(deviceKnobSummary(device))}</small></span><select data-device-model="${escapeHtml(device.id)}" ${busy ? "disabled" : ""}>${cardModelOptions(device)}</select></label>
       <button class="device-model-download" data-device-action="download" type="button" ${busy || device.model_selected === false || worker?.phase === 'unknown' || presentation.ready ? 'disabled' : ''}>${busy ? '모델 준비 중…' : presentation.ready ? '모델 준비 완료' : '선택한 모델 다운로드'}</button>` : ""}
       ${downloadProgressHtml(device.kind === "local" ? state.localModel : worker)}
       ${worker?.error ? `<details class="device-diagnostics"><summary>준비 상세 보기</summary><p>${escapeHtml(worker.error)}</p></details>` : ""}
@@ -1717,7 +1911,8 @@ function modelOptionsHtml(id, selected, all = true) {
   const entries = state.catalog?.models || [];
   const models = entries.filter(model => all || model.backend === backend).map(model => {
     const supported = model.backend === backend;
-    return `<option value="${escapeHtml(model.key)}" ${model.key === selected ? "selected" : ""} ${supported ? "" : "disabled"}>${escapeHtml(model.name)}${supported && model.key === recommended ? " · 추천" : ""}${supported ? "" : " · 다른 실행 방식"}</option>`;
+    const badge = model.key === "mlx-4bit" ? " · 위험" : supported && model.key === recommended ? " · 추천" : "";
+    return `<option value="${escapeHtml(model.key)}" ${model.key === selected ? "selected" : ""} ${supported ? "" : "disabled"}>${escapeHtml(model.name)}${supported ? "" : " · 다른 실행 방식"}${badge}</option>`;
   }).join("");
   const unavailable = all ? (metadata?.unavailable || state.catalog?.unavailable || []).map(item => `<option disabled>${escapeHtml(item.name)} · ${escapeHtml(item.reason)}</option>`).join("") : "";
   return models + `<option value="custom" ${selected === "custom" ? "selected" : ""}>다른 MOSS 저장소…</option>` + unavailable;
@@ -1729,6 +1924,7 @@ function deviceKnobSummary(device) {
 async function loadModelCatalog() {
   state.catalog = await api("/api/model-catalog");
   renderDevices();
+  if ($('#upload-dialog').open) renderFilePreparation();
 }
 function fillModelKnobs(options) {
   for (const field of document.querySelectorAll('[data-knob]')) {
@@ -1763,8 +1959,9 @@ function renderModelRecommendation() {
   const rec = metadata?.recommendation;
   const hardware = metadata?.hardware;
   const recommended = state.catalog?.models.find(model => model.key === rec?.model_key);
+  const risky = rec?.model_key === 'mlx-4bit';
   const title = local ? `${hardware?.name || 'Apple Silicon'}${hardware?.memory_gib ? ` · 메모리 ${hardware.memory_gib} GB` : ''}` : '선택한 장치에 맞는 시작 설정';
-  $("#model-recommendation").innerHTML = rec ? `<div><strong>${escapeHtml(title)}</strong><p>${escapeHtml(recommended?.name || '')} · ${rec.options.chunk_minutes}분 청크 권장<br>용량 기준의 시작값입니다. 실제 메모리 사용량은 녹음 길이에 따라 달라집니다.</p></div><button class="ghost-button" type="button" data-apply-profile="default">권장값 적용</button>` : '';
+  $("#model-recommendation").innerHTML = rec ? `<div><strong>${escapeHtml(title)}</strong><p>${escapeHtml(recommended?.name || '')}${risky ? ' <span class="custom-select-badge is-danger">위험</span><br>실측에서 시간표시 오류와 긴 녹음의 출력 중단이 확인되었습니다.' : ` · ${rec.options.chunk_minutes}분 청크 권장<br>용량 기준의 시작값입니다. 실제 메모리 사용량은 녹음 길이에 따라 달라집니다.`}</p></div><button class="ghost-button" type="button" data-apply-profile="default">${risky ? '설정 적용' : '권장값 적용'}</button>` : '';
   $("#model-profiles").innerHTML = (metadata?.profiles || []).map((profile, index) => `<button class="model-profile" type="button" data-apply-profile="${index}" title="${escapeHtml(profile.name)}의 권장값 적용">GPU #${profile.index} · ${profile.memory_gib ?? '?'} GB · ${profile.options.chunk_minutes}분 권장</button>`).join('');
 }
 function applyModelProfile(key) {
@@ -1774,7 +1971,7 @@ function applyModelProfile(key) {
   $("#model-choice").value = rec.model_key;
   fillModelKnobs(rec.options);
   updateModelChoice(true);
-  toast('권장값을 채웠습니다. 적용하고 모델을 준비해 주세요.');
+  toast(`${rec.model_key === 'mlx-4bit' ? '설정값' : '권장값'}을 채웠습니다. 적용하고 모델을 준비해 주세요.`);
 }
 $("#model-choice").addEventListener("change", () => updateModelChoice(true));
 $("#model-recommendation").addEventListener("click", event => {
@@ -1923,7 +2120,7 @@ async function pollLocalModel() {
     state.localModel = await api("/api/local-model");
     renderLocalModel();
     renderDevices();
-    if (state.localModel.phase === "ready") {
+    if (['ready','installed'].includes(state.localModel.phase)) {
       toast("이 Mac의 모델이 준비됐습니다.");
       await checkHealth();
     }
@@ -2062,6 +2259,9 @@ async function refreshGpu() {
     state.selectedGpu = result.gpus.find(gpu => gpu.uuid === state.selectedGpu?.uuid) || null;
     if (!state.selectedGpu || state.gpuApproval?.token !== state.selectedGpu.busy_confirmation || state.selectedGpu.idle_candidate) state.gpuApproval = null;
     const focused = $("#gpu-probe-result input:focus")?.value;
+    const previousList = $('#gpu-probe-result .gpu-table-wrap');
+    const scrollTop = previousList?.scrollTop || 0, scrollLeft = previousList?.scrollLeft || 0;
+    const listFocused = previousList === document.activeElement;
     const checked = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(result.checked_at));
     const rows = result.gpus.map(gpu => {
       const activity = gpu.utilization_percent == null ? "확인 불가" : `${gpu.utilization_percent}%`;
@@ -2075,8 +2275,13 @@ async function refreshGpu() {
         <td><span class="gpu-status ${gpu.idle_candidate ? "gpu-idle" : "gpu-occupied"}" title="${gpu.idle_candidate ? '현재 여유 상태' : '사용 중 · 선택하면 프로세스를 확인합니다.'}">${gpu.idle_candidate ? "여유" : "사용 중"}</span></td></tr>`;
     }).join("");
     $("#execution-gpu-meta").textContent = `${device.host} · ${checked} 확인 · 3초마다 갱신`;
-    $("#gpu-probe-result").innerHTML = `${rows ? `<div class="gpu-table-wrap"><table class="gpu-table"><thead><tr><th>GPU</th><th>사용 / 전체 VRAM</th><th>사용률</th><th>프로세스</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
+    $("#gpu-probe-result").innerHTML = `${rows ? `<div class="gpu-table-wrap${result.gpus.length > 5 ? ' is-scrollable' : ''}" role="region" aria-label="서버 GPU 목록" tabindex="${result.gpus.length > 5 ? '0' : '-1'}"><table class="gpu-table"><thead><tr><th>GPU</th><th>사용 / 전체 VRAM</th><th>사용률</th><th>프로세스</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
       <p>${escapeHtml(result.message)}</p>`;
+    const list = $('#gpu-probe-result .gpu-table-wrap');
+    if (list) {
+      list.scrollTop = scrollTop; list.scrollLeft = scrollLeft;
+      if (listFocused) list.focus({preventScroll:true});
+    }
     if (focused) [...$("#gpu-probe-result").querySelectorAll("input")].find(input => input.value === focused && !input.disabled)?.focus({ preventScroll: true });
   } catch (error) {
     if (request !== state.sshRequest || error.name === "AbortError") return;
@@ -2651,26 +2856,103 @@ $("#save-speakers").addEventListener("click", async () => {
 });
 
 async function loadSummaryDefaultPrompt() {
+  const request = ++state.summaryPromptRequest;
   const result = await api("/api/summary/default-prompt");
+  if (request !== state.summaryPromptRequest) return null;
+  applySummaryPreferences(result);
+  return result;
+}
+function applySummaryPreferences(result) {
   state.summaryDefaultPrompt = result.default_prompt;
-  $("#default-summary-prompt-content").textContent = result.default_prompt;
+  state.summaryRecommendedPrompt = result.recommended_prompt || result.default_prompt;
+  const badge = $('#summary-prompt-badge');
+  badge.textContent = result.customized ? '사용자 설정' : '추천';
+  badge.classList.remove('hidden');
+}
+function fitDefaultSummaryPrompt() {
+  const input = $('#default-summary-prompt-content'), body = $('.summary-default-body');
+  if (!input.clientWidth) return;
+  const top = body.scrollTop;
+  input.style.height = 'auto';
+  input.style.height = `${input.scrollHeight + 2}px`;
+  body.scrollTop = top;
+}
+function renderDefaultSummaryPrompt() {
+  const busy = state.summaryPromptLoading || state.summaryPromptSaving;
+  $('#default-summary-prompt-content').disabled = busy;
+  $('#reset-default-summary-prompt').disabled = busy || !state.summaryRecommendedPrompt;
+  $('#save-default-summary-prompt').disabled = busy || !$('#default-summary-prompt-content').value.trim();
+  $('#save-default-summary-prompt').textContent = state.summaryPromptSaving ? '저장 중…' : '저장';
+  for (const id of ['#close-default-summary-prompt', '#cancel-default-summary-prompt']) $(id).disabled = state.summaryPromptSaving;
+}
+function summaryPromptStatus(message, error=false) {
+  $('#default-summary-prompt-status').textContent = message;
+  $('#default-summary-prompt-status').classList.toggle('error', error);
 }
 function closeSummaryPromptDialog() {
+  if (state.summaryPromptSaving) return;
   const dialog = $("#default-summary-prompt-dialog");
   if (!dialog.open) return;
+  ++state.summaryPromptEditorRequest;
+  state.summaryPromptLoading = false;
   dialog.close();
   $("#show-default-summary-prompt").focus({preventScroll:true});
 }
 $("#show-default-summary-prompt").addEventListener("click", async () => {
   const dialog = $("#default-summary-prompt-dialog");
-  if (!dialog.open) dialog.showModal();
+  if (dialog.open) return;
+  dialog.showModal();
   $("#default-summary-prompt-title").focus({preventScroll:true});
-  if (!state.summaryDefaultPrompt) {
-    try { await loadSummaryDefaultPrompt(); }
-    catch (_) { $("#default-summary-prompt-content").textContent = "기본 프롬프트를 불러오지 못했습니다. 창을 닫고 다시 시도해 주세요."; }
+  const request = ++state.summaryPromptEditorRequest;
+  state.summaryPromptLoading = true;
+  $('#default-summary-prompt-content').value = '';
+  summaryPromptStatus('불러오는 중…');
+  renderDefaultSummaryPrompt();
+  try {
+    const result = await loadSummaryDefaultPrompt();
+    if (request !== state.summaryPromptEditorRequest || !result) return;
+    $('#default-summary-prompt-content').value = result.default_prompt;
+    summaryPromptStatus('수정한 내용은 저장 후 다음 요약부터 적용됩니다.');
+    fitDefaultSummaryPrompt();
+    $('.summary-default-body').scrollTop = 0;
+  } catch (error) {
+    if (request === state.summaryPromptEditorRequest) summaryPromptStatus('불러오지 못했습니다. 창을 닫고 다시 시도해 주세요. ' + error.message, true);
+  } finally {
+    if (request === state.summaryPromptEditorRequest) {state.summaryPromptLoading = false;renderDefaultSummaryPrompt();}
   }
 });
 $("#close-default-summary-prompt").addEventListener("click", closeSummaryPromptDialog);
+$('#cancel-default-summary-prompt').addEventListener('click', closeSummaryPromptDialog);
+$('#default-summary-prompt-content').addEventListener('input', () => {
+  fitDefaultSummaryPrompt();renderDefaultSummaryPrompt();
+  summaryPromptStatus('저장하면 다음 요약부터 이 문구를 사용합니다.');
+});
+$('#reset-default-summary-prompt').addEventListener('click', () => {
+  $('#default-summary-prompt-content').value = state.summaryRecommendedPrompt;
+  fitDefaultSummaryPrompt();renderDefaultSummaryPrompt();
+  $('.summary-default-body').scrollTop = 0;
+  summaryPromptStatus('추천 문구로 되돌렸습니다. 저장을 눌러 적용하세요.');
+});
+$('#save-default-summary-prompt').addEventListener('click', async () => {
+  if (state.summaryPromptLoading || state.summaryPromptSaving) return;
+  const prompt = $('#default-summary-prompt-content').value.trim();
+  if (!prompt) return;
+  state.summaryPromptSaving = true;renderDefaultSummaryPrompt();
+  ++state.summaryPromptRequest;
+  try {
+    const result = await api('/api/summary/default-prompt', {method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({prompt:prompt === state.summaryRecommendedPrompt ? null : prompt})});
+    applySummaryPreferences(result);
+    state.summaryPromptSaving = false;
+    closeSummaryPromptDialog();
+    toast(result.customized ? '기본 프롬프트를 저장했습니다.' : '추천 프롬프트로 되돌렸습니다.');
+  } catch (error) {summaryPromptStatus('저장하지 못했습니다. ' + error.message, true);}
+  finally {state.summaryPromptSaving = false;renderDefaultSummaryPrompt();}
+});
+$('#default-summary-prompt-dialog').addEventListener('cancel', event => {if (state.summaryPromptSaving) event.preventDefault();});
+window.addEventListener('resize', () => {
+  if ($('#default-summary-prompt-dialog').open) fitDefaultSummaryPrompt();
+});
 bindConfirmationDialog("#default-summary-prompt-dialog", closeSummaryPromptDialog);
 
 async function loadSummaryProviders() {
@@ -2747,6 +3029,7 @@ async function pollSummary(id) {
     const result = await api(`/api/notes/${encodeURIComponent(id)}/summary`);
     if (request !== state.summaryRequest || state.current?.id !== id) return;
     state.summaryStates[id] = result;
+    updateNoteSummaryStatus(id, result);
     if (!(id in state.summaryDrafts)) {
       state.summaryDrafts[id] = summaryPromptOptions(result);
       showSummaryDraft(state.summaryDrafts[id]);
@@ -2784,6 +3067,7 @@ function renderSummary() {
   $("#summary-prompt-label").textContent = useDefault ? "추가 요청" : "요청 내용";
   $("#summary-prompt-optional").classList.toggle("hidden", !useDefault);
   $("#summary-prompt").placeholder = useDefault ? "추가로 요청할 내용을 적어 주세요." : "직접 요청할 내용을 적어 주세요.";
+  $('#summary-prompt-note').textContent = useDefault ? '기본 프롬프트 뒤에 이어서 전달됩니다.' : '기본 프롬프트 없이 이 요청 내용만 전달됩니다.';
   $("#cancel-summary").classList.toggle("hidden", !running);
   $("#summary-source").textContent = !note ? "먼저 2단계에서 노트를 선택하세요." : note.status !== "done" ? "전사가 완료되면 이 노트를 요약할 수 있습니다." : note.text_path ? note.text_path.split("/").pop() : note.title;
   $("#summary-source").title = note?.status === "done" ? note.text_path || "실행할 때 전사 파일을 기본 경로에 저장합니다." : "";
@@ -2819,6 +3103,7 @@ $("#run-summary").addEventListener("click", async () => {
     await saveLocationReady;
     const result = await api(`/api/notes/${encodeURIComponent(id)}/summary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, prompt, use_default_prompt:useDefault, directory: state.saveDirectory }) });
     state.summaryStates[id] = result;
+    updateNoteSummaryStatus(id, result);
     if (state.current?.id === id) {
       const note = await api(`/api/notes/${encodeURIComponent(id)}`);
       if (state.current?.id === id) {
@@ -2837,6 +3122,7 @@ $("#cancel-summary").addEventListener("click", async event => {
   try {
     const result = await api(`/api/notes/${encodeURIComponent(id)}/summary/cancel`, { method: "POST" });
     state.summaryStates[id] = result;
+    updateNoteSummaryStatus(id, result);
     if (state.current?.id === id) { clearTimeout(state.summaryTimer); ++state.summaryRequest; renderSummary(); }
   } catch (error) { toast(error.message, true); }
   finally { $("#cancel-summary").disabled = false; }
@@ -2857,7 +3143,8 @@ $("#copy-corrected").addEventListener("click", async () => {
 });
 
 $("#copy-summary").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("#summary-result").textContent); toast("요약을 복사했습니다."); }
+  const result = state.current && state.summaryStates[state.current.id]?.result;
+  try { await navigator.clipboard.writeText(result?.document_markdown || $("#summary-result").textContent); toast("Markdown을 복사했습니다."); }
   catch (_) { toast("복사하지 못했습니다. 요약 내용을 직접 선택해 복사해 주세요.", true); }
 });
 

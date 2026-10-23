@@ -60,4 +60,5 @@ class InferenceBoundaryTests(unittest.IsolatedAsyncioTestCase):
              patch.object(main.VOICE_PROFILES, 'identify', new=AsyncMock(side_effect=identify)):
             note = await case.run_inference(created.json()['id'])
         self.assertEqual(note['status'], 'done', note.get('error'))
+        self.assertIsNone(note['voice_match_error'])
         self.assertIsNotNone(note['inference_finished_at'])

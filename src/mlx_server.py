@@ -52,6 +52,21 @@ ACTIVE_REQUESTS: dict[str, tuple[threading.Event, threading.Event, asyncio.Task]
 LOGGER = logging.getLogger("uvicorn.error")
 
 
+def watch_managed_parent() -> None:
+    """A forced app exit must also release this app-owned Metal model."""
+    value = os.getenv('COSMOSS_LOCAL_MODEL_PARENT_PID')
+    if not value:
+        return
+    parent = int(value)
+    if parent <= 1:
+        raise ValueError('Invalid managed MLX parent PID')
+    def watch():
+        while os.getppid() == parent:
+            time.sleep(.5)
+        os._exit(1)
+    threading.Thread(target=watch, name='cosmoss-mlx-parent', daemon=True).start()
+
+
 def load_once() -> Any:
     global MODEL
     if MODEL is None:
@@ -77,6 +92,7 @@ def load_once() -> Any:
 async def lifespan(_: FastAPI):
     # Load the weights before accepting traffic. A cold first request otherwise
     # pages ~1.2 GB off disk mid-transcription and looks like a hang to the app.
+    watch_managed_parent()
     await asyncio.to_thread(load_once)
     yield
 

@@ -19,7 +19,7 @@ async def main():
     remote={'id':'fixture','name':'GPU 서버','host':'fixture-host','kind':'ssh','backend':'cuda','model_key':'cuda-original','model_selected':True,'options':{'chunk_minutes':90,'speech_pipeline':'moss-sglang'}}
     gpus=[{'index':i,'uuid':f'GPU-{i}-fixture','name':'NVIDIA H200' if i==0 else 'NVIDIA RTX 6000 Ada Generation',
            'memory_total_mib':143771 if i==0 else 24576,'memory_free_mib':143000 if i==0 else 24000,
-           'memory_used_mib':0,'utilization_percent':0,'processes':[],'process_info_known':True,'idle_candidate':True} for i in range(2)]
+           'memory_used_mib':0,'utilization_percent':0,'processes':[],'process_info_known':True,'idle_candidate':True} for i in range(4)]
     gpus[1].update(idle_candidate=False, memory_used_mib=9338, memory_free_mib=15238,
                    busy_confirmation='busy-fixture',processes=[{'pid':'42','name':'fixture.py','memory_mib':9338}])
     errors=[];submitted=[];home_changes=[];downloads=[]
@@ -69,11 +69,23 @@ async def main():
         await page.route('**/api/devices/fixture/speech-setup',setup)
         await page.route('**/api/devices/fixture/speech-estimate?*',estimate)
         await page.route('**/api/setup',lambda r:r.fulfill(json={'ready':True,'phase':'ready'}))
+        await page.route('**/api/devices/local/model-readiness?*',lambda r:r.fulfill(json={'ready':True,'phase':'installed','asr_ready':True,'diarization_ready':True}))
+        await page.route('**/api/text-library**',lambda r:r.fulfill(json=[]))
         await page.route('**/api/notes',notes)
         await page.route('**/api/notes/'+note['id'],lambda r:r.fulfill(json=note))
         await page.goto(base)
         await page.locator('[data-device-id="fixture"] .use-device').click()
         await page.locator('input[name="selected-gpu"]').first.wait_for()
+        assert await page.locator('#upload-compute #speech-options').count()==1
+        assert await page.locator('#upload-compute #upload-estimates').count()==1
+        assert await page.locator('#gpu-probe-result .gpu-table-wrap').evaluate('e=>e.scrollHeight<=e.clientHeight+1')
+        async def column_layout():
+            left=await page.locator('#upload-compute').bounding_box()
+            right=await page.locator('.upload-details').bounding_box()
+            assert abs(left['width']/(left['width']+right['width'])-.45)<.005,(left,right)
+            assert abs(left['y']-right['y'])<1
+            assert left['x']+left['width']<right['x']
+        await column_layout()
         assert await page.locator('#speech-pipeline').input_value()=='moss-sglang'
         assert await page.locator('#speech-options .custom-select-trigger:visible').count()==1
         assert await page.locator('#speech-batch').is_hidden()
@@ -99,6 +111,26 @@ async def main():
         await page.wait_for_function('document.querySelector("#upload-estimate-time").textContent==="약 03:18"')
         assert '전체 1청크' in await page.locator('#speech-batch-plan').inner_text()
         await page.locator('#upload-dialog').screenshot(path=png.replace('.png','-moss.png'))
+        # Larger inventories scroll independently, retaining scroll/selection
+        # through the same refresh that runs every three seconds in the app.
+        for i in range(4,12):
+            gpus.append({**gpus[0],'index':i,'uuid':f'GPU-{i}-fixture'})
+        await page.evaluate('refreshGpu()')
+        await page.locator('[data-gpu-row]').nth(11).wait_for(state='attached')
+        wrapper=page.locator('#gpu-probe-result .gpu-table-wrap')
+        assert await wrapper.evaluate('e=>e.scrollHeight>e.clientHeight && e.clientHeight<=290')
+        assert await wrapper.evaluate('e=>getComputedStyle(e).overscrollBehaviorY')=='contain'
+        await wrapper.evaluate('e=>e.scrollTop=e.scrollHeight')
+        scroll=await wrapper.evaluate('e=>e.scrollTop')
+        outer_scroll=await page.locator('#upload-dialog').evaluate('e=>e.scrollTop')
+        await page.locator('[data-gpu-row]').last.locator('td').first.click()
+        assert await page.locator('input[name="selected-gpu"]').last.is_checked()
+        await page.evaluate('refreshGpu()')
+        assert abs(await wrapper.evaluate('e=>e.scrollTop')-scroll)<2
+        assert await page.locator('#upload-dialog').evaluate('e=>e.scrollTop')==outer_scroll
+        assert await page.locator('input[name="selected-gpu"]').last.is_checked()
+        await page.locator('#upload-dialog').screenshot(path=png.replace('.png','-many-gpus.png'))
+        await page.locator('input[name="selected-gpu"]').first.check()
         await switch_pipeline(page,'qwen-transformers')
         await page.wait_for_function('document.querySelector("#upload-estimate-time").textContent==="약 01:24"')
         await page.locator('#prepare-upload-model').wait_for(state='visible')
@@ -125,6 +157,7 @@ async def main():
         assert not await page.locator('#allow-speech-memory-risk').is_checked()
         for width in (1440,1100,390):
             await page.set_viewport_size({'width':width,'height':1000})
+            if width>1040: await column_layout()
             await page.screenshot(path=png.replace('.png',f'-{width}.png'),full_page=True)
             assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert await page.locator('#upload-dialog').evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
@@ -150,10 +183,19 @@ async def main():
         assert 'chunk_count' not in values and 'chunk_minutes' not in values
         assert values['upload_id']=='fixture-upload' and values['gpu_uuid']==gpus[0]['uuid']
         assert not home_changes
-        await page.wait_for_function('document.querySelector("#note-dialog").open')
-        await page.locator('#close-note').click()
+        await page.locator('.background-job').wait_for()
+        assert await page.locator('#note-dialog').is_hidden()
+        assert await page.locator('.note-item').count() == 0
+        assert await page.evaluate('state.current') is None
         await page.locator('[data-device-id="fixture"] .use-device').click()
         assert await page.locator('#speech-pipeline').input_value()=='moss-sglang'
+        await page.evaluate("state.executionDeviceId='local';syncExecutionGpu()")
+        assert await page.locator('#upload-compute').is_visible()
+        assert await page.locator('#execution-gpu').is_hidden()
+        assert await page.locator('#upload-compute #upload-processing').count()==1
+        assert await page.locator('#upload-local-model').input_value()=='mlx-8bit'
+        assert 'Nemotron' in await page.locator('#speech-description').inner_text()
+        assert await page.locator('#upload-form').evaluate("e=>e.elements.namedItem('chunk_count')===document.querySelector('#upload-chunk-count')")
         assert not errors,errors
         await browser.close()
     print(engine,'PASS')

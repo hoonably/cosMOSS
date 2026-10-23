@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f5f7f2" />
     <title>cosMOSS</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=note-cleanup-20261023" />
+    <link rel="stylesheet" href="/styles.css?v=mac-nemotron-20261024" />
   </head>
   <body>
     <header class="app-topbar">        <a class="brand" id="go-home" href="/" aria-label="cosMOSS 홈으로 이동">
@@ -60,41 +60,59 @@
           <input id="note-search" type="search" placeholder="노트 검색" aria-label="노트 검색" />
         </label>
 
-        <div class="side-label"><span>내 노트</span><span id="note-count">0</span></div>
+        <div class="side-label"><span>내 노트 <span id="note-count">0</span></span><button type="button" class="library-trash-button" id="open-trash" aria-haspopup="dialog" aria-controls="trash-dialog">최근 삭제</button></div>
         <p class="note-selection-hint" id="note-selection-hint">노트를 선택하면 3단계에서 요약할 수 있어요.</p>
         <div class="note-list" id="note-list"></div>
         <p class="text-library-status hidden" id="text-library-status" role="status"></p>
 
         </section>
+        <section class="background-jobs hidden" id="background-jobs" aria-labelledby="background-jobs-title">
+          <header class="background-jobs-head"><div><h3 id="background-jobs-title">백그라운드 전사</h3><span id="background-jobs-count"></span></div><p>완료되면 위 노트 목록에 추가됩니다.</p></header>
+          <div class="background-job-list" id="background-job-list" tabindex="0" aria-label="전사 작업 목록"></div>
+          <p class="sr-only" id="background-job-announcement" role="status" aria-live="polite"></p>
+        </section>
       </main>
       <div class="stage-divider" role="separator" aria-label="2단계와 3단계 구분" aria-orientation="vertical"></div>
       <aside class="summary-panel" id="stage-summary" aria-labelledby="summary-title">
-        <header class="stage-heading"><div><p class="eyebrow">STEP 03 · SUMMARIZE</p><h2 id="summary-title">AI 요약</h2></div><span class="stage-sparkle" aria-hidden="true">✳</span><p class="stage-path-note" id="summary-path-note">기본 경로에 보정 TXT·요약 MD를 저장합니다.</p></header>
+        <header class="stage-heading"><div><p class="eyebrow">STEP 03 · SUMMARIZE</p><h2 id="summary-title">AI 요약</h2></div><span class="stage-sparkle" aria-hidden="true">✳</span><p class="stage-path-note" id="summary-path-note">보정 전사문을 포함한 요약 Markdown을 저장합니다.</p></header>
         <div class="summary-scroll">
           <label class="field"><span>함께 정리할 AI <button class="inline-link" id="refresh-summary-providers" type="button">연결 확인</button></span><select id="summary-provider" aria-describedby="summary-provider-status"><option value="codex">Codex</option><option value="claude">Claude</option></select></label>
           <p class="summary-provider-status" id="summary-provider-status" role="status">CLI 연결을 확인하고 있습니다…</p>
           <div class="cli-setup hidden" id="cli-setup"><p id="cli-setup-copy"></p><code id="cli-setup-command"></code><a id="cli-docs" href="https://developers.openai.com/codex/cli/" target="_blank" rel="noopener">설정 방법 보기 ↗</a></div>
-          <div class="summary-default-option"><label><input id="use-default-summary-prompt" type="checkbox" checked /><span>기본 프롬프트</span></label><button class="summary-prompt-help" id="show-default-summary-prompt" type="button" aria-label="기본 프롬프트 내용 보기" aria-haspopup="dialog" aria-controls="default-summary-prompt-dialog">?</button></div>
+          <div class="summary-default-option"><label><input id="use-default-summary-prompt" type="checkbox" checked /><span>기본 프롬프트</span></label><button class="summary-prompt-help" id="show-default-summary-prompt" type="button" aria-label="기본 프롬프트 보기·수정" aria-haspopup="dialog" aria-controls="default-summary-prompt-dialog">?</button><span class="summary-prompt-badge hidden" id="summary-prompt-badge">추천</span></div>
           <label class="field summary-prompt-field"><span><span id="summary-prompt-label">추가 요청</span> <small id="summary-prompt-optional">선택</small></span><textarea id="summary-prompt" rows="6" maxlength="20000" placeholder="추가로 요청할 내용을 적어 주세요."></textarea></label>
+          <p class="summary-prompt-note" id="summary-prompt-note">기본 프롬프트 뒤에 이어서 전달됩니다.</p>
           <div class="summary-source" id="summary-source">먼저 2단계에서 노트를 선택하세요.</div>
           <button class="primary-action summary-run" id="run-summary" type="button" disabled><span>전사문 보정·요약하기</span><span aria-hidden="true">→</span></button>
           <button class="ghost-button summary-cancel hidden" id="cancel-summary" type="button">보정·요약 취소</button>
           <p class="summary-data-note">실행하면 전사 파일을 선택한 AI 서비스에 전달합니다.<br>이 Mac에 로그인된 CLI 계정을 사용합니다.</p>
           <div class="summary-status hidden" id="summary-status" role="status" aria-live="polite"></div>
           <div class="summary-result-wrap hidden" id="summary-result-wrap">
-            <div class="summary-result-head"><span id="summary-result-label">보정·요약 결과</span><button class="inline-link" id="copy-summary" type="button">요약 복사</button></div>
+            <div class="summary-result-head"><span id="summary-result-label">보정·요약 결과</span><button class="inline-link" id="copy-summary" type="button">Markdown 복사</button></div>
             <button class="summary-saved-file hidden" id="reveal-corrected" type="button" title="파인더에서 보기"><span></span><span aria-hidden="true">↗</span></button>
             <button class="summary-saved-file hidden" id="reveal-summary" type="button" title="파인더에서 보기"><span></span><span aria-hidden="true">↗</span></button>
             <p class="summary-stale hidden" id="summary-stale">노트가 수정되었습니다. 최신 파일로 다시 보정·요약해 주세요.</p>
-            <details class="corrected-transcript-preview hidden" id="corrected-transcript-preview"><summary>보정 전사문 확인</summary><button class="inline-link" id="copy-corrected" type="button">보정 전사문 복사</button><pre class="summary-result" id="corrected-transcript-result"></pre></details>
             <div class="summary-result" id="summary-result"></div>
+            <details class="corrected-transcript-preview hidden" id="corrected-transcript-preview"><summary>보정 전사문 확인</summary><button class="inline-link" id="copy-corrected" type="button">보정 전사문 복사</button><pre class="summary-result" id="corrected-transcript-result"></pre></details>
           </div>
         </div>
       </aside>
     </div>
     <dialog class="summary-prompt-dialog" id="default-summary-prompt-dialog" aria-labelledby="default-summary-prompt-title">
-      <div class="dialog-head"><h2 id="default-summary-prompt-title" tabindex="-1">기본 프롬프트</h2><button class="dialog-close" id="close-default-summary-prompt" type="button" aria-label="기본 프롬프트 닫기">×</button></div>
-      <div class="summary-default-content" id="default-summary-prompt-content">불러오는 중…</div>
+      <div class="dialog-head"><div><p class="eyebrow">요약의 기본 기준</p><h2 id="default-summary-prompt-title" tabindex="-1">기본 프롬프트</h2></div><button class="dialog-close" id="close-default-summary-prompt" type="button" aria-label="기본 프롬프트 닫기">×</button></div>
+      <div class="summary-default-body">
+        <p class="summary-default-description" id="default-summary-prompt-description">원하는 방식으로 다듬어 저장하세요. 이 Mac에서 다음 요약부터 사용하며, 추가 요청은 이 내용 뒤에 이어집니다.</p>
+        <label class="summary-default-editor"><span class="sr-only">기본 프롬프트 내용</span><textarea id="default-summary-prompt-content" rows="12" maxlength="20000" spellcheck="false" aria-describedby="default-summary-prompt-description" disabled></textarea></label>
+      </div>
+      <p class="summary-prompt-save-status" id="default-summary-prompt-status" role="status"></p>
+      <div class="summary-prompt-actions"><button class="inline-link" id="reset-default-summary-prompt" type="button">추천으로 되돌리기</button><button class="ghost-button" id="cancel-default-summary-prompt" type="button">취소</button><button class="primary-action" id="save-default-summary-prompt" type="button">저장</button></div>
+    </dialog>
+    <dialog class="trash-dialog" id="trash-dialog" aria-labelledby="trash-title">
+      <div class="dialog-head"><div><p class="eyebrow">RECENTLY DELETED</p><h2 id="trash-title" tabindex="-1">최근 삭제</h2></div><button class="dialog-close" id="close-trash" type="button" aria-label="최근 삭제 닫기">×</button></div>
+      <p class="trash-description">삭제한 노트의 앱 기록과 보관된 녹음은 7일 동안 복구할 수 있어요. 기간이 지나면 앱에서 영구 삭제됩니다.</p>
+      <p class="trash-description">파일은 macOS 휴지통으로 이동합니다. Finder에서 복원해도 보관 기간 안에는 앱 기록과 다시 연결됩니다.</p>
+      <p id="trash-status" class="trash-status" role="status"></p>
+      <div class="trash-list" id="trash-list"></div>
     </dialog>
     <dialog class="note-dialog review-panel" id="note-dialog" aria-label="노트 보기" tabindex="-1">
         <section class="workspace hidden" id="workspace">
@@ -219,15 +237,17 @@
           <button type="button" class="dialog-close" id="close-upload" aria-label="업로드 창 닫기">×</button>
         </div>
         <div class="upload-layout">
+          <div class="upload-compute hidden" id="upload-compute">
           <section class="execution-gpu hidden" id="execution-gpu" aria-labelledby="execution-gpu-title">
             <div class="execution-gpu-head"><span id="execution-gpu-title">GPU 번호 선택</span><span class="execution-gpu-meta" id="execution-gpu-meta"></span></div>
             <div class="gpu-probe-result" id="gpu-probe-result" role="status" aria-live="polite"></div>
             <small class="field-help">현재 상태를 보고 GPU 하나를 선택하세요. 전사가 끝나면 GPU 메모리를 해제합니다.</small>
           </section>
+          </div>
           <div class="upload-details">
             <div class="upload-sources">
               <label class="drop-zone" id="drop-zone">
-                <input id="audio-file" name="file" type="file" accept="audio/*,video/*" aria-labelledby="drop-title" aria-describedby="drop-copy upload-limit" required />
+                <input id="audio-file" name="file" type="file" multiple accept="audio/*,video/*" aria-labelledby="drop-title" aria-describedby="drop-copy upload-limit" required />
                 <span class="upload-icon" aria-hidden="true">↥</span>
                 <b id="drop-title">파일 선택 또는 드래그</b>
                 <small id="drop-copy">MP3, WAV, M4A, MP4 등</small>
@@ -239,6 +259,11 @@
               </button>
             </div>
             <p class="upload-limit" id="upload-limit">긴 녹음은 자동 분할</p>
+            <section class="upload-batch hidden" id="upload-batch" aria-label="선택한 녹음">
+              <div class="upload-batch-heading"><strong id="upload-batch-count"></strong><span>같은 장치에서 하나씩 전사합니다.</span></div>
+              <div class="upload-batch-list" id="upload-batch-list"></div>
+              <p id="upload-batch-help">선택한 파일 중 가장 긴 녹음을 기준으로 예상값을 표시합니다.</p>
+            </section>
             <div class="upload-preparation hidden" id="upload-preparation" role="status" aria-live="polite">
               <strong id="upload-duration">음성 길이 확인 중…</strong>
               <span id="upload-preparation-status">파일 업로드 중…</span>
@@ -248,10 +273,14 @@
               <label class="field"><span>노트 제목 <small>선택</small></span><input name="title" placeholder="파일명으로 자동 생성" maxlength="200" /></label>
               <label class="field"><span>저장 형식</span><select id="output-format" name="output_format"><option value="txt">TXT · 텍스트</option><option value="srt">SRT · 자막</option><option value="vtt">VTT · 웹 자막</option></select></label>
             </div>
+            <div id="upload-processing-home"><div class="upload-processing" id="upload-processing">
             <section id="speech-options" class="speech-options hidden" aria-label="전사 방식">
-              <label class="field speech-model-field"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="speech-pipeline" name="speech_pipeline" aria-describedby="speech-description"><option value="moss-sglang">MOSS · SGLang Omni · 전체 (추천)</option><option value="qwen-transformers">Qwen · Transformers · 3분 + 정렬</option><option value="moss-qwen-sequential">MOSS + Qwen · 순차 실행</option></select></label>
+              <label class="field speech-model-field"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="speech-pipeline" name="speech_pipeline" aria-describedby="speech-description"><option value="moss-sglang" data-badge="추천">MOSS · SGLang Omni</option><option value="qwen-transformers" data-badge="빠른 전사">Qwen · Transformers</option><option value="moss-qwen-sequential" data-badge="보조 대본 비교">MOSS + Qwen</option></select></label>
+              <label class="field speech-model-field hidden"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="upload-local-model" name="local_model_key" aria-describedby="speech-description local-model-caution"></select></label>
               <p id="speech-description" class="speech-description"></p>
+              <p id="local-model-caution" class="speech-description model-risk-copy hidden" role="note"></p>
               <div id="upload-model-setup" class="speech-setup hidden" role="status"><span id="upload-model-status"></span><button type="button" class="inline-link" id="prepare-upload-model">모델 다운로드</button></div>
+              <div id="upload-model-auth" class="speech-auth hidden"><p id="upload-model-auth-help"></p><a id="upload-model-auth-link" class="hidden" target="_blank" rel="noopener noreferrer">Hugging Face 모델 페이지 ↗</a></div>
               <div class="speech-batch-controls" id="speech-batch-controls">
                 <label class="field"><span>동시 청크 수</span><select id="speech-batch" name="speech_batch"><option value="0">자동 · VRAM 70% 이내</option><option value="1">1개</option><option value="4">4개</option><option value="8">8개</option><option value="16">16개</option><option value="24">24개</option></select></label>
                 <small id="speech-batch-plan" class="speech-batch-plan">파일과 GPU를 선택해 주세요.</small>
@@ -266,6 +295,7 @@
             </div>
             <div class="upload-estimates hidden" id="upload-estimates" aria-live="polite"><div class="upload-estimate-values"><span>예상 Peak Memory <strong id="upload-estimate-memory">—</strong></span><span>예상 전사 시간 <strong id="upload-estimate-time">—</strong></span></div><small id="upload-estimate-note"></small><p class="hidden" id="upload-memory-warning" role="status"></p></div>
             <label id="speech-memory-consent" class="speech-memory-consent hidden"><input type="checkbox" name="allow_memory_risk" value="true" id="allow-speech-memory-risk"><span>예상 Peak Memory가 전체 VRAM의 70%를 넘는 것을 확인했습니다.</span></label>
+            </div></div>
             <div class="field-row">
               <label class="field"><span>주 언어</span><select name="language"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh">中文</option><option value="">자동 감지</option></select></label>
               <label class="field"><span>중요 단어 <small>선택</small></span><input name="hotwords" placeholder="예: 김서현, 피그마, 코호트 분석" aria-describedby="hotwords-help" /><small class="field-help" id="hotwords-help">헷갈리기 쉬운 이름·전문용어의 표기 힌트입니다. 쉼표(,)로 구분해 주세요.</small></label>
@@ -300,10 +330,10 @@
         <div><strong>음성 메모 접근 권한이 필요합니다.</strong><p>아래 버튼을 누르면 설정과 안내 창이 열립니다. 안내 창의 cosMOSS 아이콘을 설정 목록으로 드래그하고 스위치를 켜세요.</p><p>설정 후에도 접근이 안 되면 앱을 완전히 종료하고 다시 실행하세요.</p></div>
         <div class="voice-memo-access-actions"><button class="ghost-button" id="voice-memo-privacy" type="button">접근 권한 설정하기 ↗</button></div>
       </div>
-      <div class="voice-memo-list" id="voice-memo-list" role="radiogroup" aria-label="음성 메모 녹음 목록"></div>
+      <div class="voice-memo-list" id="voice-memo-list" role="group" aria-label="음성 메모 녹음 목록"></div>
       <div class="voice-memo-footer">
         <button class="ghost-button" id="open-voice-memos" type="button">음성 메모 열기 ↗</button>
-        <button class="primary-action" id="import-voice-memo" type="button" disabled>이 녹음 가져오기 <span aria-hidden="true">→</span></button>
+        <button class="primary-action" id="import-voice-memo" type="button" disabled>선택한 녹음 가져오기 <span aria-hidden="true">→</span></button>
       </div>
     </dialog>
 
@@ -446,8 +476,8 @@
       <div class="confirmation-dialog-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </div>
-      <h2 id="delete-dialog-title">노트를 삭제하시겠습니까?</h2>
-      <p id="delete-dialog-description">노트와 녹음 파일을 함께 삭제합니다.<br />삭제한 항목은 복구할 수 없습니다.</p>
+      <h2 id="delete-dialog-title">최근 삭제로 옮길까요?</h2>
+      <p id="delete-dialog-description">노트와 보관된 녹음을 최근 삭제로 이동합니다.<br />7일 동안 복구할 수 있습니다.</p>
       <div class="confirmation-dialog-note"><span>노트</span><strong id="delete-dialog-note-title"></strong></div>
       <div class="confirmation-dialog-actions">
         <button class="ghost-button" id="keep-note" type="button" autofocus>돌아가기</button>
@@ -487,12 +517,12 @@
       <button type="button" role="menuitem" data-convert-format="srt"><span class="context-format">SRT</span><span>SRT로 변환</span></button>
       <button type="button" role="menuitem" data-convert-format="vtt"><span class="context-format">VTT</span><span>VTT로 변환</span></button>
       <div class="note-context-separator" role="separator"></div>
-      <button class="danger" id="trash-note-file" type="button" role="menuitem" title="전사 파일과 앱에 보관된 녹음을 휴지통으로 옮기고 내부 기록도 정리합니다."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg><span>휴지통으로 이동</span></button>
+      <button class="danger" id="trash-note-file" type="button" role="menuitem" title="최근 삭제로 이동 · 앱 기록과 보관된 녹음을 7일 동안 복구할 수 있습니다."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg><span>휴지통으로 이동</span></button>
     </div>
     <div class="toast" id="toast" role="status"></div>
-    <script src="/selects.js?v=custom-selects-20261019" defer></script>
-    <script src="/app.js?v=note-cleanup-20261023" defer></script>
-    <script src="/speech.js?v=duration-calibration-20261023" defer></script>
+    <script src="/selects.js?v=mac-nemotron-20261024" defer></script>
+    <script src="/app.js?v=mac-nemotron-20261024" defer></script>
+    <script src="/speech.js?v=mac-nemotron-20261024" defer></script>
     <script src="/voice-review.js?v=voice-review-2" defer></script>
     <script src="/diarization.js?v=diarization-2" defer></script>
     <script src="/voices.js?v=voice-profiles-1" defer></script>

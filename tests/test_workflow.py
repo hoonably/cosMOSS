@@ -13,7 +13,8 @@ import httpx
 from src.store import NoteStore
 from src.text_files import save_text, speaker_changes, TextConflict
 from src.summaries import (Summaries, command, provider_status, DEFAULT_QUERY,
-                           PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, OUTPUT_SCHEMA, save_documents)
+                           PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY,
+                           OUTPUT_SCHEMA, markdown_document, save_document)
 
 
 def seed(store):
@@ -187,11 +188,14 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
         markdown = Path(result['result']['markdown_path'])
         self.assertEqual(markdown.parent, self.root / 'txt')
         self.assertEqual(markdown.suffix, '.md')
-        self.assertEqual(markdown.read_text(), result['result']['text'] + '\n')
-        corrected = Path(result['result']['corrected_path'])
-        self.assertTrue(corrected.name.endswith('_보정.txt'))
+        self.assertEqual(markdown.read_text(), result['result']['document_markdown'])
+        self.assertTrue(markdown.read_text().startswith(result['result']['text'] + '\n\n<details>\n<summary>보정 전사문 보기</summary>'))
+        self.assertTrue(markdown.read_text().endswith('</details>\n'))
+        self.assertIn(result['result']['corrected_text'], markdown.read_text())
+        self.assertNotIn(' open', markdown.read_text().split('</details>')[0])
+        self.assertNotIn('corrected_path', result['result'])
         self.assertTrue(markdown.name.endswith('_요약.md'))
-        self.assertEqual(corrected.read_text(), result['result']['corrected_text'] + '\n')
+        self.assertEqual(set(markdown.parent.iterdir()), {Path(self.note['text_path']), markdown})
         self.assertNotIn('보정된 전사문', Path(updated['text_path']).read_text())
         self.assertEqual(result['result']['source_hash'], self.note['text_hash'])
         self.assertTrue(result['stale'])
@@ -204,7 +208,7 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
         result = await self.completed()
         self.assertEqual(result['result']['text'], '요약 완료')
         markdown = Path(result['result']['markdown_path'])
-        self.assertEqual(markdown.read_text(), '요약 완료\n')
+        self.assertEqual(markdown.read_text(), markdown_document(result['result']['corrected_text'], '요약 완료'))
         self.fake_cli("import sys,json\nsys.stdin.read()\nprint(json.dumps({'result':'로그인 필요','is_error':True}))\n")
         self.start(self.note, 'claude', '다시 요약')
         result = await self.completed()
@@ -229,9 +233,9 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
         self.start(self.note, 'claude', '요약', folder)
         second = (await self.completed())['result']
         self.assertNotEqual(first['markdown_path'], second['markdown_path'])
-        self.assertEqual(Path(first['corrected_path']).stem.removesuffix('_보정-1'), Path(first['markdown_path']).stem.removesuffix('_요약-1'))
-        self.assertNotEqual(first['corrected_path'], second['corrected_path'])
-        self.assertEqual(Path(first['markdown_path']).read_text(), '# 요약\n\n- 할 일\n')
+        self.assertNotIn('corrected_path', first)
+        self.assertFalse(list(folder.glob('*.txt')))
+        self.assertEqual(Path(first['markdown_path']).read_text(), markdown_document(first['corrected_text'], '# 요약\n\n- 할 일'))
         self.assertEqual(outside.read_text(), '사용자 문서')
         self.assertEqual(Path(self.note['text_path']).read_bytes(), source)
         self.assertFalse(list(folder.glob('.cosmoss-*')))
@@ -244,7 +248,7 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
             self.manager.start(self.note, 'claude', '요약')
             result = await self.completed()
         self.assertEqual(Path(result['result']['markdown_path']).parent, downloads)
-        with patch('src.summaries.save_documents', side_effect=PermissionError('권한 없음')):
+        with patch('src.summaries.save_document', side_effect=PermissionError('권한 없음')):
             self.start(self.note, 'claude', '다시 요약')
             result = await self.completed()
         self.assertEqual(result['phase'], 'error')
@@ -264,27 +268,45 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
             self.assertFalse(result.get('result'))
         self.assertEqual(list((self.root / 'txt').iterdir()), [Path(self.note['text_path'])])
 
-    def test_pair_save_collision_and_partial_failure_preserve_originals(self):
+    def test_single_markdown_save_collision_and_failure_preserve_originals(self):
         folder = self.root / 'txt'
-        existing = folder / '원본_보정.txt'
-        existing.write_text('이전 보정')
-        corrected, summary = save_documents(folder, '원본', '새 보정', '# 새 요약')
-        self.assertEqual(existing.read_text(), '이전 보정')
-        self.assertEqual(Path(corrected).name, '원본_보정-1.txt')
+        existing = folder / '원본_요약.md'
+        existing.write_text('이전 요약')
+        document = markdown_document('새 보정', '# 새 요약')
+        summary = save_document(folder, '원본', document)
+        self.assertEqual(existing.read_text(), '이전 요약')
         self.assertEqual(Path(summary).name, '원본_요약-1.md')
-        original_link = os.link
-        def fail_second(source, target):
-            if str(target).endswith('.md'):
-                raise PermissionError('MD 쓰기 실패')
-            original_link(source, target)
-        with patch('src.summaries.os.link', side_effect=fail_second), self.assertRaises(PermissionError):
-            save_documents(folder, '실패', '보정', '# 요약')
+        with patch('src.summaries.os.link', side_effect=PermissionError('MD 쓰기 실패')), self.assertRaises(PermissionError):
+            save_document(folder, '실패', document)
         self.assertFalse(list(folder.glob('실패*')))
         self.assertFalse(list(folder.glob('.cosmoss-*')))
-        self.assertEqual(Path(corrected).read_text(), '새 보정\n')
+        self.assertEqual(Path(summary).read_text(), document)
+
+    def test_transcript_fence_keeps_literal_markdown_and_html_inside_closed_toggle(self):
+        corrected = '[00:00] S01: ```\n</details>\n<script>alert(1)</script>\n````'
+        document = markdown_document(corrected, '# 회의 요약\n\n- 결정 사항')
+        self.assertIn('`````text\n' + corrected + '\n`````', document)
+        self.assertTrue(document.startswith('# 회의 요약\n\n- 결정 사항\n\n<details>\n'))
+        self.assertTrue(document.endswith('</details>\n'))
+
+    def test_custom_default_persists_resets_and_failed_save_preserves_preferences(self):
+        original = self.manager.preferences()
+        self.assertEqual(original['default_prompt'], DEFAULT_QUERY)
+        self.assertFalse(original['customized'])
+        self.manager.save_preferences('  내가 선택한 기준\n두 번째 줄  ')
+        restored = Summaries(self.manager.directory)
+        self.assertEqual(restored.preferences()['default_prompt'], '내가 선택한 기준\n두 번째 줄')
+        self.assertTrue(restored.preferences()['customized'])
+        for bad in ('   ', '\0', 'x' * 20001):
+            with self.assertRaises(ValueError): restored.save_preferences(bad)
+        with patch('src.summaries.os.replace', side_effect=PermissionError('denied')):
+            with self.assertRaises(PermissionError): restored.save_preferences('저장 실패')
+        self.assertEqual(restored.preferences()['default_prompt'], '내가 선택한 기준\n두 번째 줄')
+        self.assertFalse(list(self.root.glob('.summary-preferences-*')))
+        self.assertEqual(restored.save_preferences(None), original)
 
     def test_default_migration_preserves_custom_prompts_and_history(self):
-        for old in (PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY):
+        for old in (PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY):
             self.manager._save(self.note['id'], {'phase':'done', 'prompt':old,
                 'result':{'prompt':old, 'source_hash':self.note['text_hash'], 'text':'이전 요약'}})
             state = self.manager.status(self.note)
@@ -409,6 +431,36 @@ class WorkflowAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 409)
             self.assertFalse((self.root / 'txt').exists())
 
+    async def test_summary_default_edit_persists_applies_appends_and_resets(self):
+        endpoint = '/api/summary/default-prompt'
+        custom = '내 기본 기준: 발표자 흐름에 따라 정리하세요.'
+        response = await self.client.put(endpoint, json={'prompt': custom})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {'default_prompt': custom, 'recommended_prompt': DEFAULT_QUERY, 'customized': True})
+        self.assertEqual(Summaries(self.manager.directory).preferences()['default_prompt'], custom)
+        base = '/api/notes/' + self.note['id'] + '/summary'
+        with patch.object(self.main, 'provider_status', new=AsyncMock(return_value={'ready': True})), \
+             patch.object(self.manager, 'start', return_value={'phase':'running'}) as start:
+            response = await self.client.post(base, json={'provider':'codex', 'prompt':'추가로 세 줄 요약',
+                'directory':str(self.root/'txt')})
+            self.assertEqual(response.status_code, 202, response.text)
+            self.assertEqual(start.call_args.args[2], custom + '\n\n추가로 세 줄 요약')
+            self.assertEqual(start.call_args.kwargs['base_prompt'], custom)
+            response = await self.client.post(base, json={'provider':'codex', 'prompt':'이 요청만',
+                'use_default_prompt':False, 'directory':str(self.root/'txt')})
+            self.assertEqual(response.status_code, 202, response.text)
+            self.assertEqual(start.call_args.args[2], '이 요청만')
+        for value in ('', '   ', '\0', 'x'*20001):
+            response = await self.client.put(endpoint, json={'prompt':value})
+            self.assertIn(response.status_code, (409, 422))
+        for headers in ({'sec-fetch-site':'cross-site'}, {'origin':'https://outside.example'}):
+            self.assertEqual((await self.client.put(endpoint, json={'prompt':'overwrite'}, headers=headers)).status_code, 403)
+        self.assertEqual(self.manager.preferences()['default_prompt'], custom)
+        response = await self.client.put(endpoint, json={'prompt':None})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['default_prompt'], DEFAULT_QUERY)
+        self.assertFalse(response.json()['customized'])
+
     async def test_summary_default_checkbox_controls_only_the_user_request(self):
         response = await self.client.get('/api/summary/default-prompt')
         self.assertEqual(response.json()['default_prompt'], DEFAULT_QUERY)
@@ -421,7 +473,8 @@ class WorkflowAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 202, response.text)
                 expected = DEFAULT_QUERY+'\n\n짧게 정리해 주세요.' if use_default else '짧게 정리해 주세요.'
                 self.assertEqual(start.call_args.args[2], expected)
-                self.assertEqual(start.call_args.kwargs, {'use_default_prompt':use_default,'additional_prompt':'짧게 정리해 주세요.'})
+                self.assertEqual(start.call_args.kwargs, {'use_default_prompt':use_default,'additional_prompt':'짧게 정리해 주세요.',
+                                                         'base_prompt':DEFAULT_QUERY if use_default else ''})
             response = await self.client.post(base,json={'provider':'codex','use_default_prompt':True,'prompt':'','directory':str(self.root/'txt')})
             self.assertEqual(response.status_code, 202, response.text)
             self.assertEqual(start.call_args.args[2], DEFAULT_QUERY)
@@ -449,10 +502,9 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text({js
         result = (await self.client.get(base + '/summary')).json()
         self.assertEqual(result['result']['text'], '금요일 배포')
         markdown = Path(result['result']['markdown_path'])
-        corrected = Path(result['result']['corrected_path'])
-        self.assertEqual(corrected.read_text(), '[00:00] 지민: 금요일 배포\n')
+        self.assertNotIn('corrected_path', result['result'])
         self.assertEqual(markdown.parent, self.root / 'txt')
-        self.assertEqual(markdown.read_text(), '금요일 배포\n')
+        self.assertEqual(markdown.read_text(), markdown_document('[00:00] 지민: 금요일 배포', '금요일 배포'))
         self.assertFalse(result['stale'])
         self.assertIn('지민: 금요일', capture.read_text())
         self.assertIn('할 일 정리', capture.read_text())
@@ -466,10 +518,15 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text({js
         self.assertTrue((await self.client.get(base + '/summary')).json()['stale'])
         exported = Path(self.store.get(self.note['id'])['text_path'])
         self.assertEqual((await self.client.delete(base)).status_code, 204)
-        self.assertTrue(exported.exists(), 'Deleting the app note deleted an exported user TXT')
+        self.assertFalse(exported.exists(), 'The deleted transcript should leave the active folder')
         self.assertTrue(markdown.exists(), 'Deleting the app note deleted an exported summary')
-        self.assertTrue(corrected.exists(), 'Deleting the app note deleted the corrected transcript')
-        self.assertFalse(self.manager._path(self.note['id']).exists())
+        self.assertIn('보정 전사문 보기', markdown.read_text(), 'Deleting the app note removed the saved transcript toggle')
+        self.assertTrue(self.manager._path(self.note['id']).exists(), 'Summary history must survive the recovery period')
+        self.assertEqual((await self.client.get(base)).status_code, 404)
+        retained = (await self.client.get('/api/trash')).json()[0]
+        self.assertEqual((await self.client.post('/api/trash/' + retained['id'] + '/restore')).status_code, 200)
+        self.assertTrue(exported.exists())
+        self.assertEqual((await self.client.get(base)).status_code, 200)
 
 
 if __name__ == '__main__': unittest.main()

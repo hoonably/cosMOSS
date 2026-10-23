@@ -83,6 +83,17 @@ class FileTests(unittest.TestCase):
 
 
 class FileAPITests(unittest.IsolatedAsyncioTestCase):
+    async def test_user_selected_directory_alias_is_resolved_before_recovery_and_scan(self):
+        file = self.folder / '회의.txt'
+        file.write_text('회의 기록')
+        alias = self.root / 'selected-folder'
+        alias.symlink_to(self.folder, target_is_directory=True)
+        response = await self.client.get('/api/text-library', params={'directory': str(alias)})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()[0]['text_path'], str(file))
+        relative = await self.client.get('/api/text-library', params={'directory': 'relative'})
+        self.assertEqual(relative.status_code, 409)
+
     async def asyncSetUp(self):
         from src import main
         self.main=main
@@ -119,9 +130,13 @@ class FileAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code,409);move.assert_not_called()
             response=await self.client.post(base+'/trash',json={'file_version':note['file_version']})
             self.assertEqual(response.status_code,204,response.text)
-        self.assertFalse(self.source.exists());self.assertTrue((trash/self.source.name).exists())
+        self.assertFalse(self.source.exists())
         self.assertFalse(any(n['id']==note['id'] for n in await self.files()))
-        (trash/self.source.name).rename(self.source)
+        retained=(await self.client.get('/api/trash')).json()
+        self.assertEqual(len(retained),1);self.assertTrue(retained[0]['can_restore'])
+        self.assertEqual((await self.client.get(base)).status_code,404)
+        response=await self.client.post('/api/trash/'+retained[0]['id']+'/restore')
+        self.assertEqual(response.status_code,200,response.text)
         self.assertTrue(any(n['id']==note['id'] for n in await self.files()))
 
     async def test_reused_path_attaches_only_to_matching_record_and_never_resurrects(self):
@@ -187,7 +202,7 @@ class FileAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audio.read_bytes(),b'original recording')
         self.assertEqual((await self.files())[0]['managed_note_id'],note_id)
 
-    async def test_managed_file_trash_cleans_audio_history_and_related_index(self):
+    async def test_managed_file_trash_retains_audio_history_and_restores_same_ids(self):
         note_id='9'*32; folder=self.store.upload_directory(note_id);folder.mkdir(parents=True)
         audio=folder/'source.wav';audio.write_bytes(b'private original recording')
         self.store.create(dict(id=note_id,title='회의',status='done',source_path=str(audio),original_filename='source.wav'))
@@ -200,7 +215,43 @@ class FileAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code,409);self.assertTrue(audio.exists())
             response=await self.client.post('/api/notes/'+note_id+'/trash',json={'text_hash':digest(self.source.read_bytes())})
             self.assertEqual(response.status_code,204,response.text)
-        self.assertEqual(self.store.list(),[]);self.assertEqual(self.library.entries(),[])
-        self.assertFalse(folder.exists());self.assertFalse(self.source.exists())
-        self.assertTrue((trash/note_id/'source.wav').exists())
-        self.assertFalse(self.summaries._path(document['id']).exists())
+        self.assertEqual((await self.client.get('/api/notes')).json(),[])
+        self.assertTrue(folder.exists());self.assertFalse(self.source.exists())
+        self.assertTrue(audio.exists());self.assertTrue(self.summaries._path(document['id']).exists())
+        for hidden_id in (note_id,document['id']):
+            self.assertEqual((await self.client.get('/api/notes/'+hidden_id)).status_code,404)
+            self.assertEqual((await self.client.patch('/api/notes/'+hidden_id,json={'title':'hidden'})).status_code,404)
+        retained=(await self.client.get('/api/trash')).json()[0]
+        response=await self.client.post('/api/trash/'+retained['id']+'/restore',headers={'Origin':'https://outside.example'})
+        self.assertEqual(response.status_code,403);self.assertFalse(self.source.exists())
+        response=await self.client.post('/api/trash/'+retained['id']+'/restore')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual((await self.files())[0]['managed_note_id'],note_id)
+        self.assertEqual((await self.files())[0]['id'],document['id'])
+        self.assertEqual((await self.client.get('/api/trash')).json(),[])
+        self.assertTrue(audio.exists())
+
+    async def test_failed_job_can_be_hidden_and_restored_without_a_transcript(self):
+        note_id='7'*32; folder=self.store.upload_directory(note_id);folder.mkdir(parents=True)
+        source=folder/'source.wav';source.write_bytes(b'private recording')
+        self.store.create(dict(id=note_id,title='실패한 작업',status='error',source_path=str(source),original_filename='source.wav'))
+        response=await self.client.post('/api/notes/'+note_id+'/trash',json={})
+        self.assertEqual(response.status_code,204,response.text)
+        self.assertEqual((await self.client.get('/api/notes')).json(),[])
+        self.assertTrue(source.exists())
+        retained=(await self.client.get('/api/trash')).json()[0]
+        self.assertEqual(retained['kind'],'job')
+        self.assertEqual((await self.client.post('/api/trash/'+retained['id']+'/restore')).status_code,200)
+        self.assertEqual((await self.client.get('/api/notes/'+note_id)).json()['status'],'error')
+
+    async def test_moved_file_returns_with_same_record_via_library_scan(self):
+        document=(await self.files())[0]
+        away=self.root/'away';away.mkdir()
+        moved=away/self.source.name;self.source.rename(moved)
+        self.main.note_cleanup().sweep(force=True)
+        self.assertEqual((await self.files()),[])
+        retained=(await self.client.get('/api/trash')).json()[0]
+        self.assertEqual(retained['kind'],'missing');self.assertFalse(retained['can_restore'])
+        moved.rename(self.folder/'이름 바꿔 돌아온 파일.srt')
+        self.assertEqual((await self.files())[0]['id'],document['id'])
+        self.assertEqual((await self.client.get('/api/trash')).json(),[])

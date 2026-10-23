@@ -14,7 +14,7 @@ import httpx
 from src.devices import DeviceStore
 from src.store import NoteStore
 from src.subtitles import subtitle_fields, rename_subtitle_speakers
-from src.summaries import Summaries
+from src.summaries import Summaries, markdown_document
 from src.text_files import save_text, TextConflict
 from src.text_library import TextLibrary
 from src.transcript import plain_text, srt_text, vtt_text
@@ -222,4 +222,5 @@ class SubtitleAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['phase'],'done',result)
         self.assertFalse(result['stale'])
         self.assertIn('-->',capture.read_text())
-        self.assertEqual(Path(result['result']['markdown_path']).read_text(),'# 요약\n- 핵심 내용\n')
+        self.assertEqual(Path(result['result']['markdown_path']).read_text(),markdown_document('보정된 전사문','# 요약\n- 핵심 내용'))
+        self.assertNotIn('corrected_path', result['result'])
