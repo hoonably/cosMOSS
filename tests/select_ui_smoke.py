@@ -23,6 +23,7 @@ async def main():
         local = {'phase':'idle','source':'cache','model_key':'mlx-8bit','model_id':'vanch007/mlx-MOSS-Transcribe-Diarize-8bit','cache_dir':'/Users/tester/.cache/huggingface/hub','suggested_path':''}
         await page.route('**/api/devices', lambda r: r.fulfill(json=[{'id':'local','name':'이 Mac','kind':'local','backend':'mlx','model_key':'mlx-8bit','model':'moss-mtd','remote_port':8001,'setup':local}]))
         await page.route('**/api/local-model', lambda r: r.fulfill(json={**catalogue, **local}))
+        await page.route('**/api/devices/local/model-readiness**', lambda r: r.fulfill(json={'phase':'installed','ready':True,'asr_ready':True,'diarization_ready':True}))
         await page.route('**/api/notes', lambda r: r.fulfill(json=[]))
         await page.route('**/api/ssh/hosts', lambda r: r.fulfill(json={'hosts':['lab-3090','lab-a100']}))
         await page.route('**/api/summary/providers', lambda r: r.fulfill(json=[{'id':'codex','name':'Codex','installed':True,'ready':True,'message':'로그인됨'}, {'id':'claude','name':'Claude','installed':True,'ready':True,'message':'로그인됨'}]))
@@ -89,6 +90,8 @@ async def main():
         await page.locator('#close-local-model').click()
         assert await page.locator('.custom-select-menu').count() == 0
 
+        local['phase'] = 'installed'
+        await page.evaluate('pollLocalModel()')
         await page.locator('[data-device-action=use]').click()
         await choose_option(page, 'select[name=language]', 'en')
         language = page.locator('select[name=language]').locator('..').locator('button')

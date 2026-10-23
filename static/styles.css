@@ -17,12 +17,16 @@
 }
 
 * { box-sizing: border-box; }
+/* WebKit also focuses scroll containers and dialog titles on pointer clicks. */
+:focus { outline: none; }
+:where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]):focus-visible { outline: 2px solid var(--accent-dark); outline-offset: 3px; }
 html, body { margin: 0; min-height: 100%; }
+html { -webkit-tap-highlight-color: transparent; }
 body { font-family: Inter, Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", system-ui, sans-serif; color: var(--ink); background: var(--canvas); }
 button, input, select { font: inherit; }
-button { -webkit-appearance: none; appearance: none; cursor: pointer; }
+button { -webkit-appearance: none; appearance: none; cursor: pointer; -webkit-user-select: none; user-select: none; }
 button:disabled { cursor: not-allowed; opacity: .55; }
-button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+summary, .gpu-table tbody { -webkit-user-select: none; user-select: none; }
 .hidden { display: none !important; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 228px minmax(0, 1fr) 320px; }
