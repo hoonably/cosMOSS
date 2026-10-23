@@ -9,6 +9,7 @@ import sqlite3
 import stat
 import tempfile
 import threading
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -60,6 +61,10 @@ class TextLibrary:
         self.lock = threading.RLock()
         with self._connect() as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL)")
+            columns = {row[1] for row in connection.execute('PRAGMA table_info(documents)')}
+            for column in ('device', 'inode', 'mtime_ns', 'size'):
+                if column not in columns:
+                    connection.execute(f'ALTER TABLE documents ADD COLUMN {column} INTEGER')
 
     def _connect(self):
         return sqlite3.connect(self.database, timeout=30)
@@ -69,6 +74,10 @@ class TextLibrary:
         return note_id.startswith("txt_")
 
     def scan(self, directory: str, managed_paths=()) -> list[dict]:
+        with self.lock:
+            return self._scan(directory, managed_paths)
+
+    def _scan(self, directory, managed_paths):
         folder = Path(directory).expanduser() if directory else Path.home() / "Downloads"
         if not folder.is_absolute():
             raise ValueError("저장 폴더는 절대 경로로 지정해 주세요.")
@@ -76,6 +85,9 @@ class TextLibrary:
         if not folder.is_dir():
             raise ValueError("전사 파일 폴더를 찾을 수 없습니다. 기본 경로를 다시 선택해 주세요.")
         managed = {str(Path(path).expanduser().resolve()) for path in managed_paths if path}
+        with self.lock, self._connect() as connection:
+            identities = {path: note_id for note_id, path in connection.execute('SELECT id, path FROM documents')}
+        used_ids = set(identities.values())
         notes, rows = [], []
         for path in folder.iterdir():
             try:
@@ -84,12 +96,38 @@ class TextLibrary:
                 info = path.stat()
             except OSError:
                 continue
-            note_id = "txt_" + hashlib.sha256(os.fsencode(path)).hexdigest()[:32]
-            rows.append((note_id, str(path)))
+            note_id = identities.get(str(path))
+            if not note_id:
+                note_id = 'txt_' + hashlib.sha256(os.fsencode(path)).hexdigest()[:32]
+                # A renamed document retains its ID. A new file at the old name
+                # must not take that ID and inherit its edits/summary history.
+                if note_id in used_ids:
+                    note_id = 'txt_' + uuid.uuid4().hex
+                used_ids.add(note_id)
+            rows.append((note_id, str(path), info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size))
             notes.append(self._metadata(note_id, path, info))
         with self.lock, self._connect() as connection:
-            connection.executemany("INSERT INTO documents VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET path=excluded.path", rows)
+            connection.executemany('''INSERT INTO documents (id,path,device,inode,mtime_ns,size) VALUES (?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET path=excluded.path,device=excluded.device,inode=excluded.inode,
+                mtime_ns=excluded.mtime_ns,size=excluded.size''', rows)
         return sorted(notes, key=lambda note: (note["updated_at"], note["title"]), reverse=True)
+
+    def entries(self):
+        with self.lock, self._connect() as connection:
+            return [dict(zip(('id', 'path', 'device', 'inode', 'mtime_ns', 'size'), row))
+                    for row in connection.execute('SELECT id,path,device,inode,mtime_ns,size FROM documents')]
+
+    def forget(self, note_id):
+        with self.lock, self._connect() as connection:
+            connection.execute('DELETE FROM documents WHERE id=?', (note_id,))
+
+    def relocate(self, source, target):
+        """Keep a document's identity and summary history across an app rename."""
+        with self.lock, self._connect() as connection:
+            row = connection.execute('SELECT id FROM documents WHERE path=?', (str(source),)).fetchone()
+            if row:
+                connection.execute('DELETE FROM documents WHERE path=? AND id<>?', (str(target), row[0]))
+                connection.execute('UPDATE documents SET path=? WHERE id=?', (str(target), row[0]))
 
     @staticmethod
     def _metadata(note_id, path, info):

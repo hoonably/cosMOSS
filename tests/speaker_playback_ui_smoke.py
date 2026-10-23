@@ -66,6 +66,7 @@ async def main():
         assert await player.get_attribute('src') is None
         assert not requests, 'Opening the dialog fetched or played audio'
         await page.click('[data-select-speaker="S02"]')
+        await page.keyboard.press('Enter')
         await page.keyboard.press('ArrowDown')
         assert not requests, 'Speaker selection/navigation started playback'
         await buttons.first.click()

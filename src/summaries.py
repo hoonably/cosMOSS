@@ -309,8 +309,12 @@ class Summaries:
                 self._save(note_id, {**state, "phase": "cancelled", "error": None})
 
     def forget(self, note_id: str):
-        self.states.pop(note_id, None)
+        if self.busy(note_id):
+            raise ValueError('요약이 끝난 뒤 다시 시도해 주세요.')
         self._path(note_id).unlink(missing_ok=True)
+        self._path(note_id).with_suffix('.tmp').unlink(missing_ok=True)
+        self.states.pop(note_id, None)
+        self.tasks.pop(note_id, None)
 
     async def close(self):
         await asyncio.gather(*(self.cancel(note_id) for note_id in list(self.tasks)))

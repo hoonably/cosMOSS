@@ -114,6 +114,7 @@ async def main():
             raise AssertionError({'toast': await page.locator('#toast').inner_text(), 'errors': errors,
                                   'current': await page.evaluate('state.current?.id')}) from error
         assert await page.locator('#note-dialog').is_visible()
+        assert await page.locator('#transcript-views, #editing-hint, [data-transcript-view]').count() == 0
         assert await page.locator('#save-txt, #export-toggle').count() == 0
         assert await page.locator('#retry-result-save').is_hidden()
         assert await page.locator('.player-card').is_hidden()
@@ -124,9 +125,13 @@ async def main():
         await page.locator('#edit-speakers').click()
         await page.locator('#speaker-dialog').wait_for(state='visible')
         assert await page.locator('.speaker-preview-row.highlighted').count() == 2
-        assert await page.locator('.speaker-preview-row.highlighted p').first.evaluate('el=>getComputedStyle(el).color') == 'rgb(207, 64, 59)'
+        assert await page.locator('.speaker-preview-row.highlighted p').first.evaluate('el=>getComputedStyle(el).color') == 'rgb(17, 146, 90)'
+        assert await page.locator('#speaker-name').evaluate('el=>el.closest(".speaker-choice").dataset.selectSpeaker') == 'S01'
+        assert await page.locator('#speaker-name-label').count() == 0
         await page.locator('#speaker-name').fill('지민')
         await page.locator('[data-select-speaker="S02"]').click()
+        assert await page.evaluate('document.activeElement.id') == 'speaker-name'
+        assert await page.locator('#speaker-name').evaluate('el=>el.closest(".speaker-choice").dataset.selectSpeaker') == 'S02'
         assert await page.locator('[data-preview-speaker="S01"].highlighted').count() == 0
         assert await page.locator('[data-preview-speaker="S02"].highlighted').count() == 2
         await page.locator('#speaker-name').fill('수빈')

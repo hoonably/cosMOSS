@@ -8,7 +8,7 @@ const state = {
   saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryTemplate: {prompt:"", useDefault:true}, summaryDefaultPrompt: "", summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false, voiceIdentifying: false,
   notes: [], current: null, saveTimer: null, pollTimer: null,
   pendingChanges: null, savePromise: null, noteRequest: 0, editRevision: 0, openingNote: null,
-  transcriptView: "edited", maxUploadBytes: null, defaultChunkMinutes: 30, uploading: false, deletingId: null,
+  maxUploadBytes: null, defaultChunkMinutes: 30, uploading: false, deletingId: null,
   elapsedAnchor: null, elapsedTimer: null,
   uploadPreparation: null, uploadChunkCount: null, cancellingId: null, restartingId: null, cancellationNoteId: null, deletionNoteId: null,
   estimateKey: null, estimateTimer: null, estimateController: null, chunkDefaultSaving: false,
@@ -403,7 +403,7 @@ async function actOnNoteFile(action,outputFormat) {
       $('#workspace').classList.add('hidden');$('#note-dialog').close();selectSummaryNote(null);
     }
     await loadNotes();
-    toast(action==='trash'?'파일을 휴지통으로 옮겼습니다.':`${outputFormat.toUpperCase()} 변환본을 저장했습니다.`);
+    toast(action==='trash'?'파일과 보관된 녹음을 휴지통으로 옮기고 내부 기록을 정리했습니다.':`${outputFormat.toUpperCase()} 변환본을 저장했습니다.`);
   } catch(error) {toast(error.message,true);}
   finally {state.fileActionId=null;}
 }
@@ -438,7 +438,6 @@ async function loadNote(id, {openEditor = false, quiet = false} = {}) {
     } while (state.current?.id === id && state.editRevision !== revision);
     if (state.current?.id !== id) {
       $("#media-player").pause();
-      state.transcriptView = "edited";
       $("#transcript-search").value = "";
     }
     state.current = note;
@@ -507,17 +506,26 @@ function renderTranscriptionControls(note) {
   $("#delete-note").disabled = busy || ["queued", "processing"].includes(note.status);
 }
 
-function renderWorkspace() {
+function renderNoteHeading() {
   const note = state.current;
   const file = note.source_type === "text_file";
-  $("#note-title").readOnly = file || note.status === "done";
-  $("#note-title").title = note.title;
-  $("#delete-note").classList.toggle("hidden", file || note.status === "done");
-  $("#note-title").value = state.pendingChanges?.id === note.id
-    ? state.pendingChanges.changes.title ?? note.title : note.title;
+  $("#note-title").title = '클릭하여 파일명 변경 · Enter로 저장 · 확장자는 유지됩니다.';
+  const title = $("#note-title");
+  if (title.dataset.noteId !== note.id || title.dataset.dirty !== 'true') {
+    title.value = state.pendingChanges?.id === note.id ? state.pendingChanges.changes.title ?? note.title : note.title;
+    title.dataset.noteId = note.id;
+    title.dataset.dirty = 'false';
+  }
   const chunkLength = note.chunk_seconds ? ` · 청크 ${Number.isInteger(note.chunk_seconds / 60) ? `${note.chunk_seconds / 60}분` : clock(note.chunk_seconds)}` : "";
   const chunkMeta = `${chunkLength}${note.chunk_count > 1 ? ` · ${note.chunk_count}개 구간으로 나누어 전사` : ""}`;
   $("#note-meta").textContent = file || note.status === "done" ? `${formatDate(note.updated_at || note.created_at)} · ${note.text_path?.split('/').pop() || note.title + '.' + (note.output_format || 'txt')}` : `${formatDate(note.created_at)} · ${note.original_filename}${chunkMeta} · ${note.device_name || "이 Mac"}`;
+}
+
+function renderWorkspace() {
+  const note = state.current;
+  const file = note.source_type === "text_file";
+  renderNoteHeading();
+  $("#delete-note").classList.toggle("hidden", file || note.status === "done");
   renderTextFileActions();
   const pending = ["queued", "processing"].includes(note.status);
   $("#processing-card").classList.toggle("hidden", !pending && !["error", "cancelled"].includes(note.status));
@@ -590,9 +598,7 @@ function renderProgress(note) {
 }
 
 function displayedSegments() {
-  const note = state.current;
-  const segments = (state.transcriptView === "raw" ? note?.raw_segments : note?.segments) || [];
-  return state.transcriptView === "raw" ? segments.map(segment => ({ ...segment, speaker: note.speaker_merges?.[segment.speaker] || segment.speaker })) : segments;
+  return state.current?.segments || [];
 }
 
 function fitText(element) {
@@ -604,7 +610,7 @@ function renderEditor() {
   const note = state.current;
   const file = note.source_type === "text_file";
   $("#text-document-editor").classList.toggle("hidden", !file);
-  for (const selector of [".player-card", ".transcript-views", ".editor-toolbar", "#segments"]) $(selector).classList.toggle("hidden", file);
+  for (const selector of [".player-card", ".editor-toolbar", "#segments"]) $(selector).classList.toggle("hidden", file);
   const format = (note.output_format || "txt").toUpperCase();
   $("#text-document-format").textContent = format;
   $("#text-document-body").setAttribute("aria-label", `${format} 내용 편집`);
@@ -624,18 +630,11 @@ function renderEditor() {
     return;
   }
   const segments = displayedSegments();
-  const editable = state.transcriptView === "edited";
   const speakers = [...new Set(segments.map(segment => segment.speaker))];
   const allSpeakers = [...new Set([...(note.raw_segments || []), ...note.segments].map(segment => note.speaker_merges?.[segment.speaker] || segment.speaker))];
   const speakerIndex = Object.fromEntries(allSpeakers.map((speaker, index) => [speaker, index]));
   $("#duration-label").textContent = note.duration ? `녹음 ${clock(note.duration)}` : "";
   renderCompletionTime(note);
-  $("#editing-hint").textContent = editable ? "본문을 눌러 수정하고, 화자 설정에서 이름을 지정하세요." : "처음 전사한 본문입니다. 원본은 그대로 보존됩니다.";
-  document.querySelectorAll("[data-transcript-view]").forEach(button => {
-    const active = button.dataset.transcriptView === state.transcriptView;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
   $("#chunk-notice").classList.toggle("hidden", note.chunk_count <= 1);
   $("#chunk-notice").textContent = `긴 녹음을 ${note.chunk_count}개 구간으로 나누어 전사했습니다. 경계에서 확인되지 않은 화자는 여러 이름으로 표시될 수 있습니다. 화자 이름을 수정해 정리할 수 있습니다.`;
   const speechResult = note.pipeline_result;
@@ -663,7 +662,7 @@ function renderEditor() {
     <article class="segment" data-index="${index}" data-start="${segment.start}" data-end="${segment.end}">
       <button class="time-button" data-seek="${segment.start}" aria-label="${clock(segment.start)}부터 재생">${clock(segment.start)}</button>
       <button type="button" class="speaker-label" data-open-speaker="${escapeHtml(segment.speaker)}"><i class="speaker-dot" style="--speaker-color:${colors[speakerIndex[segment.speaker] % colors.length]}"></i><span>${escapeHtml(note.speaker_names[segment.speaker] || segment.speaker)}</span></button>
-      <div class="segment-text-wrap"><textarea class="segment-text" rows="1" ${editable ? "" : "readonly"} aria-label="${clock(segment.start)} ${escapeHtml(note.speaker_names[segment.speaker] || segment.speaker)} ${editable ? "전사 내용 편집" : "전사 원본"}">${escapeHtml(segment.text)}</textarea></div>
+      <div class="segment-text-wrap"><textarea class="segment-text" rows="1" aria-label="${clock(segment.start)} ${escapeHtml(note.speaker_names[segment.speaker] || segment.speaker)} 전사 내용 편집">${escapeHtml(segment.text)}</textarea></div>
     </article>`).join("");
   bindEditorEvents();
   filterTranscript();
@@ -727,10 +726,27 @@ async function flushSave() {
   if (!Object.keys(changes).length) return updateSaveState();
   const payload = { ...changes };
   if (state.current?.id === pending.id && state.current.source_type === "text_file") payload.text_hash = state.current.text_hash;
-  state.savePromise = api(`/api/notes/${encodeURIComponent(pending.id)}`, {
-    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-  }).then(async note => {
-    if (state.current?.id === pending.id) state.current = state.pendingChanges ? { ...state.current, text_path: note.text_path, text_hash: note.text_hash } : note;
+  state.savePromise = (async () => {
+    const original = state.current?.id === pending.id ? state.current : null;
+    const rename = original?.status === 'done' && original.text_path && 'title' in payload;
+    const title = payload.title;
+    if (rename) delete payload.title;
+    let note = original;
+    if (Object.keys(payload).some(key => key !== 'text_hash')) {
+      note = await api(`/api/notes/${encodeURIComponent(pending.id)}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
+      });
+      if (state.current?.id === pending.id) Object.assign(state.current, {text_hash:note.text_hash});
+    }
+    if (rename) note = await api(`/api/notes/${encodeURIComponent(pending.id)}/rename`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title,text_hash:note.text_hash}),
+    });
+    return note;
+  })().then(async note => {
+    if (state.current?.id === pending.id) {
+      state.current = state.pendingChanges ? { ...state.current, title:note.title, text_path:note.text_path, text_hash:note.text_hash } : note;
+      renderNoteHeading();
+    }
     renderTextFileActions();
     renderSummary();
     await loadNotes();
@@ -772,7 +788,6 @@ async function openHome() {
     if (request !== state.noteRequest) return;
     state.current = null;
     stopElapsedClock();
-    state.transcriptView = "edited";
     const media = $("#media-player");
     media.pause();
     media.removeAttribute("src");
@@ -831,7 +846,34 @@ $("#upload-dialog").addEventListener("click", event => {
   if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) event.currentTarget.close();
 });
 $("#note-search").addEventListener("input", renderList);
-$("#note-title").addEventListener("input", event => { if (state.current) queueSave({ title: event.target.value }); });
+$("#note-title").addEventListener("input", event => {
+  event.target.dataset.dirty = 'true';
+  if (state.current && state.current.status !== 'done') queueSave({title:event.target.value});
+});
+$("#note-title").addEventListener("blur", event => {
+  if (event.target.dataset.dirty !== 'true') return;
+  event.target.dataset.dirty = 'false';
+  if (!state.current || state.current.status !== 'done') return;
+  const title = event.target.value.trim();
+  if (!title || title === state.current.title) return void (event.target.value = state.current.title);
+  queueSave({title});
+  flushSave().catch(() => {});
+});
+$("#note-title").addEventListener("keydown", event => {
+  if (event.isComposing || !['Enter','Escape'].includes(event.key)) return;
+  event.preventDefault(); event.stopPropagation();
+  if (event.key === 'Escape') {
+    event.target.dataset.dirty = 'false';
+    event.target.value = state.current.title;
+    if (state.pendingChanges?.id === state.current.id) {
+      delete state.pendingChanges.changes.title;
+      if (!Object.keys(state.pendingChanges.changes).length) state.pendingChanges = null;
+    }
+    updateSaveState();
+  }
+  event.target.blur();
+  flushSave().catch(() => {});
+});
 $("#retry-save").addEventListener("click", () => flushSave().catch(() => {}));
 $("#retry-text-save").addEventListener("click", () => flushSave().catch(() => {}));
 $("#text-document-body").addEventListener("input", event => {
@@ -839,16 +881,6 @@ $("#text-document-body").addEventListener("input", event => {
   state.current.text_body = event.target.value;
   queueSave({ text_body: event.target.value });
 });
-document.querySelectorAll("[data-transcript-view]").forEach(button => button.addEventListener("click", async () => {
-  if (!state.current || button.dataset.transcriptView === state.transcriptView) return;
-  const id = state.current.id;
-  try {
-    await flushSave();
-    if (state.current?.id !== id) return;
-    state.transcriptView = button.dataset.transcriptView;
-    renderEditor();
-  } catch (_) {}
-}));
 
 const dropZone = $("#drop-zone");
 const fileInput = $("#audio-file");
@@ -2035,10 +2067,12 @@ async function refreshGpu() {
       const activity = gpu.utilization_percent == null ? "확인 불가" : `${gpu.utilization_percent}%`;
       const processes = gpu.process_info_known ? `${gpu.processes.length}개` : "확인 불가";
       const tooltip = gpu.processes.map(process => `${process.name} (PID ${process.pid})`).join(", ");
-      return `<tr><td><label title="${escapeHtml(gpu.name)}"><input type="radio" name="selected-gpu" value="${escapeHtml(gpu.uuid)}" ${state.selectedGpu?.uuid === gpu.uuid ? "checked" : ""}>GPU #${gpu.index}</label><small>${escapeHtml(gpu.name.replace(/^NVIDIA (GeForce )?/, ""))}</small></td>
-        <td>${escapeHtml(mib(gpu.memory_used_mib))} / ${escapeHtml(mib(gpu.memory_total_mib))}</td>
+      const model = gpu.name.replace(/^NVIDIA (GeForce )?/, '');
+      const memory = value => value == null ? '—' : (value / 1024).toFixed(1);
+      return `<tr data-gpu-row="${escapeHtml(gpu.uuid)}"><td><div class="gpu-identity"><label><input type="radio" name="selected-gpu" value="${escapeHtml(gpu.uuid)}" aria-label="GPU #${gpu.index} · ${escapeHtml(model)}" ${state.selectedGpu?.uuid === gpu.uuid ? "checked" : ""}><span class="gpu-index">GPU #${gpu.index}</span></label><span class="gpu-model" title="${escapeHtml(gpu.name)}">${escapeHtml(model)}</span></div></td>
+        <td class="gpu-memory" title="${escapeHtml(mib(gpu.memory_used_mib))} / ${escapeHtml(mib(gpu.memory_total_mib))}">${memory(gpu.memory_used_mib)} / ${memory(gpu.memory_total_mib)} <span>GiB</span></td>
         <td>${activity}</td><td title="${escapeHtml(tooltip)}">${processes}</td>
-        <td class="${gpu.idle_candidate ? "gpu-idle" : "gpu-occupied"}">${gpu.idle_candidate ? "여유" : "사용 중 · 확인 필요"}</td></tr>`;
+        <td><span class="gpu-status ${gpu.idle_candidate ? "gpu-idle" : "gpu-occupied"}" title="${gpu.idle_candidate ? '현재 여유 상태' : '사용 중 · 선택하면 프로세스를 확인합니다.'}">${gpu.idle_candidate ? "여유" : "사용 중"}</span></td></tr>`;
     }).join("");
     $("#execution-gpu-meta").textContent = `${device.host} · ${checked} 확인 · 3초마다 갱신`;
     $("#gpu-probe-result").innerHTML = `${rows ? `<div class="gpu-table-wrap"><table class="gpu-table"><thead><tr><th>GPU</th><th>사용 / 전체 VRAM</th><th>사용률</th><th>프로세스</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
@@ -2056,6 +2090,16 @@ async function refreshGpu() {
     }
   }
 }
+
+$("#gpu-probe-result").addEventListener("click", event => {
+  const row = event.target.closest('[data-gpu-row]');
+  if (!row || state.uploading || event.target.closest('input, label, button, a')) return;
+  const input = row.querySelector('input[name="selected-gpu"]');
+  if (input && !input.disabled) {
+    input.focus({preventScroll:true});
+    input.click();
+  }
+});
 
 $("#gpu-probe-result").addEventListener("change", async event => {
   if (event.target.name !== "selected-gpu") return;
@@ -2393,9 +2437,11 @@ function renderSpeakerDialog() {
   const draft = state.speakerDraft;
   if (!draft) return;
   speakerPreviewPlayback.stop(true);
-  $("#speaker-choices").innerHTML = draft.speakers.map(speaker => `<button type="button" class="speaker-choice" draggable="${draft.speakers.length > 1}" data-select-speaker="${escapeHtml(speaker)}" aria-pressed="${speaker === draft.selected}" aria-describedby="speaker-merge-help"><small>${escapeHtml(speaker)} · ${draft.segments.filter(s => s.speaker === speaker).length}개 발화</small><strong>${escapeHtml(draft.names[speaker] || speaker)}</strong></button>`).join("");
-  $("#speaker-name-label").textContent = `${draft.selected} 이름`;
-  $("#speaker-name").value = draft.names[draft.selected] || "";
+  $("#speaker-choices").innerHTML = draft.speakers.map(speaker => {
+    const selected = speaker === draft.selected;
+    const name = draft.names[speaker] || speaker;
+    return `<div class="speaker-choice ${selected ? 'is-selected' : ''}" draggable="${draft.speakers.length > 1}" data-select-speaker="${escapeHtml(speaker)}" role="group" aria-label="${escapeHtml(speaker)} 화자"><button type="button" class="speaker-choice-select" aria-pressed="${selected}" aria-label="${escapeHtml(name)} 화자 선택·이름 수정" aria-describedby="speaker-merge-help"><small>${escapeHtml(speaker)} · ${draft.segments.filter(s => s.speaker === speaker).length}개 발화</small>${selected ? '' : `<strong>${escapeHtml(name)}</strong>`}</button>${selected ? `<input id="speaker-name" value="${escapeHtml(draft.names[speaker] || '')}" maxlength="60" placeholder="${escapeHtml(speaker)}" aria-label="${escapeHtml(speaker)} 화자 이름" title="이름을 수정하고 Enter를 누르면 발화 확인으로 이동합니다." autocomplete="off" spellcheck="false">` : ''}</div>`;
+  }).join("");
   draft.utterances = draft.segments.flatMap((segment, index) => segment.speaker === draft.selected ? [index] : []);
   draft.utterancePosition = 0;
   $("#speaker-navigation-help").textContent = "↑·↓ 발화 이동 · Space 재생·정지";
@@ -2493,7 +2539,7 @@ function requestSpeakerMerge(source, target) {
 $("#speaker-choices").addEventListener("dragstart", event => {
   const button = event.target.closest("[data-select-speaker]");
   const draft = state.speakerDraft;
-  if (!button || !draft || state.speakerSaving || draft.speakers.length < 2) return event.preventDefault();
+  if (!button || !draft || state.speakerSaving || draft.speakers.length < 2 || event.target.closest('input')) return event.preventDefault();
   speakerDrag = { id: draft.id, source: button.dataset.selectSpeaker };
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("application/x-cosmoss-speaker", button.dataset.selectSpeaker);
@@ -2541,9 +2587,20 @@ $("#confirm-speaker-merge").addEventListener("click", () => {
 $("#speaker-choices").addEventListener("click", event => {
   const button = event.target.closest("[data-select-speaker]");
   if (!button || !state.speakerDraft || state.speakerSaving) return;
-  state.speakerDraft.selected = button.dataset.selectSpeaker;
-  renderSpeakerDialog();
-  goToSpeakerUtterance(0, true);
+  if (event.target.closest('input')) return;
+  if (state.speakerDraft.selected !== button.dataset.selectSpeaker) {
+    state.speakerDraft.selected = button.dataset.selectSpeaker;
+    renderSpeakerDialog();
+    goToSpeakerUtterance(0);
+  }
+  const input = $("#speaker-name");
+  input.focus({preventScroll:true});
+  input.select();
+});
+$("#speaker-choices").addEventListener("keydown", event => {
+  if (event.target.id !== 'speaker-name' || event.key !== 'Enter' || event.isComposing || state.speakerSaving) return;
+  event.preventDefault();
+  goToSpeakerUtterance(state.speakerDraft.utterancePosition, true);
 });
 $("#speaker-dialog").addEventListener("keydown", event => {
   if (!['ArrowUp', 'ArrowDown', ' '].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing || event.defaultPrevented) return;
@@ -2560,11 +2617,13 @@ $("#speaker-dialog").addEventListener("keydown", event => {
   speakerPreviewPlayback.stop();
   goToSpeakerUtterance(state.speakerDraft.utterancePosition + (event.key === 'ArrowDown' ? 1 : -1), true);
 });
-$("#speaker-name").addEventListener("input", event => {
+$("#speaker-choices").addEventListener("input", event => {
+  if (event.target.id !== 'speaker-name') return;
   const draft = state.speakerDraft;
   if (!draft || state.speakerSaving) return;
   draft.names[draft.selected] = event.target.value;
-  for (const choice of document.querySelectorAll("[data-select-speaker]")) if (choice.dataset.selectSpeaker === draft.selected) choice.querySelector("strong").textContent = event.target.value.trim() || draft.selected;
+  const choice = event.target.closest('.speaker-choice');
+  choice.querySelector('.speaker-choice-select').setAttribute('aria-label', `${event.target.value.trim() || draft.selected} 화자 선택·이름 수정`);
   for (const row of document.querySelectorAll("[data-preview-speaker]")) if (row.dataset.previewSpeaker === draft.selected) row.querySelector("[data-preview-name]").textContent = event.target.value.trim() || draft.selected;
 });
 for (const id of ["#cancel-speakers", "#close-speakers"]) $(id).addEventListener("click", () => { if (!state.speakerSaving) $("#speaker-dialog").close(); });

@@ -45,7 +45,8 @@ from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host, gp
 from src.store import NoteStore
 from src.summaries import Summaries, provider_status, DEFAULT_QUERY
 from src.text_files import save_text, speaker_changes, write_text
-from src.note_files import read_file, convert_file, trash_file
+from src.note_files import read_file, convert_file, rename_file, trash_file
+from src.note_cleanup import NoteCleanup
 from src.text_library import TextLibrary
 from src.transcript import json_text, parse_transcript, plain_text, srt_text, vtt_text
 from src.voice_memos import VoiceMemos
@@ -100,6 +101,7 @@ PREPARATION_TASKS: dict[str, asyncio.Task] = {}
 TRANSCRIPTION_TASKS: dict[str, asyncio.Task] = {}
 CANCEL_REQUESTED: set[str] = set()
 NOTE_ACTION_LOCKS: dict[str, asyncio.Lock] = {}
+MISSING_NOTE_FILES: dict[str, float] = {}
 AUDIO_CANCELLATION: ContextVar[threading.Event | None] = ContextVar("audio_cancellation", default=None)
 
 DEFAULT_PROMPT = (
@@ -144,6 +146,10 @@ class FileActionRequest(BaseModel):
 
 class ConvertFileRequest(FileActionRequest):
     output_format: Literal['txt','srt','vtt']
+
+
+class RenameFileRequest(FileActionRequest):
+    title: str = Field(min_length=1, max_length=200)
 
 
 class VoiceProfileName(BaseModel):
@@ -1097,6 +1103,21 @@ async def queue_worker() -> None:
             QUEUE.task_done()
 
 
+def note_cleanup() -> NoteCleanup:
+    def active(note_id):
+        return (any(task and not task.done() for task in
+                    (TRANSCRIPTION_TASKS.get(note_id), PREPARATION_TASKS.get(note_id)))
+                or any(not task.done() for task in VOICE_PROFILES.operations))
+    return NoteCleanup(STORE, TEXT_LIBRARY, SUMMARIES, DIARIZATION, trash_file,
+                       active=active, missing_since=MISSING_NOTE_FILES)
+
+
+async def clean_missing_note_files():
+    while True:
+        note_cleanup().sweep()
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     watch_desktop_parent()
@@ -1112,10 +1133,14 @@ async def lifespan(_: FastAPI):
     for note_id in STORE.pending_ids():
         QUEUE.put_nowait(note_id)
     worker = asyncio.create_task(queue_worker())
+    cleanup = asyncio.create_task(clean_missing_note_files())
     await LOCAL_MODELS.restore()
     try:
         yield
     finally:
+        cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup
         worker.cancel()
         preparations = list(PREPARATION_TASKS.values())
         for task in preparations:
@@ -1163,7 +1188,7 @@ def valid_basic_auth(header: str | None) -> bool:
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     local_action = (request.method == "POST" and request.url.path == "/api/notes") or request.url.path.startswith(("/api/diarization", "/api/voice-profiles", "/api/voice-memos", "/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/")) or (
-        request.url.path.startswith("/api/notes/") and any(part in {"diarization", "text-file", "speakers", "identify-speakers", "summary", "trash", "convert"} for part in request.url.path.split("/")[4:])
+        request.url.path.startswith("/api/notes/") and any(part in {"diarization", "text-file", "speakers", "identify-speakers", "summary", "trash", "convert", "rename"} for part in request.url.path.split("/")[4:])
     )
     if local_action:
         try:
@@ -1174,7 +1199,7 @@ async def security_middleware(request: Request, call_next):
             return JSONResponse({"detail": "이 작업은 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "외부 웹사이트에서는 이 작업을 실행할 수 없습니다."}, status_code=403)
-        if (request.url.path.startswith(('/api/diarization', '/api/voice-memos', '/api/voice-profiles')) or '/diarization' in request.url.path or request.url.path == '/api/notes' or request.url.path.endswith('/identify-speakers')) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
+        if (request.url.path.startswith(('/api/diarization', '/api/voice-memos', '/api/voice-profiles')) or '/diarization' in request.url.path or request.url.path == '/api/notes' or request.url.path.endswith(('/identify-speakers','/rename'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
             return JSONResponse({'detail': '외부 웹사이트에서는 이 작업을 실행할 수 없습니다.'}, status_code=403)
     if request.url.path not in {"/healthz", "/readyz"} and not valid_basic_auth(
         request.headers.get("Authorization")
@@ -2217,11 +2242,10 @@ def file_action_source(note_id, request):
 @app.post('/api/notes/{note_id}/trash',status_code=204)
 async def trash_note_file(note_id: str, request: FileActionRequest):
     try:
-        note, version = file_action_source(note_id,request)
-        path, _ = read_file(note,**version)
-        # Keep the managed recording/history: restoring the file from Trash
-        # reconnects it. Only the file explicitly selected by the user is moved.
-        await asyncio.to_thread(trash_file,path)
+        with STORE.lock, TEXT_LIBRARY.lock:
+            note, version = file_action_source(note_id,request)
+            path, _ = read_file(note,**version)
+            note_cleanup().remove(path, trash_transcript=True)
         return Response(status_code=204)
     except KeyError:
         raise HTTPException(404,'파일을 찾을 수 없습니다.') from None
@@ -2240,6 +2264,27 @@ def convert_note_file(note_id: str, request: ConvertFileRequest):
         raise HTTPException(404,'파일을 찾을 수 없습니다.') from None
     except (ValueError,OSError) as error:
         raise HTTPException(409,str(error)) from None
+
+
+@app.post('/api/notes/{note_id}/rename')
+def rename_note_file(note_id: str, request: RenameFileRequest):
+    try:
+        with STORE.lock, TEXT_LIBRARY.lock:
+            note, version = file_action_source(note_id, request)
+            source, content = read_file(note, **version)
+            target = rename_file(note, request.title, **version)
+            if target != source:
+                TEXT_LIBRARY.relocate(source, target)
+            from src.text_files import digest
+            content_hash = digest(content)
+            for owner in STORE.list():
+                if owner.get('text_path') == str(source) and (owner['id'] == note_id or owner.get('text_hash') == content_hash):
+                    STORE.update(owner['id'], title=target.stem, text_path=str(target))
+            return public_note(review_note(note_id))
+    except KeyError:
+        raise HTTPException(404, '파일을 찾을 수 없습니다.') from None
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
 
 
 @app.get("/api/notes/{note_id}")
@@ -2501,6 +2546,7 @@ async def delete_note(note_id: str) -> Response:
         raise HTTPException(409, "노트의 녹음 파일이 전용 저장 폴더에 없습니다.")
     STORE.delete(note_id)
     SUMMARIES.forget(note_id)
+    DIARIZATION.forget(note_id)
     shutil.rmtree(note_dir, ignore_errors=True)
     return Response(status_code=204)
 

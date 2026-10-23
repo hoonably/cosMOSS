@@ -57,7 +57,7 @@ async def main():
             assert await page.locator('#speaker-merge-help').inner_text() == '드래그로 화자를 병합할 수 있습니다.'
 
             async def drag(source, target):
-                await page.locator(f'[data-select-speaker="{source}"]').drag_to(page.locator(f'[data-select-speaker="{target}"]'))
+                await page.locator(f'[data-select-speaker="{source}"] .speaker-choice-select').drag_to(page.locator(f'[data-select-speaker="{target}"]'))
                 await page.locator('#speaker-merge-dialog').wait_for(state='visible')
                 assert await page.evaluate('document.activeElement.id') == 'speaker-merge-title'
 

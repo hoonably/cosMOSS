@@ -76,7 +76,35 @@ async def main():
             assert structured.read_text() == original
             assert await page.locator('.player-card').is_hidden()
             assert await page.locator('#delete-note').is_hidden()
-            assert await page.locator('#note-title').get_attribute('readonly') is not None
+            assert await page.locator('#note-title').is_editable()
+            assert await page.locator('#transcript-views, #editing-hint').count() == 0
+            identity=await page.evaluate('state.current.id')
+            await page.fill('#note-title','취소할 파일명')
+            await page.keyboard.press('Escape')
+            assert await page.locator('#note-dialog').is_visible()
+            assert await page.locator('#note-title').input_value() == '예전 회의'
+            await page.fill('#note-title','이름을 바꾼 회의')
+            await page.keyboard.press('Enter')
+            await page.wait_for_function('!state.pendingChanges && !state.savePromise && state.current.title==="이름을 바꾼 회의"')
+            renamed=folder/'이름을 바꾼 회의.txt'
+            assert renamed.read_text() == original and not structured.exists()
+            assert await page.evaluate('state.current.id') == identity
+            assert await page.get_by_role('button',name='이름을 바꾼 회의 편집',exact=True).count() == 1
+            await page.fill('#note-title','이전 기록 01')
+            await page.keyboard.press('Enter')
+            await page.wait_for_function('document.querySelector("#save-state").textContent==="저장 실패"')
+            assert (folder/'이전 기록 01.txt').read_text() == '기록 목록 확인용 TXT'
+            assert renamed.read_text() == original
+            await page.locator('#note-title').focus()
+            await page.keyboard.press('Escape')
+            edited=original+'임시로 덧붙인 내용\n'
+            await page.fill('#text-document-body',edited)
+            await page.fill('#note-title','예전 회의')
+            await page.locator('#reveal-txt').click()  # Blur commits, Finder waits for rename.
+            await page.wait_for_function('!state.pendingChanges && !state.savePromise && state.current.title==="예전 회의"')
+            assert structured.read_text() == edited and not renamed.exists()
+            await page.fill('#text-document-body',original)
+            await page.wait_for_function('!state.pendingChanges && !state.savePromise')
             await page.click('#reveal-txt')
             await page.wait_for_function('Boolean(window.__revealed)')
             assert await page.evaluate('window.__revealed') == str(structured)
@@ -103,6 +131,9 @@ async def main():
             await page.get_by_text('기존 TXT 요약', exact=True).wait_for()
             assert summaries and structured.read_bytes() == before
             await page.get_by_role('button', name='개인 메모 편집', exact=True).click()
+            await page.wait_for_function('state.current?.title==="개인 메모"')
+            assert await page.locator('#note-title').input_value() == '개인 메모'
+            assert not await page.evaluate('Boolean(state.pendingChanges || state.savePromise)'), 'Opening a different file queued a rename'
             assert await page.locator('#edit-speakers').is_disabled()
             assert await page.evaluate('window.__unsafe') is None
             plain.write_text('Finder에서 수정한 최신 내용')
@@ -134,7 +165,7 @@ async def main():
             assert await page.locator('#text-document-body').input_value() == '오래된 화면에서 작성한 내용'
             assert not errors, errors
             await browser.close()
-    print(f'PASS {engine}: folder TXT, original preservation, speakers, consecutive edits, Finder, summary, live refresh, folder changes, conflicts')
+    print(f'PASS {engine}: rename/Enter/blur/Escape/collision/identity, single editor, TXT bytes, speakers, edits, Finder, summary, live refresh and conflicts')
 
 
 if __name__ == '__main__':

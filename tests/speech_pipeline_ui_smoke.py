@@ -20,6 +20,8 @@ async def main():
     gpus=[{'index':i,'uuid':f'GPU-{i}-fixture','name':'NVIDIA H200' if i==0 else 'NVIDIA RTX 6000 Ada Generation',
            'memory_total_mib':143771 if i==0 else 24576,'memory_free_mib':143000 if i==0 else 24000,
            'memory_used_mib':0,'utilization_percent':0,'processes':[],'process_info_known':True,'idle_candidate':True} for i in range(2)]
+    gpus[1].update(idle_candidate=False, memory_used_mib=9338, memory_free_mib=15238,
+                   busy_confirmation='busy-fixture',processes=[{'pid':'42','name':'fixture.py','memory_mib':9338}])
     errors=[];submitted=[];home_changes=[];downloads=[]
     prepared={'moss-sglang','moss-qwen-sequential'}
     note={'id':'f'*32,'title':'녹음','original_filename':'녹음.m4a','status':'queued',
@@ -84,7 +86,16 @@ async def main():
           document.querySelector('#drop-title').textContent='녹음.m4a';
           renderFilePreparation();
         }''')
-        await page.locator('input[name="selected-gpu"]').first.check()
+        # The whole row selects the GPU; the radio remains keyboard-accessible.
+        await page.locator('[data-gpu-row]').first.locator('td').nth(1).click()
+        assert await page.locator('input[name="selected-gpu"]').first.is_checked()
+        assert await page.locator('.gpu-identity').first.evaluate('''e=>{
+          const index=e.querySelector('.gpu-index').getBoundingClientRect();
+          const model=e.querySelector('.gpu-model').getBoundingClientRect();
+          return Math.abs(index.top-model.top)<3;
+        }''')
+        assert 'GiB' in await page.locator('.gpu-memory').first.inner_text()
+        assert 'MiB' in await page.locator('.gpu-memory').first.get_attribute('title')
         await page.wait_for_function('document.querySelector("#upload-estimate-time").textContent==="약 03:18"')
         assert '전체 1청크' in await page.locator('#speech-batch-plan').inner_text()
         await page.locator('#upload-dialog').screenshot(path=png.replace('.png','-moss.png'))
@@ -96,7 +107,14 @@ async def main():
         await page.locator('#prepare-upload-model').click()
         await page.wait_for_function('!cosmossSpeech.blocked()')
         assert downloads==['qwen-transformers']
-        await page.locator('input[name="selected-gpu"]').nth(1).check()
+        await page.locator('[data-gpu-row]').nth(1).locator('.gpu-model').click()
+        await page.locator('#gpu-warning-dialog').wait_for(state='visible')
+        assert 'fixture.py' in await page.locator('#gpu-warning-processes').inner_text()
+        await page.locator('#cancel-gpu-warning').click()
+        await page.wait_for_function('document.querySelector("input[name=selected-gpu]").checked')
+        await page.locator('[data-gpu-row]').nth(1).locator('td').last.click()
+        await page.locator('#confirm-gpu-warning').click()
+        await page.wait_for_function('document.querySelectorAll("input[name=selected-gpu]")[1].checked')
         await choose_option(page,'#speech-batch','8')
         await page.wait_for_function('!document.querySelector("#speech-memory-consent").classList.contains("hidden")')
         assert await page.locator('#allow-speech-memory-risk').get_attribute('required') is not None
@@ -110,6 +128,11 @@ async def main():
             await page.screenshot(path=png.replace('.png',f'-{width}.png'),full_page=True)
             assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert await page.locator('#upload-dialog').evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
+            assert await page.locator('.gpu-identity').first.evaluate('''e=>{
+              const index=e.querySelector('.gpu-index').getBoundingClientRect();
+              const model=e.querySelector('.gpu-model').getBoundingClientRect();
+              return Math.abs(index.top-model.top)<3;
+            }''')
         await page.set_viewport_size({'width':1440,'height':1000})
         await switch_pipeline(page,'moss-qwen-sequential')
         assert await page.locator('.upload-chunk-row').is_hidden()

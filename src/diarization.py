@@ -112,6 +112,16 @@ class Diarization:
         task = self.tasks.get(identity)
         return bool(task and not task.done())
 
+    def forget(self, note_id):
+        if not note_id or Path(note_id).name != note_id or note_id in {'.', '..'}:
+            raise ValueError('올바르지 않은 노트입니다.')
+        if self.busy('note:' + note_id):
+            raise ValueError('화자 재분리가 끝난 뒤 다시 시도해 주세요.')
+        for suffix in ('.json', '.tmp'):
+            (self.directory / (note_id + suffix)).unlink(missing_ok=True)
+        self.states.pop('note:' + note_id, None)
+        self.tasks.pop('note:' + note_id, None)
+
     async def execute(self, host, model_key, action, on_event, *, audio=None, **options):
         if host == '@local':
             return await self.local.execute(model_key, action, on_event, audio=audio, **options)

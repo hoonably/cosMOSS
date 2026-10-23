@@ -256,6 +256,22 @@ button opens the note dialog. `note_selection_ui_smoke.py` checks direct summary
 handoff, per-note drafts, explicit editing, concurrent selections, load errors,
 and focus retention during list refreshes in WebKit and Chromium.
 
+`NoteCleanup` links deletion to every note and document index entry owning the
+exported path. The Trash route checks the viewed file version and all related
+jobs before moving the export and managed upload directories to macOS Trash,
+then removes SQLite note/index rows, summary states and diarization JSON. It
+never removes the user's external source audio, voice profiles, model caches,
+separate exports or anonymous performance samples. Trash failures retain
+remaining records so cleanup can retry. Restoring only the transcript restores
+a regular library document, not the removed audio-note history.
+
+A lifespan task checks missing completed exports every 30 seconds with a
+60-second grace period. It skips inaccessible/noncanonical parent folders,
+symlinks and active jobs. Same-folder renames are relinked using indexed file
+identity/mtime/size or a managed transcript hash; ambiguous matches are retained.
+`test_note_cleanup.py` covers cleanup scope, shared owners, active work, failed
+Trash/retry, restored files, renames, unavailable folders and path containment.
+
 `scripts/build-mac-app.sh` builds a development launcher referencing its checkout
 via `CosMOSSProjectRoot` in Info.plist. `scripts/build-mac-release.sh` builds a
 relocatable Apple Silicon ZIP with the app sources, a standalone CPython 3.12.12,
@@ -419,10 +435,21 @@ the completed transcript and expose a file-only retry. The review list merges
 completed jobs and indexed files by path and shows only one result card in the
 selected folder, without an audio player or separate export controls. Legacy
 manual exports with matching names and bytes are linked without rewriting them.
+The editor shows the current transcript only. Its filename input commits on
+Enter/blur and cancels on Escape. Only actual input marks a name draft dirty;
+modal autofocus and opening another file cannot rename it. `/rename` preserves
+the file extension, bytes, metadata and indexed document ID. Exclusive link
+creation prevents collisions from overwriting files; matching managed paths are
+updated together. The endpoint shares the file-action stale/busy checks and
+local/same-origin guard. Text saves finish before renaming so hashes remain current.
 `tests/test_automatic_output.py` verifies every format, pinned folders, collisions,
 edit synchronization, denied writes, recovery without inference and route origins.
 The speaker dialog scrolls its preview to the selected speaker's first utterance;
 Up/Down skips other speakers, clamps at the ends and preserves text-field keys.
+Clicking a speaker card focuses its inline name input, with Enter returning to
+preview navigation. Clicking an already focused input preserves the caret and
+preview position. Cards and utterance highlights use the green accent; drag
+merging uses the card header so dragging name text does not merge speakers.
 `tests/speaker_navigation_ui_smoke.py` exercises long TXT/SRT previews, focus,
 scrolling, reduced motion, merge resets and source preservation.
 

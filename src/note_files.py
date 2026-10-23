@@ -35,6 +35,42 @@ def read_file(note, expected_hash=None, mtime_ns=None, size=None, file_version=N
     return path, content
 
 
+def rename_file(note, title, **version):
+    path, content = read_file(note, **version)
+    stem = title.strip()
+    if stem.lower().endswith(path.suffix.lower()):
+        stem = stem[:-len(path.suffix)].strip()
+    if not stem or stem in {'.', '..'} or any(c in '/\\:' or ord(c) < 32 or ord(c) == 127 for c in stem):
+        raise ValueError('파일명에는 빈 이름이나 /, \\, :, 줄바꿈을 사용할 수 없습니다.')
+    if len(os.fsencode(stem + path.suffix)) > 255:
+        raise ValueError('파일명이 너무 깁니다. 이름을 줄여 주세요.')
+    target = path.with_name(stem + path.suffix)
+    if target == path:
+        return target
+    # A case-only rename on a case-insensitive filesystem names the same entry.
+    if str(target).casefold() == str(path).casefold() and target.exists() and not target.is_symlink() and target.samefile(path):
+        path.rename(target)
+        return target
+    identity = path.stat()
+    try:
+        # Exclusive link creation never replaces an existing file, even if it
+        # appears after validation. Moving within a folder preserves all bytes,
+        # encoding, permissions, timestamps and file identity.
+        os.link(path, target, follow_symlinks=False)
+    except FileExistsError:
+        raise TextConflict('같은 이름의 파일이 있습니다. 다른 이름을 입력해 주세요.') from None
+    try:
+        checked, current = read_file(note, **version)
+        if current != content or not checked.samefile(target):
+            raise TextConflict('파일이 변경되었습니다. 다시 불러온 뒤 이름을 바꿔 주세요.')
+        path.unlink()
+    except Exception:
+        if target.exists() and not target.is_symlink() and (target.stat().st_dev, target.stat().st_ino) == (identity.st_dev, identity.st_ino):
+            target.unlink()
+        raise
+    return target
+
+
 def convert_file(note, target_format, **version):
     path, content = read_file(note, **version)
     current_format = path.suffix.lower()[1:]

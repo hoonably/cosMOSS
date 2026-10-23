@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f5f7f2" />
     <title>cosMOSS</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=duration-calibration-20261023" />
+    <link rel="stylesheet" href="/styles.css?v=note-cleanup-20261023" />
   </head>
   <body>
     <header class="app-topbar">        <a class="brand" id="go-home" href="/" aria-label="cosMOSS 홈으로 이동">
@@ -100,7 +100,7 @@
         <section class="workspace hidden" id="workspace">
           <header class="workspace-header">
             <div>
-              <input class="note-title" id="note-title" maxlength="200" aria-label="노트 제목" />
+              <input class="note-title" id="note-title" maxlength="200" aria-label="파일명" spellcheck="false" />
               <div class="note-meta" id="note-meta"></div>
             </div>
             <div class="header-actions">
@@ -145,12 +145,6 @@
               </div>
             </div>
 
-            <div class="transcript-views" id="transcript-views">
-              <button class="active" data-transcript-view="edited" aria-pressed="true">편집본</button>
-              <button data-transcript-view="raw" aria-pressed="false">전사 원본</button>
-              <span id="editing-hint">본문과 화자 이름을 눌러 수정할 수 있습니다.</span>
-            </div>
-
             <div class="editor-toolbar">
               <label class="transcript-search">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" /></svg>
@@ -192,9 +186,9 @@
 
     <dialog class="speaker-dialog" id="speaker-dialog" aria-labelledby="speaker-dialog-title">
       <div class="dialog-head"><div><p class="eyebrow">목소리에 이름 붙이기</p><h2 id="speaker-dialog-title">화자 설정</h2></div><button class="dialog-close" id="close-speakers" type="button" aria-label="화자 설정 닫기">×</button></div>
-      <div class="speaker-dialog-tools"><p class="speaker-dialog-help">화자를 선택하면 그 사람의 발화가 빨간색으로 표시됩니다. 대본 옆 재생 버튼으로 목소리를 확인하세요.</p><button class="ghost-button" id="identify-voice-speakers" type="button">목소리 비교·추천</button><button class="ghost-button" data-open-voice-profiles type="button">목소리 프로필</button></div>
+      <div class="speaker-dialog-tools"><p class="speaker-dialog-help">화자 카드에서 이름을 바로 수정할 수 있습니다. 선택한 화자의 발화는 초록색으로 표시됩니다.</p><button class="ghost-button" id="identify-voice-speakers" type="button">목소리 비교·추천</button><button class="ghost-button" data-open-voice-profiles type="button">목소리 프로필</button></div>
       <p class="speaker-voice-status hidden" id="speaker-voice-status" role="status"></p>
-      <div class="speaker-dialog-body"><aside class="speaker-picker"><div id="speaker-choices" aria-label="화자 선택" aria-describedby="speaker-merge-help"></div><p class="speaker-merge-help" id="speaker-merge-help">드래그로 화자를 병합할 수 있습니다.</p><label class="field"><span id="speaker-name-label">화자 이름</span><input id="speaker-name" maxlength="60" placeholder="이름 입력" autocomplete="off"></label></aside><div class="speaker-preview" id="speaker-preview" tabindex="0" aria-label="화자별 발화 확인" aria-describedby="speaker-navigation-help" aria-keyshortcuts="ArrowUp ArrowDown Space"></div></div>
+      <div class="speaker-dialog-body"><aside class="speaker-picker"><div id="speaker-choices" aria-label="화자 선택" aria-describedby="speaker-merge-help"></div><p class="speaker-merge-help" id="speaker-merge-help">드래그로 화자를 병합할 수 있습니다.</p></aside><div class="speaker-preview" id="speaker-preview" tabindex="0" aria-label="화자별 발화 확인" aria-describedby="speaker-navigation-help" aria-keyshortcuts="ArrowUp ArrowDown Space"></div></div>
       <audio id="speaker-preview-player" preload="none" hidden></audio>
       <p class="speaker-save-error hidden" id="speaker-save-error" role="alert"></p>
       <div class="speaker-dialog-footer"><span><span id="speaker-navigation-help" role="status" aria-live="polite">↑·↓로 선택한 화자의 발화 이동</span><br>저장하면 노트와 파일에 반영됩니다.</span><button class="ghost-button" id="cancel-speakers" type="button">취소</button><button class="primary-action" id="save-speakers" type="button">저장</button></div>
@@ -493,11 +487,11 @@
       <button type="button" role="menuitem" data-convert-format="srt"><span class="context-format">SRT</span><span>SRT로 변환</span></button>
       <button type="button" role="menuitem" data-convert-format="vtt"><span class="context-format">VTT</span><span>VTT로 변환</span></button>
       <div class="note-context-separator" role="separator"></div>
-      <button class="danger" id="trash-note-file" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg><span>휴지통으로 이동</span></button>
+      <button class="danger" id="trash-note-file" type="button" role="menuitem" title="전사 파일과 앱에 보관된 녹음을 휴지통으로 옮기고 내부 기록도 정리합니다."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg><span>휴지통으로 이동</span></button>
     </div>
     <div class="toast" id="toast" role="status"></div>
     <script src="/selects.js?v=custom-selects-20261019" defer></script>
-    <script src="/app.js?v=duration-calibration-20261023" defer></script>
+    <script src="/app.js?v=note-cleanup-20261023" defer></script>
     <script src="/speech.js?v=duration-calibration-20261023" defer></script>
     <script src="/voice-review.js?v=voice-review-2" defer></script>
     <script src="/diarization.js?v=diarization-2" defer></script>

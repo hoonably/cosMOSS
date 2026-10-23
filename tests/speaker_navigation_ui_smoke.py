@@ -67,6 +67,9 @@ async def main():
                 assert await page.locator('.speaker-preview-row.highlighted').count() == len(expected)
                 assert await page.locator('#speaker-preview').evaluate('el=>el.scrollTop>1000')
                 assert await page.locator('#speaker-dialog').evaluate('el=>el.scrollTop') == 0
+                assert await page.evaluate('document.activeElement.id') == 'speaker-name'
+                await page.keyboard.press('Enter')
+                assert await page.evaluate('document.activeElement.id') == 'speaker-preview'
                 for index in range(1, 4):
                     await page.keyboard.press('ArrowDown')
                     await position(expected[index])
@@ -82,6 +85,7 @@ async def main():
                 await position(expected[0])
                 assert await page.locator('#speaker-name').input_value() == '수정 중인 이름'
                 await page.emulate_media(reduced_motion='reduce')
+                await page.keyboard.press('Enter')
                 await page.keyboard.press('ArrowUp')
                 await position(expected[0])
                 for _ in range(len(expected) + 2):
@@ -90,7 +94,7 @@ async def main():
                 assert (await page.locator('#speaker-navigation-help').inner_text()).endswith(f'{len(expected)}/{len(expected)}')
                 if output:
                     await page.locator('#speaker-dialog').screenshot(path=str(output.with_name(output.stem + '-' + fmt + '.png')))
-                await page.locator('[data-select-speaker="S03"]').drag_to(page.locator('[data-select-speaker="S01"]'))
+                await page.locator('[data-select-speaker="S03"] .speaker-choice-select').drag_to(page.locator('[data-select-speaker="S01"]'))
                 await page.click('#confirm-speaker-merge')
                 await position(0)
                 assert await page.evaluate('document.activeElement.id') == 'speaker-name'

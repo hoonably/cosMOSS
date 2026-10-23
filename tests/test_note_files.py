@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 import httpx
 
-from src.note_files import convert_file, read_file
+from src.note_files import convert_file, read_file, rename_file
+from src.diarization import Diarization
 from src.store import NoteStore
 from src.summaries import Summaries
 from src.text_files import FORMATS, TextConflict, digest, save_text
@@ -63,6 +64,23 @@ class FileTests(unittest.TestCase):
             convert_file(dict(status='done',source_type='text_file',text_path=str(path)),'srt')
         self.assertFalse(list(self.root.glob('*.srt')))
 
+    def test_rename_preserves_bytes_extension_metadata_and_rejects_collisions(self):
+        for format_name in FORMATS:
+            note=self.source(format_name);source=Path(note['text_path'])
+            source.chmod(0o640);before=source.read_bytes();info=source.stat()
+            target=rename_file(note,'새 회의.'+format_name)
+            self.assertFalse(source.exists());self.assertEqual(target.name,'새 회의.'+format_name)
+            self.assertEqual(target.read_bytes(),before)
+            self.assertEqual((target.stat().st_mtime_ns,target.stat().st_ino,target.stat().st_mode),(info.st_mtime_ns,info.st_ino,info.st_mode))
+            note['text_path']=str(target)
+            collision=self.root/('기존.'+format_name);collision.write_text('보존')
+            with self.assertRaises(TextConflict):rename_file(note,'기존')
+            self.assertEqual(collision.read_text(),'보존');self.assertEqual(target.read_bytes(),before)
+            for invalid in ('..','../다른 폴더','이름/파일','이름\\파일','이름:파일','줄\n바꿈','', '한'*100):
+                with self.assertRaises(ValueError):rename_file(note,invalid)
+            with self.assertRaises(TextConflict):rename_file(note,'다시',file_version='stale')
+            self.assertEqual(rename_file(note,target.stem),target)
+
 
 class FileAPITests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -73,7 +91,8 @@ class FileAPITests(unittest.IsolatedAsyncioTestCase):
         self.store=NoteStore(self.root/'data/notes.sqlite3')
         self.library=TextLibrary(self.root/'library.sqlite3')
         self.summaries=Summaries(self.root/'summaries')
-        for key,value in {'STORE':self.store,'TEXT_LIBRARY':self.library,'SUMMARIES':self.summaries}.items():
+        for key,value in {'STORE':self.store,'TEXT_LIBRARY':self.library,'SUMMARIES':self.summaries,
+                          'DIARIZATION':Diarization(self.root/'data',self.root)}.items():
             self.enterContext(patch.object(main,key,value))
         self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),base_url='http://localhost')
         self.addAsyncCleanup(self.client.aclose)
@@ -121,3 +140,67 @@ class FileAPITests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TextConflict):save_text(self.store,'2'*32)
         self.assertFalse(self.source.exists())
         self.assertEqual(len(self.store.list()),2)
+
+    async def test_rename_keeps_document_identity_and_followup_edits(self):
+        meta=(await self.files())[0]
+        note=(await self.client.get('/api/notes/'+meta['id'])).json()
+        before=self.source.read_bytes();info=self.source.stat()
+        base='/api/notes/'+note['id']
+        with patch.object(self.summaries,'busy',return_value=True):
+            self.assertEqual((await self.client.post(base+'/rename',json={'title':'변경','text_hash':note['text_hash']})).status_code,409)
+        response=await self.client.post(base+'/rename',json={'title':'변경','text_hash':note['text_hash']})
+        self.assertEqual(response.status_code,200,response.text)
+        saved=response.json();target=self.folder/'변경.srt'
+        self.assertEqual(saved['id'],note['id']);self.assertEqual(saved['title'],'변경')
+        self.assertEqual(target.read_bytes(),before);self.assertFalse(self.source.exists())
+        self.assertEqual(target.stat().st_mtime_ns,info.st_mtime_ns)
+        files=await self.files();self.assertEqual(len(files),1);self.assertEqual(files[0]['id'],note['id'])
+        fresh=TextLibrary(self.library.database)
+        self.assertEqual(fresh.scan(str(self.folder))[0]['id'],note['id'])
+        changed=await self.client.patch(base,json={'text_body':saved['text_body'].replace('확인합니다','이름 변경 후 편집'),'text_hash':saved['text_hash']})
+        self.assertEqual(changed.status_code,200,changed.text)
+        self.assertIn('이름 변경 후 편집',target.read_text())
+        response=await self.client.post(base+'/rename',json={'title':'오래된 화면','text_hash':saved['text_hash']})
+        self.assertEqual(response.status_code,409)
+        response=await self.client.post(base+'/rename',json={'title':'외부 요청'},headers={'sec-fetch-site':'cross-site'})
+        self.assertEqual(response.status_code,403)
+        self.source.write_text('이전 이름으로 만든 별도 파일')
+        files=await self.files()
+        self.assertEqual(len({f['id'] for f in files}),2)
+        self.assertEqual(next(f['id'] for f in files if f['text_path']==str(target)),note['id'])
+        self.assertEqual({f['id'] for f in files},{f['id'] for f in await self.files()})
+
+    async def test_managed_file_rename_updates_paths_and_preserves_transcript_audio_and_raw(self):
+        note_id='9'*32;folder=self.store.upload_directory(note_id);folder.mkdir(parents=True)
+        audio=folder/'source.wav';audio.write_bytes(b'original recording')
+        self.store.create(dict(id=note_id,title='회의',status='done',source_path=str(audio),original_filename='source.wav'))
+        segments=[dict(id=0,start=1,end=2,speaker='S01',text='본문')]
+        self.store.update(note_id,segments=segments,raw_segments=segments,text_path=str(self.source),text_hash=digest(self.source.read_bytes()))
+        await self.files()
+        before=self.source.read_bytes()
+        response=await self.client.post('/api/notes/'+note_id+'/rename',json={'title':'새 파일명','text_hash':digest(before)})
+        self.assertEqual(response.status_code,200,response.text)
+        saved=self.store.get(note_id)
+        self.assertEqual(saved['title'],'새 파일명');self.assertEqual(saved['text_path'],str(self.folder/'새 파일명.srt'))
+        self.assertEqual(Path(saved['text_path']).read_bytes(),before)
+        self.assertEqual(saved['segments'],segments);self.assertEqual(saved['raw_segments'],segments)
+        self.assertEqual(audio.read_bytes(),b'original recording')
+        self.assertEqual((await self.files())[0]['managed_note_id'],note_id)
+
+    async def test_managed_file_trash_cleans_audio_history_and_related_index(self):
+        note_id='9'*32; folder=self.store.upload_directory(note_id);folder.mkdir(parents=True)
+        audio=folder/'source.wav';audio.write_bytes(b'private original recording')
+        self.store.create(dict(id=note_id,title='회의',status='done',source_path=str(audio),original_filename='source.wav'))
+        self.store.update(note_id,text_path=str(self.source),text_hash=digest(self.source.read_bytes()))
+        document=(await self.files())[0]
+        self.summaries._save(document['id'],{'phase':'done'})
+        trash=self.root/'Trash';trash.mkdir()
+        with patch.object(self.main,'trash_file',side_effect=lambda path:path.rename(trash/path.name)):
+            response=await self.client.post('/api/notes/'+note_id+'/trash',json={'file_version':'stale'})
+            self.assertEqual(response.status_code,409);self.assertTrue(audio.exists())
+            response=await self.client.post('/api/notes/'+note_id+'/trash',json={'text_hash':digest(self.source.read_bytes())})
+            self.assertEqual(response.status_code,204,response.text)
+        self.assertEqual(self.store.list(),[]);self.assertEqual(self.library.entries(),[])
+        self.assertFalse(folder.exists());self.assertFalse(self.source.exists())
+        self.assertTrue((trash/note_id/'source.wav').exists())
+        self.assertFalse(self.summaries._path(document['id']).exists())
