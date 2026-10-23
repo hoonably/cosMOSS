@@ -1015,20 +1015,15 @@ function clearUploadEstimate() {
   $("#upload-estimates").classList.add('hidden');
   $("#upload-estimates").classList.remove('needs-gpu-selection', 'is-pending');
 }
+function renderEstimateCalibration(estimate) {
+  const label = $('#upload-estimate-note');
+  label.textContent = estimate.calibration_note || '';
+  label.classList.toggle('estimate-caution', Boolean(estimate.calibration_status && estimate.calibration_status !== 'checked') || !!estimate.calibration_extrapolated);
+  label.title = estimate.calibration_model ? '모델 준비 시간과 메모리 여유를 포함합니다. 파일 전송·다운로드 시간은 제외합니다.' : '';
+}
 function scheduleUploadEstimate(plan) {
   if (!$('#upload-dialog').open || !executionDevice()) return clearUploadEstimate();
   const device = executionDevice(), gpu = state.selectedGpu;
-  if (device.backend === 'mlx') {
-    clearUploadEstimate();
-    const box = $('#upload-estimates');
-    box.classList.remove('hidden', 'is-over-capacity');
-    box.classList.add('is-pending');
-    $('#upload-estimate-memory').textContent = '업데이트 예정입니다.';
-    $('#upload-estimate-time').textContent = '업데이트 예정입니다.';
-    $('#upload-estimate-note').textContent = '';
-    $('#upload-memory-warning').classList.add('hidden');
-    return;
-  }
   if (device.backend === 'cuda' && !gpu) {
     clearUploadEstimate();
     const box = $('#upload-estimates');
@@ -1063,10 +1058,17 @@ function scheduleUploadEstimate(plan) {
     try {
       const estimate = await api(`/api/devices/${encodeURIComponent(device.id)}/estimate?${query}`, {signal:controller.signal});
       if (state.estimateKey !== key) return;
+      if (device.backend === 'mlx' && !estimate.calibration_model) {
+        $('#upload-estimate-memory').textContent = '추가 측정 필요';
+        $('#upload-estimate-time').textContent = '추가 측정 필요';
+        renderEstimateCalibration({calibration_note:'이 Mac·설정은 실측 준비 중입니다.', calibration_status:'provisional'});
+        box.classList.add('is-pending');
+        return;
+      }
       const memory = estimate.memory_expected_gib != null ? `약 ${estimate.memory_expected_gib.toFixed(1)} GiB` : '추정 불가';
       $('#upload-estimate-memory').textContent = memory;
-      $('#upload-estimate-time').textContent = estimate.time_seconds != null ? `약 ${clock(estimate.time_seconds)}` : '추정 불가';
-      $('#upload-estimate-note').textContent = '';
+      $('#upload-estimate-time').textContent = estimate.time_seconds != null ? `약 ${clock(estimate.time_seconds)}` : '추가 측정 필요';
+      renderEstimateCalibration(estimate);
       box.classList.toggle('is-over-capacity', !!estimate.exceeds_capacity);
       const warning = $('#upload-memory-warning');
       warning.classList.toggle('hidden', !estimate.exceeds_capacity && !estimate.exceeds_free);

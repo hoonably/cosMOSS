@@ -1,0 +1,472 @@
+{
+  "version": "duration-calibration-20261023-v1",
+  "provenance": "One Korean recording; one fresh process per condition; model loading included; transfer/download excluded. Validation duration held out; failed outputs excluded.",
+  "profiles": {
+    "mlx-16bit": {
+      "platform": "mac",
+      "model": "mlx-16bit",
+      "sample_count": 5,
+      "time_knots": [
+        [
+          60.0,
+          6.860772542015184
+        ],
+        [
+          300.0,
+          44.17016962499474
+        ],
+        [
+          900.0,
+          186.72744506251183
+        ],
+        [
+          1800.0,
+          611.253636270485
+        ],
+        [
+          3600,
+          2342.482000082993
+        ]
+      ],
+      "memory_knots": [
+        [
+          60.0,
+          2.2281913589686155
+        ],
+        [
+          300.0,
+          2.4020609371364117
+        ],
+        [
+          900.0,
+          3.179247999563813
+        ],
+        [
+          1800.0,
+          4.6376858446747065
+        ],
+        [
+          3600,
+          7.582922825589776
+        ]
+      ],
+      "bridge_time_knots": [
+        [
+          30.0,
+          4.1115158749889815
+        ]
+      ],
+      "cold_setup_seconds": 2.849477875075536,
+      "validation": {
+        "duration_seconds": 1320,
+        "status": "checked",
+        "time_absolute_error_percent": 8.70894044627748,
+        "reason": null
+      },
+      "hardware": {
+        "name": "Apple M4",
+        "memory_gib": 16
+      },
+      "runtime": "mlx-audio-0.5.7-mlx-lm-0.31.3-v1",
+      "model_repo": "vanch007/mlx-MOSS-Transcribe-Diarize",
+      "model_revision": "f950e56674260c35f2c00328f822245f4f680e9e",
+      "options": {
+        "kv_bits": 8,
+        "prefill_step_size": 512,
+        "max_tokens": 32768
+      },
+      "memory_metric": "metal-allocation",
+      "memory_multiplier": 1.12,
+      "memory_headroom_gib": 0.3
+    },
+    "mlx-8bit": {
+      "platform": "mac",
+      "model": "mlx-8bit",
+      "sample_count": 5,
+      "time_knots": [
+        [
+          60.0,
+          6.4273280420165975
+        ],
+        [
+          300.0,
+          30.159756125009153
+        ],
+        [
+          900.0,
+          152.8900365000154
+        ],
+        [
+          1800.0,
+          515.9948350835039
+        ],
+        [
+          3600,
+          2194.6039042090124
+        ]
+      ],
+      "memory_knots": [
+        [
+          60.0,
+          1.7078361343592405
+        ],
+        [
+          300.0,
+          1.9745182525366545
+        ],
+        [
+          900.0,
+          2.659464979544282
+        ],
+        [
+          1800.0,
+          4.1173306200653315
+        ],
+        [
+          3600,
+          7.062567600980401
+        ]
+      ],
+      "bridge_time_knots": [
+        [
+          30.0,
+          2.674508208001498
+        ]
+      ],
+      "cold_setup_seconds": 2.616693416959606,
+      "validation": {
+        "duration_seconds": 1320,
+        "status": "provisional",
+        "time_absolute_error_percent": null,
+        "reason": "timestamp-validation-failed"
+      },
+      "hardware": {
+        "name": "Apple M4",
+        "memory_gib": 16
+      },
+      "runtime": "mlx-audio-0.5.7-mlx-lm-0.31.3-v1",
+      "model_repo": "vanch007/mlx-MOSS-Transcribe-Diarize-8bit",
+      "model_revision": "7210aef739be6b9e068fba9b1d60369ec053655b",
+      "options": {
+        "kv_bits": 8,
+        "prefill_step_size": 512,
+        "max_tokens": 32768
+      },
+      "memory_metric": "metal-allocation",
+      "memory_multiplier": 1.12,
+      "memory_headroom_gib": 0.3
+    },
+    "mlx-4bit": {
+      "platform": "mac",
+      "model": "mlx-4bit",
+      "sample_count": 3,
+      "time_knots": [
+        [
+          60.0,
+          3.1944541670090985
+        ],
+        [
+          300.0,
+          24.096259166981326
+        ],
+        [
+          1800.0,
+          522.6443856664991
+        ]
+      ],
+      "memory_knots": [
+        [
+          60.0,
+          1.4303092788904905
+        ],
+        [
+          300.0,
+          1.7601014468818903
+        ],
+        [
+          1800.0,
+          3.8603809345513582
+        ]
+      ],
+      "bridge_time_knots": [
+        [
+          30,
+          2.2709634999919217
+        ]
+      ],
+      "cold_setup_seconds": 1.9168346250080504,
+      "validation": {
+        "duration_seconds": 1320,
+        "status": "provisional",
+        "time_absolute_error_percent": 30.55541450057342,
+        "reason": "time-error-over-25-percent"
+      },
+      "hardware": {
+        "name": "Apple M4",
+        "memory_gib": 16
+      },
+      "runtime": "mlx-audio-0.5.7-mlx-lm-0.31.3-v1",
+      "model_repo": "vanch007/mlx-MOSS-Transcribe-Diarize-4bit",
+      "model_revision": "d42a296ee807e933ddd7588e2041dbbc84aff85d",
+      "options": {
+        "kv_bits": 8,
+        "prefill_step_size": 512,
+        "max_tokens": 32768
+      },
+      "memory_metric": "metal-allocation",
+      "memory_multiplier": 1.12,
+      "memory_headroom_gib": 0.3
+    },
+    "moss-qwen-sequential": {
+      "platform": "server",
+      "model": "moss-qwen-sequential",
+      "sample_count": 7,
+      "time_knots": [
+        [
+          60,
+          3.9918332658708096
+        ],
+        [
+          300,
+          23.408938005566597
+        ],
+        [
+          600,
+          52.77394174784422
+        ],
+        [
+          1200,
+          105.02105770260096
+        ],
+        [
+          1800,
+          154.03696724027395
+        ],
+        [
+          2700,
+          204.66997470334172
+        ],
+        [
+          3937.1306875,
+          268.28121055290103
+        ]
+      ],
+      "memory_knots": [
+        [
+          60,
+          17.859375
+        ],
+        [
+          300,
+          18.365234375
+        ],
+        [
+          600,
+          18.859375
+        ],
+        [
+          1200,
+          19.83984375
+        ],
+        [
+          1800,
+          20.845703125
+        ],
+        [
+          2700,
+          26.423828125
+        ],
+        [
+          3937.1306875,
+          35.23046875
+        ]
+      ],
+      "bridge_time_knots": [],
+      "cold_setup_seconds": 116.45057363063097,
+      "validation": {
+        "duration_seconds": 1320,
+        "status": "checked",
+        "time_absolute_error_percent": 11.544295478440747,
+        "reason": null
+      },
+      "hardware": {
+        "name": "h200",
+        "capacity_gib": 140.4013671875
+      },
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "memory_metric": "owned-process-vram",
+      "memory_multiplier": 1.12,
+      "memory_headroom_gib": 1.0
+    },
+    "qwen-transformers": {
+      "platform": "server",
+      "model": "qwen-transformers",
+      "sample_count": 7,
+      "time_knots": [
+        [
+          60,
+          3.9655036441981792
+        ],
+        [
+          300,
+          15.619222681969404
+        ],
+        [
+          600,
+          22.05901635810733
+        ],
+        [
+          1200,
+          23.687205862253904
+        ],
+        [
+          1800,
+          27.62254937365651
+        ],
+        [
+          2700,
+          34.992985017597675
+        ],
+        [
+          3937.1306875,
+          41.861818697303534
+        ]
+      ],
+      "memory_knots": [
+        [
+          60,
+          5.0546875
+        ],
+        [
+          300,
+          7.51953125
+        ],
+        [
+          600,
+          10.623046875
+        ],
+        [
+          1200,
+          12.66015625
+        ],
+        [
+          1800,
+          17.1953125
+        ],
+        [
+          2700,
+          22.734375
+        ],
+        [
+          3937.1306875,
+          31.3359375
+        ]
+      ],
+      "bridge_time_knots": [],
+      "cold_setup_seconds": 41.671320758759975,
+      "validation": {
+        "duration_seconds": 1320,
+        "status": "checked",
+        "time_absolute_error_percent": 3.5516234236783073,
+        "reason": null
+      },
+      "hardware": {
+        "name": "h200",
+        "capacity_gib": 140.4013671875
+      },
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "memory_metric": "owned-process-vram",
+      "memory_multiplier": 1.12,
+      "memory_headroom_gib": 1.0
+    },
+    "moss-sglang": {
+      "platform": "server",
+      "model": "moss-sglang",
+      "sample_count": 8,
+      "time_knots": [
+        [
+          60,
+          1.1910054460167885
+        ],
+        [
+          180,
+          2.6015307642519474
+        ],
+        [
+          300,
+          4.497861918061972
+        ],
+        [
+          600,
+          9.879811748862267
+        ],
+        [
+          1200,
+          20.773020893335342
+        ],
+        [
+          1800,
+          32.168240778148174
+        ],
+        [
+          2700,
+          58.289542112499475
+        ],
+        [
+          3937.1306875,
+          96.80121732875705
+        ]
+      ],
+      "memory_knots": [
+        [
+          60,
+          17.8671875
+        ],
+        [
+          180,
+          17.892578125
+        ],
+        [
+          300,
+          18.365234375
+        ],
+        [
+          600,
+          18.859375
+        ],
+        [
+          1200,
+          19.83984375
+        ],
+        [
+          1800,
+          20.845703125
+        ],
+        [
+          2700,
+          22.333984375
+        ],
+        [
+          3937.1306875,
+          24.419921875
+        ]
+      ],
+      "bridge_time_knots": [],
+      "cold_setup_seconds": 101.39679518528283,
+      "validation": {
+        "duration_seconds": 1320,
+        "status": "checked",
+        "time_absolute_error_percent": 0.08817392405936486,
+        "reason": null
+      },
+      "hardware": {
+        "name": "h200",
+        "capacity_gib": 140.4013671875
+      },
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "memory_metric": "owned-process-vram",
+      "memory_multiplier": 1.12,
+      "memory_headroom_gib": 1.0
+    }
+  }
+}

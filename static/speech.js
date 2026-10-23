@@ -114,7 +114,8 @@
         const result = await api(`/api/devices/${encodeURIComponent(device.id)}/speech-estimate?${query}`, {signal:controller.signal});
         if (state.estimateKey !== key) return;
         $('#upload-estimate-memory').textContent = `약 ${result.memory_expected_gib.toFixed(1)} GiB`;
-        $('#upload-estimate-time').textContent = result.time_seconds == null ? '업데이트 예정입니다.' : `약 ${clock(result.time_seconds)}`;
+        $('#upload-estimate-time').textContent = result.time_seconds == null ? '추가 측정 필요' : `약 ${clock(result.time_seconds)}`;
+        renderEstimateCalibration(result);
         $('#speech-batch-plan').textContent = chosen === 'moss-sglang' ? '전체 1청크 · 문맥 유지'
           : chosen === 'moss-qwen-sequential' ? 'MOSS 전체 1청크 · Qwen 약20분 보조 대본'
           : `${result.chunk_count}개 청크 · 한 번에 ${result.batch}개${batch.value === '0' ? ' 자동 추천' : ''}`;

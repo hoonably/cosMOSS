@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import TranscriptionConfig
 from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
-from src.local_models import LocalModels
+from src.local_models import LocalModels, RUNTIME_VERSION as MLX_RUNTIME_VERSION
 from src.media_tools import MediaTools
 from src.model_catalog import catalog, model_selection, recommendation, DEFAULT_OPTIONS, default_chunk_minutes, local_hardware, has_model_selection
 from src.processing_estimates import estimate_processing
@@ -647,6 +647,17 @@ def record_model_progress(
     STORE.update(note_id, **changes)
 
 
+def local_estimate_configuration(device: dict[str, Any]) -> dict[str, Any]:
+    """Retain the selected model folder's provenance without exposing its path."""
+    if device.get('backend') != 'mlx' or device.get('id', 'local') != 'local':
+        return device
+    saved = LOCAL_MODELS.saved
+    if saved.get('model_key') != device.get('model_key'):
+        return device
+    return {**device, 'model_source': device.get('model_source', saved.get('source', 'cache')),
+            'model_path': device.get('model_path', saved.get('model_path', ''))}
+
+
 def estimate_note_inference(note: dict[str, Any], duration: float, count: int) -> float | None:
     """Freeze the same point estimate used by the upload dialog for this job."""
     try:
@@ -657,7 +668,9 @@ def estimate_note_inference(note: dict[str, Any], duration: float, count: int) -
         if not gpu and device.get('gpu_uuid'):
             inventory = GPU_INVENTORIES.get(device.get('id'), (0, {}))[1]
             gpu = next((item for item in inventory.get('gpus', []) if item['uuid'] == device['gpu_uuid']), None)
-        result = estimate_processing(device, duration, count, gpu, profiles=PERFORMANCE.profiles())
+        hardware = local_hardware() if device.get('backend') == 'mlx' and device.get('id', 'local') == 'local' else None
+        result = estimate_processing(local_estimate_configuration(device), duration, count, gpu, profiles=PERFORMANCE.profiles(),
+                                     local_hardware_info=hardware, local_runtime=MLX_RUNTIME_VERSION)
         value = result.get('time_seconds')
         return value if isinstance(value, (int, float)) and math.isfinite(value) and value > 0 else None
     except (ValueError, OSError, sqlite3.Error):
@@ -1611,8 +1624,9 @@ def processing_estimate(device_id: str, duration: float = Query(gt=0, le=365 * 8
             gpu = {'name':gpus[0]['name'], 'memory_total_mib':min(capacities) if known else None}
             # No single GPU's free-memory reading represents an unselected server.
             gpu_source = 'server-hardware'
-    result = estimate_processing(device, duration, count, gpu, local_hardware().get('memory_gib') if device_id == 'local' else None,
-                                 profiles=PERFORMANCE.profiles())
+    hardware = local_hardware() if device_id == 'local' else None
+    result = estimate_processing(local_estimate_configuration(device), duration, count, gpu, (hardware or {}).get('memory_gib'),
+                                 profiles=PERFORMANCE.profiles(), local_hardware_info=hardware, local_runtime=MLX_RUNTIME_VERSION)
     result['gpu_source'] = gpu_source
     if device['backend'] == 'cuda' and not gpu_uuid:
         result['note'] += ' · 서버 GPU 기준 · 번호 선택 전' if gpu_source == 'server-hardware' else ' · GPU 선택 후 보정'

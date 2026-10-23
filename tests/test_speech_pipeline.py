@@ -242,7 +242,7 @@ class UIResourceTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),base_url='http://localhost') as client:
             document=await client.get('/')
             parser=Resources();parser.feed(document.text)
-            self.assertIn('/speech.js?v=speech-pipelines-2',parser.paths)
+            self.assertIn('/speech.js?v=duration-calibration-20261023',parser.paths)
             for path in ('/',*parser.paths):
                 with self.subTest(path=path):
                     response=await client.get(path)

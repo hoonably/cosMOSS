@@ -1,4 +1,4 @@
-"""Fixture UI: GPU first, calibrated point estimates, desktop/mobile ordering.
+"""Legacy custom-worker UI: GPU first, point estimates, desktop/mobile ordering.
 
 Run against an isolated backend: uv run --no-project --with playwright python
 tests/processing_estimate_ui_smoke.py URL PNG. No audio upload or GPU inference.
@@ -18,7 +18,11 @@ from ui_helpers import choose_option
 
 async def main():
     base, screenshot=sys.argv[1:3]
-    remote=dict(id='remote', name='juyu-h200', kind='ssh', host='fixture-host', backend='cuda', options={'chunk_minutes':90})
+    # Explicit custom worker keeps the legacy request estimator reachable after
+    # the normal server defaults migrated to the three speech presets.
+    remote=dict(id='remote', name='GPU 서버', kind='ssh', host='fixture-host', backend='cuda',
+                model_key='custom',model_id='OpenMOSS-Team/MOSS-Transcribe-Diarize',model_selected=True,
+                options={'chunk_minutes':90})
     gpus=[dict(index=index,uuid=f'GPU-{index}-fixture',name='NVIDIA H200',memory_total_mib=143771,
                memory_used_mib=0,memory_free_mib=143771,utilization_percent=0,processes=[],
                process_info_known=True,idle_candidate=True) for index in range(4)]

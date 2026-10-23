@@ -10,9 +10,10 @@ from collections import defaultdict
 from statistics import median
 
 from src.performance_history import matching_profile, seed_profiles
+from src.duration_estimates import mac_estimate
 
 GIB = 1024 ** 3
-ESTIMATE_VERSION = 'measured-profiles-20261021-v3'
+ESTIMATE_VERSION = 'measured-profiles-20261023-v4'
 CUDA_CONTEXT_HEADROOM_GIB = 1.0
 
 
@@ -55,7 +56,8 @@ def memory_gib(gpu, field):
     return value / 1024 if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else None
 
 
-def estimate_processing(device, duration, count, gpu=None, local_memory_gib=None, profiles=None):
+def estimate_processing(device, duration, count, gpu=None, local_memory_gib=None, profiles=None,
+                        local_hardware_info=None, local_runtime=None):
     seconds = duration / count
     backend = device.get('backend', 'mlx')
     options = device.get('options', {})
@@ -67,6 +69,13 @@ def estimate_processing(device, duration, count, gpu=None, local_memory_gib=None
                   free_gib=memory_gib(gpu, 'memory_free_mib'),
                   capacity_kind='통합 메모리' if backend == 'mlx' else 'VRAM', exceeds_capacity=False, exceeds_free=False,
                   note='초기 추정 · 모델 준비·파일 전송 제외')
+    if backend == 'mlx':
+        measured = mac_estimate(device, duration, count, local_hardware_info, local_runtime)
+        if measured:
+            result.update(measured)
+            result['capacity_gib'] = local_memory_gib or (local_hardware_info or {}).get('memory_gib')
+            result['exceeds_capacity'] = bool(result['capacity_gib'] and result['memory_high_gib'] > result['capacity_gib'])
+            return result
     profile = matching_profile(device, gpu, seed_profiles() if profiles is None else profiles)
     if key == 'custom' and not profile:
         result['note'] = '사용자 지정 모델은 메모리·시간 추정을 지원하지 않습니다.'

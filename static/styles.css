@@ -281,6 +281,7 @@ dialog::backdrop { background: rgba(11,25,17,.62); backdrop-filter: blur(4px); }
 .upload-estimates.is-pending .upload-estimate-values strong { color: var(--muted); font-weight: 400; }
 .upload-estimates > small { display: block; margin-top: 6px; color: #929c8d; font-size: 10px; line-height: 1.6; }
 .upload-estimates > small:empty { display: none; }
+.upload-estimates > small.estimate-caution { color: #a16e36; }
 .upload-estimates > p { margin: 7px 0 0; color: #a16e36; font-size: 11px; line-height: 1.6; }
 .upload-estimates.is-over-capacity { border-color: #e8b5ad; background: #fff4f1; }
 .upload-estimates.is-over-capacity #upload-estimate-memory, .upload-estimates.is-over-capacity > p { color: #bd493f; }

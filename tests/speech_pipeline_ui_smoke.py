@@ -85,11 +85,11 @@ async def main():
           renderFilePreparation();
         }''')
         await page.locator('input[name="selected-gpu"]').first.check()
-        await page.wait_for_function('document.querySelector("#upload-estimate-time").textContent==="약 04:29"')
+        await page.wait_for_function('document.querySelector("#upload-estimate-time").textContent==="약 03:18"')
         assert '전체 1청크' in await page.locator('#speech-batch-plan').inner_text()
         await page.locator('#upload-dialog').screenshot(path=png.replace('.png','-moss.png'))
         await switch_pipeline(page,'qwen-transformers')
-        await page.wait_for_function('document.querySelector("#upload-estimate-time").textContent==="약 01:12"')
+        await page.wait_for_function('document.querySelector("#upload-estimate-time").textContent==="약 01:24"')
         await page.locator('#prepare-upload-model').wait_for(state='visible')
         assert await page.locator('#upload-form button[type=submit]').is_disabled()
         assert not downloads
@@ -101,7 +101,7 @@ async def main():
         await page.wait_for_function('!document.querySelector("#speech-memory-consent").classList.contains("hidden")')
         assert await page.locator('#allow-speech-memory-risk').get_attribute('required') is not None
         assert '70%' in await page.locator('#upload-memory-warning').inner_text()
-        assert await page.locator('#upload-estimate-time').inner_text()=='업데이트 예정입니다.'
+        assert await page.locator('#upload-estimate-time').inner_text()=='추가 측정 필요'
         await choose_option(page,'#speech-batch','0')
         await page.wait_for_function('document.querySelector("#speech-memory-consent").classList.contains("hidden")')
         assert not await page.locator('#allow-speech-memory-risk').is_checked()

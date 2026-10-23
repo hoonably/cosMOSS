@@ -495,13 +495,47 @@ Device/GPU tests and a browser smoke test are documented in [DEVICES.md](DEVICES
 
 ## Processing estimates
 
-The note dialog has a wide two-column layout: audio and note/chunk settings on
-the left, GPU selection on the right with the start button directly below it.
+The note dialog has a wide two-column layout: GPU selection on the left,
+audio and note/chunk settings on the right with the start button below them.
 Below 850px it stacks GPU selection, settings and the start button.
 CUDA chunk controls and estimate requests wait for a GPU number, so an unknown
 hardware guess cannot appear as the selected server's expected latency.
-The MLX dialog displays `업데이트 예정입니다.` for both estimates and does not
-request numerical predictions until local measurements are ready to calibrate it.
+The MLX dialog requests the selected model/count estimate after file preparation.
+Only a matching measured Mac profile supplies displayed numerical predictions;
+unmatched hardware, model folders or advanced settings say `추가 측정 필요`.
+
+`src/duration_calibrations.json` contains the public numerical export of the
+2026-10-23 duration study, consumed by `src/duration_estimates.py`. It includes
+three M4 16-GiB MLX weight variants and three H200 speech presets. Profiles are
+scoped by hardware/capacity, runtime, public model/revision where available and
+measured settings; H200 profiles cover the effective automatic batch only.
+No audio, transcripts, source hashes, hostnames, paths or credentials are included.
+The release bundle copies this JSON with the rest of `src`.
+
+Monotone piecewise interpolation uses work-time and memory knots, with median
+fresh-process setup added separately. MLX sums equal-length main chunks and
+30-second boundary bridge work; memory takes the main-context peak rather than
+summing sequential chunks. The displayed budget is `raw_peak*1.12+headroom`,
+with 0.3 GiB for Metal allocation or 1 GiB for server process VRAM. These metrics
+are not interchangeable with OS-wide memory or host RSS. Server setup includes
+all sequential model stages; downloading and transport are excluded.
+
+The 22-minute validation prefix was excluded from fitting. MLX 4-bit time remains
+provisional (30.6% validation error); MLX 8-bit has no successful held-out timing.
+The UI shows these limits and extrapolation in amber. No valid 4-bit main timing
+above 30 minutes exists, so its time stays unknown. Qwen waves above the measured
+duration are structural extrapolation. See the [measurement report](performance/2026-10-23-duration-calibration.md)
+for failures, scope and validation errors. Existing local server observations can
+replace a nearby measured point; a short observation cannot flatten the whole
+length curve. Unmatched server hardware still learns from compatible observations.
+The new calibration import in the remote attribution catalog is lazy: bootstrap
+speaker attribution does not depend on the client's calibration JSON/module.
+
+`tests/test_duration_estimates.py` checks held-out bounds, identity/option scoping,
+memory budgets, observation handling and API parity. Run
+`python tests/duration_estimate_ui_smoke.py URL webkit PNG` and
+`python tests/speech_pipeline_ui_smoke.py URL PNG webkit` against an isolated app
+server for Mac and server model/count changes, uncertainty and responsive layout.
 
 The running-job card shows one estimated model progress bar instead of pipeline
 steps, token/prefill sub-bars or timestamp/chunk counters. At job start, the
@@ -512,11 +546,13 @@ The request window is persisted as `inference_started_at`/`inference_finished_at
 It includes transcription-request transport and waiting, all main chunks and
 model-generated boundary bridges, and ends before CPU merge, optional voice
 recommendations or file saving. It is a client request timer, not a GPU profiler.
-MLX can use the estimator's rough backend fallback for this running-job bar;
-its pre-upload estimate fields still say that measurements are pending.
+MLX uses the same measured profile as the dialog when available, with a rough
+backend fallback for this running-job bar on unmeasured hardware/settings.
 The UI advances once per second using the elapsed/estimated ratio, caps it at
 99% until the final model response, and then shows 100% even while the note is
-being finalized. Request timing can exceed the inference-only reference estimate.
+being finalized. The calibrated dialog estimate includes preparation, which can
+already have finished before the MLX request timer starts; it is an approximation
+for progress. Older request-only profiles exclude preparation.
 Cancellation/failure freeze the clock. Restart and queue recovery reset its
 timestamps and estimate. Unknown estimates retain an indeterminate indicator.
 `tests/test_inference_progress.py` checks timing and estimation boundaries;
@@ -525,6 +561,7 @@ completion before postprocessing, stop/retry/error states and responsive layout.
 
 `src/processing_estimates.py` returns point estimates: `time_seconds` and
 `memory_expected_gib`. GPU names no longer select fixed timing coefficients.
+The following request-only estimator remains for legacy CUDA worker jobs.
 `src/performance_seeds.json` holds reference observations; the existing four H200
 cases are the first dataset, not a separate algorithm. Completed CUDA requests
 add local numerical measurements to `data/performance.sqlite3` through

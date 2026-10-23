@@ -5,6 +5,7 @@ This module has no ML dependencies; setup and UI planning stay cheap on the Mac.
 from __future__ import annotations
 
 import math
+from statistics import median
 
 try:
     from src.speech_engines import ENGINE_PIPELINES, ENGINE_VERSION
@@ -14,13 +15,13 @@ except ModuleNotFoundError:
 PIPELINES = [
     {'key': 'moss-sglang', 'name': 'MOSS · SGLang Omni · 전체', 'badge': '추천 · 서버 기본값',
      'description': '전체 녹음의 문맥을 유지해 전사한 뒤 Nemotron으로 화자를 구분합니다. 최대 90분.',
-     'reference': 'H200 · 65분37초 · MOSS 추론 약1분36초 · KV 제한 시 Peak 약24.4 GiB'},
+     'reference': 'H200 · 65분37초 · 모델 준비 포함 3분19초 · Peak 약24.4 GiB'},
     {'key': 'qwen-transformers', 'name': 'Qwen · Transformers · 3분 + 정렬', 'badge': '빠른 전사',
      'description': '공식 SDK로 약 3분씩 전사한 뒤 시간 정렬과 Nemotron을 순서대로 실행합니다.',
-     'reference': 'H200 · 65분37초 · 초기화 포함 1분12초 · Peak 약31.3 GiB'},
+     'reference': 'H200 · 65분37초 · 모델 준비 포함 1분27초 · Peak 약31.3 GiB'},
     {'key': 'moss-qwen-sequential', 'name': 'MOSS + Qwen · 순차 실행', 'badge': '보조 대본 비교',
      'description': 'MOSS 전체 전사 → 모델 해제 → Qwen 약20분 보조 전사 → Nemotron. 본문은 MOSS를 유지합니다.',
-     'reference': 'H200 · 65분37초 · 초기화 포함 7분29초 · Peak 약35.2 GiB'},
+     'reference': 'H200 · 65분37초 · 모델 준비 포함 6분24초 · Peak 약35.2 GiB'},
 ]
 DEFAULT_PIPELINE = 'moss-sglang'
 # Old saved jobs remain executable; new selections expose only PIPELINES.
@@ -111,6 +112,8 @@ def estimate_pipeline(key, duration, gpu, batch=0, observations=()):
 
 
 def estimate_engine(key, duration, gpu, batch, observations):
+    # Prediction runs on the client. Remote stage catalogs use only attribution.
+    from src.duration_estimates import server_estimate
     if key != 'qwen-transformers' and duration > 5400:
         raise ValueError('MOSS 전체 입력은 90분 이하 녹음을 지원합니다. 녹음을 나누어 주세요.')
     capacity = (gpu or {}).get('memory_total_mib')
@@ -132,28 +135,34 @@ def estimate_engine(key, duration, gpu, batch, observations):
     compatible = [r for r in observations if r.get('pipeline')==key and r.get('runtime')==ENGINE_VERSION
                   and r.get('gpu_name')==name and r.get('batch')==actual and capacity
                   and abs(r.get('capacity_gib',0)-capacity)<4]
+    measured = server_estimate(key, duration, gpu, ENGINE_VERSION, actual)
     elapsed,source = None,'unmeasured'
-    if compatible:
+    if measured:
+        elapsed, peak, source = measured['time_seconds'], measured['memory_expected_gib'], measured['time_source']
+        # A recent observation at this length can replace this point. A short
+        # sample must never flatten the nonlinear curve for all longer inputs.
+        nearby = [r for r in compatible if abs(r['audio_seconds'] - duration) <= max(1, duration * .01)]
+        if nearby:
+            elapsed = round(median(r['inference_seconds'] + r['load_seconds'] for r in nearby))
+            raw_memory = max(measured['memory_raw_gib'], max(r['peak_process_gib'] for r in nearby))
+            peak = round(raw_memory * 1.12 + 1, 1)
+            measured.update(memory_raw_gib=raw_memory, setup_seconds=median(r['load_seconds'] for r in nearby),
+                            inference_seconds=median(r['inference_seconds'] for r in nearby))
+            source = 'observed'
+    elif compatible:
         row=compatible[-1]
         elapsed=round(row['inference_seconds']*duration/row['audio_seconds']+row['load_seconds'])
         peak=max(peak,round(row['peak_process_gib']*1.12+1,1))
         source='observed'
-    elif name=='h200' and capacity and capacity>=120:
-        # One recording, one run. Keep initialization constant; scale only the
-        # measured model work. Show as an estimate, never an accuracy ranking.
-        # MOSS uses the capped-KV run's initialization + ASR + one Nemotron,
-        # rather than borrowing the faster cold start of the uncapped engine.
-        load,work={'moss-sglang':(170,99),'qwen-transformers':(25,47.17),
-                   'moss-qwen-sequential':(175,273.79)}[key]
-        if key!='qwen-transformers' or actual>=min(23,chunks):
-            elapsed=round(load+work*duration/3937.1306875)
-            source='reference'
-    return dict(pipeline=key,batch=actual,requested_batch=batch,recommended_batch=actual,
+    result = dict(pipeline=key,batch=actual,requested_batch=batch,recommended_batch=actual,
         chunk_count=chunks,chunk_seconds=seconds,memory_expected_gib=peak,memory_high_gib=peak,
         capacity_gib=capacity,free_gib=free,budget_gib=round(capacity*.7,1) if capacity else None,
         exceeds_budget=bool(capacity and peak>capacity*.7),exceeds_capacity=bool(capacity and peak>capacity),
         exceeds_free=bool(free is not None and peak>free),capacity_kind='VRAM',time_seconds=elapsed,
         time_source=source,memory_source='reference-plus-headroom')
+    if measured:
+        result.update({k:v for k,v in measured.items() if k not in {'time_seconds','memory_expected_gib','memory_high_gib','time_source'}})
+    return result
 
 
 def attribute_speakers(items, turns):
