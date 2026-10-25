@@ -741,3 +741,15 @@ transcripts.
 
 Verification: `tests/test_processing_estimates.py`, `tests/setup_ui_smoke.py`,
 and `tests/chunk_selection_ui_smoke.py` (with an existing recording).
+
+## Product website
+
+`docs/index.html` is the buildless product website. Styles, interactions and the
+favicon live in `docs/assets/`; screenshots are shared with the README in
+`docs/images/`. All asset paths are relative so the site works under the
+`/cosMOSS/` GitHub Pages project path. Existing Markdown guides remain intact.
+
+Preview locally with `python3 -m http.server 18777 --bind 127.0.0.1 --directory docs`,
+then open `http://127.0.0.1:18777/`. No package installation or build is required.
+`docs/.nojekyll` keeps GitHub Pages from transforming the static files. Version
+labels and download links in the HTML should be updated with future releases.

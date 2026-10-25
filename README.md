@@ -7,7 +7,7 @@
 
 [![Mac용 다운로드](https://img.shields.io/badge/macOS-1.0.0_%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C-11925A?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/hoonably/cosMOSS/releases/download/v1.0.0/cosMOSS-v1.0.0-macos-arm64.dmg)
 
-Apple Silicon · macOS 13 이상 · [릴리스 노트](https://github.com/hoonably/cosMOSS/releases/tag/v1.0.0)
+Apple Silicon · macOS 13 이상 · [웹사이트](https://hoonably.github.io/cosMOSS/) · [릴리스 노트](https://github.com/hoonably/cosMOSS/releases/tag/v1.0.0)
 
 ![전사 장치, 노트 목록, AI 요약을 한 화면에서 확인하는 cosMOSS](docs/images/cosmoss.jpg)
 
