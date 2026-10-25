@@ -107,7 +107,7 @@ async def main():
         await asyncio.sleep(.6)
         assert await b.locator('.note-select').get_attribute('aria-pressed') == 'true'
         assert await a.locator('.note-select').get_attribute('aria-pressed') == 'false'
-        assert '다음 주 발표 준비.txt' in await page.locator('#summary-source').inner_text()
+        assert await page.locator('#summary-source').count() == 0
         assert await page.locator('#run-summary').is_enabled()
         await c.locator('.note-select').click()
         await page.wait_for_function('!state.openingNote')

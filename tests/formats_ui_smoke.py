@@ -73,7 +73,7 @@ async def main():
                 if output:await page.screenshot(path=str(output.with_name(output.stem+'-'+fmt+'.png')))
                 await page.click('#close-note')
                 await page.locator('#note-dialog').wait_for(state='hidden')
-                assert await page.locator('#summary-source').inner_text()==file.name
+                assert await page.evaluate('state.current.text_path') == str(file)
                 provider='codex' if fmt=='srt' else 'claude'
                 await choose_option(page,'#summary-provider',provider)
                 await page.locator('#run-summary').wait_for(state='visible')

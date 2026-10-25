@@ -42,7 +42,7 @@ class LocalPipelineTests(unittest.IsolatedAsyncioTestCase):
                 'ready': True, 'asr_ready':True, 'diarization_ready':True}),
             model_path_for=Mock(return_value=self.root / 'model'),
             status=Mock(return_value={'phase':'installed'}), start=Mock(return_value={'phase':'checking'}))
-        self.diarization = SimpleNamespace(local=SimpleNamespace(execute=AsyncMock(side_effect=self.diarize)))
+        self.diarization = SimpleNamespace(execute=AsyncMock(side_effect=self.diarize))
         self.identity = 'a' * 32
         self.audio = self.store.upload_directory(self.identity) / 'source.wav'
         self.audio.parent.mkdir(parents=True)
@@ -58,7 +58,7 @@ class LocalPipelineTests(unittest.IsolatedAsyncioTestCase):
             ('second raw', [{'start':0, 'end':2, 'speaker':'S02', 'text':'다시 첫 사람입니다.'},
                             {'start':2, 'end':4, 'speaker':'S01', 'text':'겹쳐 말합니다.'}])])
         values = {'STORE':self.store, 'DEVICES':self.devices, 'LOCAL_MODELS':self.models,
-            'DIARIZATION':self.diarization, 'QUEUE':asyncio.Queue(), 'CANCEL_REQUESTED':set(),
+            'LOCAL_DIARIZATION':self.diarization, 'QUEUE':asyncio.Queue(), 'CANCEL_REQUESTED':set(),
             'SUMMARIES':Summaries(self.root / 'summaries'),
             'VOICE_PROFILES':SimpleNamespace(settings=lambda:{'enabled':False}),
             'MEDIA_TOOLS':SimpleNamespace(require_ready=AsyncMock()),
@@ -99,7 +99,7 @@ class LocalPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(note['inference_finished_at'])
 
     async def test_diarizer_failure_keeps_asr_diagnostic_and_does_not_publish_success(self):
-        self.diarization.local.execute.side_effect = RuntimeError('Nemotron failed')
+        self.diarization.execute.side_effect = RuntimeError('Nemotron failed')
         await self.main.transcribe(self.identity)
         note = self.store.get(self.identity)
         self.assertEqual(note['status'], 'error')
@@ -115,14 +115,14 @@ class LocalPipelineTests(unittest.IsolatedAsyncioTestCase):
         note = self.store.get(self.identity)
         self.assertEqual(note['status'], 'done', note.get('error'))
         self.assertEqual(self.events, [('load','mlx-8bit'), ('release','mlx-8bit')])
-        self.diarization.local.execute.assert_not_awaited()
+        self.diarization.execute.assert_not_awaited()
 
     async def test_cancel_during_diarization_retains_cancel_state_without_export(self):
         entered = asyncio.Event()
         async def pending(*args, **kwargs):
             entered.set()
             await asyncio.Event().wait()
-        self.diarization.local.execute.side_effect = pending
+        self.diarization.execute.side_effect = pending
         task = asyncio.create_task(self.main.transcribe(self.identity))
         await asyncio.wait_for(entered.wait(), 2)
         self.main.CANCEL_REQUESTED.add(self.identity)

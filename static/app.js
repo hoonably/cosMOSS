@@ -1,5 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const state = {
+  summaryModelCatalogs: {}, summaryModelRequests: {}, summaryModelLoading: new Set(), summaryModelSaving: null, summaryProviderLoading: false, summaryCopying: false,
   appSetup: null, appSetupRequest: 0, appSetupChecking: false, appSetupTimer: null,
   libraryRequest: 0, libraryLoading: false, executionDeviceId: "local",
   textSaveAttempts: new Set(),
@@ -101,7 +102,6 @@ async function loadAppInfo() {
     $("#app-version").textContent = `v${info.version}`;
     $("#app-update-info").classList.remove("hidden");
     $("#check-app-update").classList.toggle("hidden", !info.updatesAvailable);
-    $("#check-app-update").disabled = !info.canCheckForUpdates;
   } catch (_) {}
 }
 
@@ -674,7 +674,7 @@ function renderWorkspace() {
     if (phase === 'transcribing') {
       const modelPhase = note.model_progress?.pipeline_phase;
       if (modelPhase === 'aligning') $("#processing-title").textContent = '단어의 시간을 맞추고 있어요';
-      if (modelPhase === 'diarizing') $("#processing-title").textContent = 'Nemotron이 목소리를 구분하고 있어요';
+      if (modelPhase === 'diarizing') $("#processing-title").textContent = 'Nemotron 0.1B가 목소리를 구분하고 있어요';
     }
     $("#processing-copy").textContent = phase === "queued" ? "앞선 작업이 끝나면 자동으로 시작됩니다."
       : ["finalizing", "identifying_speakers"].includes(phase) ? "전사 결과를 불러오고 있습니다."
@@ -769,10 +769,10 @@ function renderEditor() {
     $("#chunk-notice").classList.add('hidden');
     const localMlx = speechResult.pipeline === 'moss-mlx';
     const peak = !localMlx && speechResult.peak_process_mib ? ` · Peak ${(speechResult.peak_process_mib / 1024).toFixed(1)} GiB` : '';
-    const model = {'mlx-8bit':'MOSS · MLX 8bit','mlx-4bit':'MOSS · MLX 4bit','mlx-16bit':'MOSS · MLX 16bit'}[speechResult.model_key] || 'MOSS · MLX';
+    const model = {'mlx-8bit':'MOSS 0.9B · MLX 8bit','mlx-4bit':'MOSS 0.9B · MLX 4bit','mlx-16bit':'MOSS 0.9B · MLX 16bit'}[speechResult.model_key] || 'MOSS · MLX';
     const chunks = localMlx ? `${speechResult.chunk_count || note.chunk_count || 1}청크 · 순차 실행` : ['moss-sglang','moss-qwen-sequential'].includes(speechResult.pipeline) ? 'MOSS 전체 1청크' : `${speechResult.chunk_count}청크 / 동시 ${speechResult.batch}개`;
     const uncertain = note.segments.filter(segment => segment.speaker === '미확인' || segment.speaker_uncertain).length;
-    $("#speech-result").textContent = `${localMlx ? model : {'moss-sglang':'MOSS · SGLang Omni · 전체','qwen-transformers':'Qwen · Transformers · 3분 + 정렬','moss-qwen-sequential':'MOSS + Qwen · 순차 실행','qwen-batch':'Qwen3-ASR'}[speechResult.pipeline] || 'MOSS'} + Nemotron · 모델 처리 ${clock(speechResult.inference_seconds)}${peak} · ${chunks}${uncertain ? ` · 화자 미확인 ${uncertain}개 발화` : ''}`;
+    $("#speech-result").textContent = `${localMlx ? model : {'moss-sglang':'MOSS 0.9B · SGLang Omni · 전체','qwen-transformers':'Qwen3-ASR 1.7B · Transformers · 3분 + 정렬','moss-qwen-sequential':'MOSS 0.9B + Qwen3-ASR 1.7B · 순차 실행','qwen-batch':'Qwen3-ASR 1.7B'}[speechResult.pipeline] || 'MOSS'} + Nemotron 0.1B · 모델 처리 ${clock(speechResult.inference_seconds)}${peak} · ${chunks}${uncertain ? ` · 화자 미확인 ${uncertain}개 발화` : ''}`;
   }
   const auxiliary = $('#auxiliary-transcript');
   auxiliary.classList.toggle('hidden', !speechResult?.has_auxiliary_transcript);
@@ -1861,11 +1861,11 @@ function cardModelOptions(device) {
   const placeholder = `<option value="" disabled ${selected ? '' : 'selected'}>모델 선택…</option>`;
   if (device.backend === 'cuda') {
     const current = device.options?.speech_pipeline || 'moss-sglang';
-    const presets = state.catalog?.speech_presets || [{key:'moss-sglang',name:'MOSS · SGLang Omni',badge:'추천'}, {key:'qwen-transformers',name:'Qwen · Transformers',badge:'빠른 전사'}, {key:'moss-qwen-sequential',name:'MOSS + Qwen',badge:'보조 대본 비교'}];
+    const presets = state.catalog?.speech_presets || [{key:'moss-sglang',name:'MOSS 0.9B · SGLang Omni',badge:'추천'}, {key:'qwen-transformers',name:'Qwen3-ASR 1.7B · Transformers',badge:'빠른 전사'}, {key:'moss-qwen-sequential',name:'MOSS 0.9B + Qwen3-ASR 1.7B',badge:'보조 대본 비교'}];
     const legacy = selected && !presets.some(item=>item.key===current) ? `<option value="speech:${escapeHtml(current)}" selected>이전 전사 설정 · 새 모델을 선택해 주세요</option>` : '';
     return placeholder + presets.map(item => `<option value="speech:${item.key}" data-badge="${escapeHtml(item.badge || '')}" ${selected && device.model_key !== 'custom' && item.key === current ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('') + legacy;
   }
-  return placeholder + modelOptionsHtml(device.id, selected ? device.model_key || state.localModel?.model_key || 'mlx-8bit' : '', false);
+  return placeholder + modelOptionsHtml(device.id, selected ? device.model_key || state.localModel?.model_key || 'mlx-8bit' : '');
 }
 
 function renderDevices() {
@@ -1888,7 +1888,7 @@ function renderDevices() {
         ${device.kind === "ssh" ? `<button class="icon-button danger" data-device-action="remove" type="button" aria-label="${escapeHtml(device.name)} 제거" title="장치 제거" ${busy ? "disabled" : ""}><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg></button>` : ""}
       </div>
       <div class="device-card-state ${presentation.tone}"><i aria-hidden="true"></i><span>${escapeHtml(presentation.label)}</span>${(device.kind === "local" || managed) && !fast && device.model_selected !== false ? `<button class="device-environment-link${runtimeState(device.id)?.ready ? " is-ready" : ""}" data-device-action="environment" type="button" aria-haspopup="dialog" title="uv · Python venv · 필수 패키지 확인 및 설치">${runtimeState(device.id)?.ready ? "uv · venv ✓" : "실행 환경"}</button>` : ""}</div>
-      ${device.kind === "local" || managed ? `<label class="field device-model-field"><span>전사 모델 <small class="device-chunk-size">${device.model_selected === false ? '선택 후 다운로드' : fast || device.kind === 'local' ? '화자 구분 · Nemotron' : escapeHtml(deviceKnobSummary(device))}</small></span><select data-device-model="${escapeHtml(device.id)}" ${busy ? "disabled" : ""}>${cardModelOptions(device)}</select></label>
+      ${device.kind === "local" || managed ? `<label class="field device-model-field"><span>전사 모델 <small class="device-chunk-size">${device.model_selected === false ? '선택 후 다운로드' : fast || device.kind === 'local' ? '화자 구분 · Nemotron 0.1B' : escapeHtml(deviceKnobSummary(device))}</small></span><select data-device-model="${escapeHtml(device.id)}" ${busy ? "disabled" : ""}>${cardModelOptions(device)}</select></label>
       <button class="device-model-download" data-device-action="download" type="button" ${busy || device.model_selected === false || worker?.phase === 'unknown' || presentation.ready ? 'disabled' : ''}>${busy ? '모델 준비 중…' : presentation.ready ? '모델 준비 완료' : '선택한 모델 다운로드'}</button>` : ""}
       ${downloadProgressHtml(device.kind === "local" ? state.localModel : worker)}
       ${worker?.error ? `<details class="device-diagnostics"><summary>준비 상세 보기</summary><p>${escapeHtml(worker.error)}</p></details>` : ""}
@@ -1904,18 +1904,16 @@ function renderDevices() {
   renderEnvironment();
 }
 
-function modelOptionsHtml(id, selected, all = true) {
+function modelOptionsHtml(id, selected) {
   const backend = id === "local" ? "mlx" : "cuda";
   const metadata = state.modelMetadata[id] || (id === "local" ? state.catalog : null);
   const recommended = metadata?.recommendation?.model_key || (backend === "mlx" ? "mlx-8bit" : "cuda-original");
   const entries = state.catalog?.models || [];
-  const models = entries.filter(model => all || model.backend === backend).map(model => {
-    const supported = model.backend === backend;
-    const badge = model.key === "mlx-4bit" ? " · 위험" : supported && model.key === recommended ? " · 추천" : "";
-    return `<option value="${escapeHtml(model.key)}" ${model.key === selected ? "selected" : ""} ${supported ? "" : "disabled"}>${escapeHtml(model.name)}${supported ? "" : " · 다른 실행 방식"}${badge}</option>`;
+  const models = entries.filter(model => model.backend === backend).map(model => {
+    const badge = model.key === "mlx-4bit" ? " · 위험" : model.key === recommended ? " · 추천" : "";
+    return `<option value="${escapeHtml(model.key)}" ${model.key === selected ? "selected" : ""}>${escapeHtml(model.name)}${badge}</option>`;
   }).join("");
-  const unavailable = all ? (metadata?.unavailable || state.catalog?.unavailable || []).map(item => `<option disabled>${escapeHtml(item.name)} · ${escapeHtml(item.reason)}</option>`).join("") : "";
-  return models + `<option value="custom" ${selected === "custom" ? "selected" : ""}>다른 MOSS 저장소…</option>` + unavailable;
+  return models;
 }
 function deviceKnobSummary(device) {
   const minutes = device.options?.chunk_minutes ?? (device.kind === "local" ? state.localModel?.options?.chunk_minutes : state.modelMetadata[device.id]?.options?.chunk_minutes);
@@ -1943,13 +1941,10 @@ function readModelKnobs() {
 function updateModelChoice(resetSource = false) {
   const key = $("#model-choice").value;
   const selected = state.catalog?.models.find(model => model.key === key);
-  $("#model-custom-field").classList.toggle("hidden", key !== 'custom');
-  $("#model-custom-id").required = key === 'custom';
-  $("#model-choice-help").textContent = selected ? `${selected.description} · 다운로드 ${(selected.bytes / 1024 ** 3).toFixed(2)} GB` : '호환되는 MOSS 모델 저장소를 직접 지정합니다.';
+  $("#model-choice-help").textContent = selected ? `${selected.description} · 다운로드 ${(selected.bytes / 1024 ** 3).toFixed(2)} GB` : '';
   if (selected && resetSource) {
     const precision = document.querySelector('[data-knob=precision]');
     precision.value = selected.precision;
-    $('#model-sources input[value=cache]').checked = true;
   }
   renderLocalModel();
 }
@@ -1993,7 +1988,6 @@ $("#registered-devices").addEventListener('change', async event => {
     const requested = select.value;
     const id = select.dataset.deviceModel;
     const device = state.devices.find(device => device.id === id);
-    if (requested === 'custom') return openLocalModel(id, requested);
     state.modelSelectingId = id;
     renderDevices();
     try {
@@ -2042,20 +2036,11 @@ function downloadProgressHtml(model, label = "모델 다운로드 진행률") {
 
 function renderLocalModel() {
   const model = currentModelState();
-  const local = state.modelDeviceId === "local";
-  const source = $('#model-sources input:checked').value;
   const busy = modelBusy(model) || state.localModelSubmitting || state.modelLoading;
   $('#save-chunk-default').disabled = busy || state.chunkDefaultSaving;
-  for (const field of document.querySelectorAll('#model-options input, #model-options select, #model-choice, #model-custom-id, [data-apply-profile]')) field.disabled = busy;
+  for (const field of document.querySelectorAll('#model-options input, #model-options select, #model-choice, [data-apply-profile]')) field.disabled = busy;
   document.querySelector('[data-knob=chunk_minutes]').disabled = busy || state.chunkDefaultSaving;
-  $("#model-sources").disabled = busy;
-  $("#model-folder-fields").classList.toggle("hidden", source !== "folder");
-  $("#model-cache-info").classList.toggle("hidden", source !== "cache");
   $("#model-cache-path").textContent = model?.cache_dir || model?.model_cache || "불러오는 중…";
-  $("#model-folder-path").disabled = busy;
-  $("#model-folder-path").required = source === "folder";
-  $("#choose-model-folder").disabled = busy;
-  $("#choose-model-folder").classList.toggle("hidden", !local || !window.webkit?.messageHandlers?.chooseModelFolder);
   $("#prepare-local-model").disabled = busy || state.chunkDefaultSaving || !model || !!state.modelError;
   $("#prepare-local-model").textContent = state.modelLoading ? "위치 확인 중…" : busy ? "준비 중…" : "모델 준비";
   const phase = state.modelError ? "error" : model?.phase;
@@ -2067,7 +2052,7 @@ function renderLocalModel() {
   $("#model-download-progress").innerHTML = downloadProgressHtml(model);
 }
 
-async function openLocalModel(id = "local", preferredModel = "") {
+async function openLocalModel(id = "local") {
   const request = ++state.modelRequest;
   state.modelDeviceId = id;
   state.modelLoading = true;
@@ -2075,16 +2060,10 @@ async function openLocalModel(id = "local", preferredModel = "") {
   $('#chunk-default-status').textContent = '';
   const local = id === "local";
   const device = state.devices.find(device => device.id === id);
-  $("#model-choice").innerHTML = modelOptionsHtml(id, preferredModel || device?.model_key || (local ? 'mlx-8bit' : 'cuda-original'));
-  $("#model-knobs").open = false;
+  $("#model-choice").innerHTML = modelOptionsHtml(id, device?.model_key || (local ? 'mlx-8bit' : 'cuda-original'));
   for (const field of document.querySelectorAll('.mlx-knob')) field.classList.toggle('hidden', !local);
   for (const field of document.querySelectorAll('.cuda-knob')) field.classList.toggle('hidden', local);
   $("#model-device-name").textContent = local ? "이 Mac에서 시작하기" : `${device?.name || "연결한 장치"} · 모델 준비`;
-  $("#model-folder-description").textContent = local ? "Mac용 MOSS MLX 모델 폴더를 직접 선택합니다." : "이 장치에 이미 받은 MOSS 모델 폴더를 지정합니다.";
-  $("#model-folder-help").textContent = local ? "config.json과 safetensors가 있는 폴더를 선택하세요. 파일은 복사하지 않고 그대로 사용합니다." : `${device?.host || "연결한 장치"}의 경로를 입력하세요. 예: ~/models/moss · 파일은 복사하지 않습니다.`;
-  $("#model-folder-path").placeholder = local ? "/Users/…/모델 폴더" : "~/models/moss";
-  $('#model-sources input[value="cache"]').checked = true;
-  $("#model-folder-path").value = "";
   if (!$("#local-model-dialog").open) $("#local-model-dialog").showModal();
   renderLocalModel();
   try {
@@ -2093,14 +2072,10 @@ async function openLocalModel(id = "local", preferredModel = "") {
     if (local) state.localModel = result;
     else state.workerStates[id] = { ...state.workerStates[id], ...result };
     state.modelMetadata[id] = result.models ? result : { ...state.catalog, recommendation: local ? state.catalog.recommendation : {model_key: 'cuda-original', options: state.catalog.recommendation.options}, profiles: [] };
-    $("#model-choice").innerHTML = modelOptionsHtml(id, preferredModel || result.model_key || device?.model_key || (local ? 'mlx-8bit' : 'cuda-original'));
-    $("#model-custom-id").value = result.model_id || device?.model || '';
+    $("#model-choice").innerHTML = modelOptionsHtml(id, result.model_key || device?.model_key || (local ? 'mlx-8bit' : 'cuda-original'));
     fillModelKnobs(result.options || state.modelMetadata[id].recommendation?.options);
-    updateModelChoice(!!preferredModel);
+    updateModelChoice();
     renderModelRecommendation();
-    const source = !preferredModel && result.source === "folder" ? "folder" : "cache";
-    $(`#model-sources input[value="${source}"]`).checked = true;
-    $("#model-folder-path").value = result.suggested_path || result.model_path || "";
     if (local) scheduleLocalModelPoll();
     else pollWorker(id);
   } catch (error) {
@@ -2153,19 +2128,10 @@ $('#save-chunk-default').addEventListener('click', async () => {
   } catch (error) { toast(error.message, true); }
   finally { state.chunkDefaultSaving = false; renderLocalModel(); }
 });
-$("#model-sources").addEventListener("change", renderLocalModel);
-$("#choose-model-folder").addEventListener("click", async () => {
-  const request = state.modelRequest;
-  try {
-    const path = await window.webkit.messageHandlers.chooseModelFolder.postMessage({});
-    if (path && request === state.modelRequest && state.modelDeviceId === "local") $("#model-folder-path").value = path;
-  } catch (error) { toast(error.message || "폴더를 선택하지 못했습니다.", true); }
-});
 $("#local-model-form").addEventListener("submit", async event => {
   event.preventDefault();
   if (modelBusy(currentModelState()) || state.localModelSubmitting || state.modelLoading) return;
   state.localModelSubmitting = true;
-  const source = $('#model-sources input:checked').value;
   const id = state.modelDeviceId;
   const local = id === "local";
   try {
@@ -2173,7 +2139,7 @@ $("#local-model-form").addEventListener("submit", async event => {
     await refreshAppSetup(true);
     const result = await api(local ? "/api/local-model/prepare" : `/api/devices/${encodeURIComponent(id)}/model/prepare`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, path: source === "folder" ? $("#model-folder-path").value.trim() : "", model_key: $("#model-choice").value, model_id: $("#model-custom-id").value.trim(), options: readModelKnobs() }),
+      body: JSON.stringify({ source: "cache", path: "", model_key: $("#model-choice").value, options: readModelKnobs() }),
     });
     const device = state.devices.find(device => device.id === id);
     if (device) { device.model_key = $("#model-choice").value; device.options = readModelKnobs(); device.model_selected = true; }
@@ -2517,8 +2483,6 @@ setInterval(() => refreshDevicePanel(), 10000);
 
 function renderTextFileActions() {
   const note = state.current;
-  $('#open-diarization').disabled = note?.status !== 'done' || note?.source_type === 'text_file';
-  $('#open-diarization').title = note?.source_type === 'text_file' ? '원본 녹음이 보관된 노트에서 사용할 수 있습니다.' : '';
   for (const selector of ["#retry-result-save", "#reveal-txt", "#edit-speakers"]) $(selector).disabled = note?.status !== "done";
   if (note?.source_type === "text_file") $("#edit-speakers").disabled = !note.segments.length;
   $("#retry-result-save").classList.toggle("hidden", note?.status !== "done" || !!note.text_path);
@@ -2868,6 +2832,7 @@ function applySummaryPreferences(result) {
   const badge = $('#summary-prompt-badge');
   badge.textContent = result.customized ? '사용자 설정' : '추천';
   badge.classList.remove('hidden');
+  renderSummary();
 }
 function fitDefaultSummaryPrompt() {
   const input = $('#default-summary-prompt-content'), body = $('.summary-default-body');
@@ -2955,15 +2920,75 @@ window.addEventListener('resize', () => {
 });
 bindConfirmationDialog("#default-summary-prompt-dialog", closeSummaryPromptDialog);
 
-async function loadSummaryProviders() {
+const effortNames = {none:'None', minimal:'Minimal', low:'Low', medium:'Medium', high:'High', xhigh:'Extra High', max:'Max', ultra:'Ultra'};
+function summaryModelControls() {
+  const provider = $('#summary-provider').value;
+  const catalog = state.summaryModelCatalogs[provider];
+  const models = catalog?.models || [];
+  const selection = catalog?.selection || {};
+  const model = models.find(item => item.id === selection.model);
+  const running = state.summaryStates[state.current?.id]?.phase === 'running';
+  const busy = state.summaryProviderLoading || state.summaryModelLoading.has(provider) || Boolean(state.summaryModelSaving) || state.summarySubmitting || running;
+  const modelSelect = $('#summary-model'), effortSelect = $('#summary-effort');
+  const modelOptions = models.length ? models.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('') : '<option value="">모델 목록 없음</option>';
+  if (modelSelect.dataset.options !== modelOptions) { modelSelect.innerHTML = modelOptions; modelSelect.dataset.options = modelOptions; }
+  modelSelect.value = selection.model || '';
+  const effortOptions = model?.efforts?.length ? model.efforts.map(value=>`<option value="${escapeHtml(value)}">${escapeHtml(effortNames[value] || value)}</option>`).join('') : '<option value="">CLI 기본</option>';
+  if (effortSelect.dataset.options !== effortOptions) { effortSelect.innerHTML = effortOptions; effortSelect.dataset.options = effortOptions; }
+  effortSelect.value = selection.effort || '';
+  modelSelect.disabled = busy || !models.length;
+  effortSelect.disabled = busy || !model?.efforts?.length;
+  const status = $('#summary-model-status');
+  status.textContent = state.summaryModelLoading.has(provider) ? 'CLI에서 모델 목록을 확인하고 있어요…' : catalog?.notice || catalog?.error || (state.summaryModelSaving === provider ? '선택 저장 중…' : '');
+  status.classList.toggle('is-warning', Boolean(catalog?.error || catalog?.notice));
+  status.classList.toggle('hidden', !status.textContent);
+  return {catalog, model, busy};
+}
+async function loadSummaryModels(refresh = false) {
+  const provider = $('#summary-provider').value;
+  const request = state.summaryModelRequests[provider] = (state.summaryModelRequests[provider] || 0) + 1;
+  state.summaryModelLoading.add(provider); renderSummary();
+  try {
+    const catalog = await api(`/api/summary/models?provider=${encodeURIComponent(provider)}&refresh=${refresh}`);
+    if (state.summaryModelRequests[provider] === request) state.summaryModelCatalogs[provider] = catalog;
+  } catch (error) {
+    if (state.summaryModelRequests[provider] === request) state.summaryModelCatalogs[provider] = {...state.summaryModelCatalogs[provider], error:error.message};
+  } finally {
+    if (state.summaryModelRequests[provider] === request) state.summaryModelLoading.delete(provider);
+    renderSummary();
+  }
+}
+async function saveSummaryModelSelection(modelChanged) {
+  const provider = $('#summary-provider').value;
+  const previous = state.summaryModelCatalogs[provider];
+  const model = previous?.models?.find(item=>item.id === $('#summary-model').value);
+  if (!model || state.summaryModelSaving) return;
+  let effort = $('#summary-effort').value;
+  if (modelChanged && !model.efforts.includes(effort)) effort = model.efforts.includes('medium') ? 'medium' : model.default_effort || model.efforts[0] || '';
+  const selection = {model:model.id, effort};
+  state.summaryModelCatalogs[provider] = {...previous, selection, notice:''};
+  state.summaryModelSaving = provider; renderSummary();
+  try {
+    state.summaryModelCatalogs[provider] = await api('/api/summary/models/selection', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,...selection})});
+  } catch (error) { state.summaryModelCatalogs[provider] = previous; toast(error.message,true); }
+  finally {state.summaryModelSaving = null; renderSummary();}
+}
+$('#summary-model').addEventListener('change',()=>saveSummaryModelSelection(true));
+$('#summary-effort').addEventListener('change',()=>saveSummaryModelSelection(false));
+
+async function loadSummaryProviders(refreshModels = false) {
+  if (state.summaryProviderLoading || state.summaryModelSaving) return;
+  state.summaryProviderLoading = true;
   $("#refresh-summary-providers").disabled = true;
+  renderSummary();
   try { state.summaryProviders = await api("/api/summary/providers"); }
   catch (error) { toast(error.message, true); }
-  finally { $("#refresh-summary-providers").disabled = false; renderSummary(); }
+  finally { await loadSummaryModels(refreshModels); state.summaryProviderLoading = false; renderSummary(); }
 }
-$("#refresh-summary-providers").addEventListener("click", loadSummaryProviders);
+$("#refresh-summary-providers").addEventListener("click", () => loadSummaryProviders(true));
 $("#summary-provider").addEventListener("change", () => {
   localStorage.setItem("cosmoss.summaryProvider", $("#summary-provider").value);
+  loadSummaryModels();
   renderSummary();
 });
 try { const provider = localStorage.getItem("cosmoss.summaryProvider"); if (["codex", "claude"].includes(provider)) $("#summary-provider").value = provider; } catch (_) {}
@@ -3015,7 +3040,6 @@ function selectSummaryNote(note) {
     clearTimeout(state.summaryTimer);
     ++state.summaryRequest;
     state.summaryNoteId = id;
-    $("#corrected-transcript-preview").open = false;
     showSummaryDraft(id ? state.summaryDrafts[id] ?? summaryPromptOptions(state.summaryStates[id]) : state.summaryTemplate);
   }
   renderSummary();
@@ -3050,18 +3074,30 @@ function renderSummary() {
   const summary = note ? state.summaryStates[note.id] : null;
   const running = summary?.phase === "running";
   const useDefault = $("#use-default-summary-prompt").checked;
+  const modelControls = summaryModelControls();
+  $('#refresh-summary-providers').disabled = state.summaryProviderLoading || Boolean(state.summaryModelSaving) || state.summaryModelLoading.size > 0;
   if (note) $("#delete-note").disabled = running || state.summarySubmitting || Boolean(state.cancellingId || state.restartingId || state.deletingId) || ["queued", "processing"].includes(note.status);
   $("#summary-provider-status").textContent = info ? `${info.name} · ${info.message}` : "CLI 연결을 확인하고 있습니다…";
   $("#summary-provider-status").classList.toggle("ready", Boolean(info?.ready));
   $("#cli-setup").classList.toggle("hidden", !info || info.ready);
   if (info && !info.ready) {
-    $("#cli-setup-copy").textContent = info.installed ? "터미널에서 로그인한 뒤 ‘연결 확인’을 눌러 주세요." : "터미널에서 CLI를 설치하고 로그인해 주세요.";
+    $("#cli-setup-copy").textContent = info.installed ? "터미널에서 아래 명령으로 로그인해 주세요." : "아래 명령을 순서대로 실행해 설치하고 로그인해 주세요.";
     $("#cli-setup-command").textContent = info.installed ? info.login : `${info.install}\n${info.login}`;
     $("#cli-docs").href = info.url;
   }
-  $("#run-summary").disabled = !info?.ready || note?.status !== "done" || running || state.summarySubmitting || Boolean(state.openingNote) || (!useDefault && !$("#summary-prompt").value.trim());
-  $("#run-summary span").textContent = state.openingNote ? "노트 불러오는 중…" : state.summarySubmitting ? "보정·요약 준비 중…" : running ? "기록을 정리하고 있어요…" : summary?.result ? "다시 보정·요약하기" : "전사문 보정·요약하기";
-  $("#summary-provider").disabled = running || state.summarySubmitting;
+  const connecting = Boolean(info && !info.ready);
+  $("#run-summary").disabled = connecting ? state.summaryProviderLoading : !info?.ready || !modelControls.model || modelControls.busy || note?.status !== "done" || running || state.summarySubmitting || Boolean(state.openingNote) || (!useDefault && !$("#summary-prompt").value.trim());
+  $("#run-summary span").textContent = !info ? "CLI 확인 중…" : connecting ? "CLI 연결하기" : state.openingNote ? "노트 불러오는 중…" : state.summarySubmitting ? "요약 준비 중…" : running ? "요약 중…" : summary?.result ? "CLI로 다시 요약하기" : "CLI로 요약하기";
+  $("#run-summary").setAttribute("aria-haspopup", connecting ? "dialog" : "false");
+  if (connecting) $("#run-summary").setAttribute("aria-controls", "summary-cli-dialog");
+  else $("#run-summary").removeAttribute("aria-controls");
+  $("#copy-summary-prompt").disabled = state.summaryCopying || !summaryPromptForCopy();
+  $("#copy-summary-prompt span").textContent = state.summaryCopying ? "복사 중…" : "프롬프트 복사하기";
+  $("#summary-cli-title").textContent = `${info?.name || "CLI"} 연결`;
+  $("#copy-summary-cli-command").disabled = !connecting || !$("#cli-setup-command").textContent;
+  $("#check-summary-cli").disabled = state.summaryProviderLoading || Boolean(state.summaryModelSaving) || state.summaryModelLoading.size > 0;
+  $("#check-summary-cli").textContent = state.summaryProviderLoading ? "확인 중…" : "연결 확인";
+  $("#summary-provider").disabled = running || state.summarySubmitting || Boolean(state.summaryModelSaving);
   $("#summary-prompt").disabled = running || state.summarySubmitting;
   $("#use-default-summary-prompt").disabled = running || state.summarySubmitting;
   $("#summary-prompt-label").textContent = useDefault ? "추가 요청" : "요청 내용";
@@ -3069,39 +3105,87 @@ function renderSummary() {
   $("#summary-prompt").placeholder = useDefault ? "추가로 요청할 내용을 적어 주세요." : "직접 요청할 내용을 적어 주세요.";
   $('#summary-prompt-note').textContent = useDefault ? '기본 프롬프트 뒤에 이어서 전달됩니다.' : '기본 프롬프트 없이 이 요청 내용만 전달됩니다.';
   $("#cancel-summary").classList.toggle("hidden", !running);
-  $("#summary-source").textContent = !note ? "먼저 2단계에서 노트를 선택하세요." : note.status !== "done" ? "전사가 완료되면 이 노트를 요약할 수 있습니다." : note.text_path ? note.text_path.split("/").pop() : note.title;
-  $("#summary-source").title = note?.status === "done" ? note.text_path || "실행할 때 전사 파일을 기본 경로에 저장합니다." : "";
   const message = summary?.phase === "error" ? summary.error : summary?.phase === "cancelled" ? "보정·요약을 취소했습니다. 다시 실행할 수 있습니다." : running ? `${summary.provider === "claude" ? "Claude" : "Codex"}가 전사문을 보정하고 요약하고 있습니다. 다른 노트를 확인해도 작업은 계속됩니다.` : "";
   $("#summary-status").textContent = message || "";
   $("#summary-status").className = `summary-status${!message ? " hidden" : ""}${running ? " running" : ""}${summary?.phase === "error" ? " error" : ""}`;
   $("#summary-result-wrap").classList.toggle("hidden", !summary?.result);
-  $("#summary-result").textContent = summary?.result?.text || "";
-  $("#corrected-transcript-preview").classList.toggle("hidden", !summary?.result?.corrected_text);
-  $("#corrected-transcript-result").textContent = summary?.result?.corrected_text || "";
-  for (const [selector, path] of [["#reveal-summary", summary?.result?.markdown_path], ["#reveal-corrected", summary?.result?.corrected_path]]) {
-    $(selector).classList.toggle("hidden", !path);
-    $(`${selector} span`).textContent = path ? path.split("/").pop() : "";
-    $(selector).title = path ? `${path}\n파인더에서 보기` : "파인더에서 보기";
+  const result = summary?.result;
+  for (const [name, key, fallback] of [["summary", "markdown_path", "보정·요약.md"], ["corrected", "corrected_path", "보정 전사문.txt"]]) {
+    const path = result?.[key];
+    const visible = name === "summary" ? Boolean(path || result?.document_markdown || result?.text) : Boolean(path);
+    $(`#summary-${name}-file`).classList.toggle("hidden", !visible);
+    const filename = path ? path.split("/").pop() : fallback;
+    $(`#summary-${name}-name`).textContent = visible ? filename : "";
+    $(`#summary-${name}-name`).title = visible ? filename : "";
+    $(`#reveal-${name}`).disabled = !path;
+    $(`#reveal-${name}`).title = path ? `Finder에서 보기\n${path}` : "저장된 파일 경로가 없습니다.";
   }
   if (summary?.result) {
-    $("#summary-result-label").textContent = `${summary.result.provider === "claude" ? "Claude" : "Codex"} · ${formatDate(summary.result.completed_at)}`;
+    $("#summary-result-label").textContent = [summary.result.model_name || (summary.result.provider === "claude" ? "Claude" : "Codex"), effortNames[summary.result.effort] || summary.result.effort, formatDate(summary.result.completed_at)].filter(Boolean).join(' · ');
     $("#summary-stale").classList.toggle("hidden", !(summary.stale || summary.result.source_hash !== note.text_hash || note.status !== "done"));
   }
   fitSummaryPrompt();
 }
 
+function summaryPromptForCopy() {
+  const useDefault = $("#use-default-summary-prompt").checked;
+  if (useDefault && !state.summaryDefaultPrompt) return "";
+  return [useDefault ? state.summaryDefaultPrompt : "", $("#summary-prompt").value.trim()].filter(Boolean).join("\n\n");
+}
+$("#copy-summary-prompt").addEventListener("click", async () => {
+  const prompt = summaryPromptForCopy();
+  if (!prompt || state.summaryCopying) return;
+  state.summaryCopying = true; renderSummary();
+  try {
+    await navigator.clipboard.writeText(prompt);
+    toast("프롬프트를 복사했습니다. 사용할 AI에 전사 파일을 함께 첨부해 주세요.");
+  } catch (_) { toast("프롬프트를 복사하지 못했습니다. 다시 시도해 주세요.", true); }
+  finally { state.summaryCopying = false; renderSummary(); }
+});
+function openSummaryCli() {
+  const info = state.summaryProviders.find(item => item.id === $("#summary-provider").value);
+  if (!info || info.ready) return;
+  renderSummary();
+  $("#summary-cli-status").textContent = "";
+  $("#summary-cli-dialog").showModal();
+  $("#summary-cli-title").focus();
+}
+function closeSummaryCli() {
+  if (!$("#summary-cli-dialog").open) return;
+  $("#summary-cli-dialog").close();
+  $("#run-summary").focus({preventScroll:true});
+}
+$("#close-summary-cli").addEventListener("click", closeSummaryCli);
+bindConfirmationDialog("#summary-cli-dialog", closeSummaryCli);
+$("#copy-summary-cli-command").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#cli-setup-command").textContent); toast("CLI 연결 명령어를 복사했습니다."); }
+  catch (_) { toast("명령어를 복사하지 못했습니다. 다시 시도해 주세요.", true); }
+});
+$("#check-summary-cli").addEventListener("click", async () => {
+  $("#summary-cli-status").textContent = "CLI 연결을 확인하고 있습니다…";
+  await loadSummaryProviders(true);
+  const info = state.summaryProviders.find(item => item.id === $("#summary-provider").value);
+  if (info?.ready) {
+    closeSummaryCli();
+    toast(`${info.name} CLI가 연결되었습니다.`);
+  } else $("#summary-cli-status").textContent = info?.message || "연결 상태를 확인하지 못했습니다. 다시 시도해 주세요.";
+});
+
 $("#run-summary").addEventListener("click", async () => {
+  const info = state.summaryProviders.find(item => item.id === $("#summary-provider").value);
+  if (!info?.ready) return openSummaryCli();
   const id = state.current?.id;
   if (!id || state.summarySubmitting) return;
   state.summarySubmitting = true;
   const provider = $("#summary-provider").value;
   const prompt = $("#summary-prompt").value.trim();
   const useDefault = $("#use-default-summary-prompt").checked;
+  const selection = state.summaryModelCatalogs[provider]?.selection;
   renderSummary();
   try {
     await flushSave();
     await saveLocationReady;
-    const result = await api(`/api/notes/${encodeURIComponent(id)}/summary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, prompt, use_default_prompt:useDefault, directory: state.saveDirectory }) });
+    const result = await api(`/api/notes/${encodeURIComponent(id)}/summary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, prompt, use_default_prompt:useDefault, directory: state.saveDirectory, ...selection }) });
     state.summaryStates[id] = result;
     updateNoteSummaryStatus(id, result);
     if (state.current?.id === id) {
@@ -3137,16 +3221,58 @@ async function revealSummaryFile(key) {
 }
 $("#reveal-summary").addEventListener("click", () => revealSummaryFile("markdown_path"));
 $("#reveal-corrected").addEventListener("click", () => revealSummaryFile("corrected_path"));
-$("#copy-corrected").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("#corrected-transcript-result").textContent); toast("보정 전사문을 복사했습니다."); }
-  catch (_) { toast("복사하지 못했습니다. 보정 전사문을 직접 선택해 복사해 주세요.", true); }
-});
-
-$("#copy-summary").addEventListener("click", async () => {
-  const result = state.current && state.summaryStates[state.current.id]?.result;
-  try { await navigator.clipboard.writeText(result?.document_markdown || $("#summary-result").textContent); toast("Markdown을 복사했습니다."); }
-  catch (_) { toast("복사하지 못했습니다. 요약 내용을 직접 선택해 복사해 주세요.", true); }
-});
+let summaryPreviewRequest = 0;
+let summaryPreviewController = null;
+let summaryPreviewTrigger = null;
+function closeSummaryPreview() {
+  ++summaryPreviewRequest;
+  summaryPreviewController?.abort();
+  summaryPreviewController = null;
+  const dialog = $("#summary-preview-dialog");
+  if (dialog.open) {
+    dialog.close();
+    summaryPreviewTrigger?.focus({preventScroll:true});
+  }
+  $("#summary-preview-content").replaceChildren();
+}
+async function openSummaryPreview(kind) {
+  const id = state.current?.id;
+  const result = id && state.summaryStates[id]?.result;
+  if (!result) return;
+  closeSummaryPreview();
+  summaryPreviewTrigger = $(kind === "markdown" ? "#preview-summary" : "#preview-corrected");
+  const request = ++summaryPreviewRequest;
+  const controller = new AbortController();
+  summaryPreviewController = controller;
+  const dialog = $("#summary-preview-dialog");
+  const path = result[kind === "markdown" ? "markdown_path" : "corrected_path"];
+  $("#summary-preview-title").textContent = path?.split("/").pop() || (kind === "markdown" ? "보정·요약.md" : "보정 전사문.txt");
+  const status = $("#summary-preview-status");
+  status.textContent = "문서를 불러오고 있습니다…";
+  status.className = "summary-preview-status";
+  dialog.showModal();
+  $("#summary-preview-title").focus();
+  try {
+    const document = await api(`/api/notes/${encodeURIComponent(id)}/summary/preview?kind=${kind}`, {signal:controller.signal});
+    if (request !== summaryPreviewRequest || !dialog.open) return;
+    $("#summary-preview-title").textContent = document.filename;
+    // The backend renders Markdown with raw HTML disabled and only safe details tags enabled.
+    $("#summary-preview-content").innerHTML = document.html;
+    $("#summary-preview-content").scrollTop = 0;
+    status.textContent = document.source === "saved" ? "저장된 파일을 찾을 수 없어 앱에 보관된 결과를 표시합니다." : "";
+    status.classList.toggle("hidden", !status.textContent);
+  } catch (error) {
+    if (request !== summaryPreviewRequest || controller.signal.aborted) return;
+    status.textContent = error.message || "미리보기를 불러오지 못했습니다.";
+    status.className = "summary-preview-status error";
+  } finally {
+    if (request === summaryPreviewRequest) summaryPreviewController = null;
+  }
+}
+$("#preview-summary").addEventListener("click", () => openSummaryPreview("markdown"));
+$("#preview-corrected").addEventListener("click", () => openSummaryPreview("corrected"));
+$("#close-summary-preview").addEventListener("click", closeSummaryPreview);
+bindConfirmationDialog("#summary-preview-dialog", closeSummaryPreview);
 
 $('#auxiliary-transcript').addEventListener('toggle', async event => {
   if (!event.target.open || $('#auxiliary-transcript-text').textContent) return;

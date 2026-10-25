@@ -7,7 +7,7 @@ from unittest.mock import patch
 import httpx
 
 from src.note_files import convert_file, read_file, rename_file
-from src.diarization import Diarization
+from src.speaker_records import SpeakerRecords
 from src.store import NoteStore
 from src.summaries import Summaries
 from src.text_files import FORMATS, TextConflict, digest, save_text
@@ -103,7 +103,7 @@ class FileAPITests(unittest.IsolatedAsyncioTestCase):
         self.library=TextLibrary(self.root/'library.sqlite3')
         self.summaries=Summaries(self.root/'summaries')
         for key,value in {'STORE':self.store,'TEXT_LIBRARY':self.library,'SUMMARIES':self.summaries,
-                          'DIARIZATION':Diarization(self.root/'data',self.root)}.items():
+                          'SPEAKER_RECORDS':SpeakerRecords(self.root/'data')}.items():
             self.enterContext(patch.object(main,key,value))
         self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),base_url='http://localhost')
         self.addAsyncCleanup(self.client.aclose)

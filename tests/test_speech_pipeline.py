@@ -85,14 +85,9 @@ class AttributionTests(unittest.TestCase):
 
     def test_unknown_group_is_not_a_voice_profile_or_diarization_identity(self):
         from src.voice_profiles import VoiceProfiles
-        from src.diarization import proposals
         from src.transcript import parse_transcript
         segments=[{'id':0,'start':0,'end':4,'text':'불분명한 말','speaker':'미확인','speaker_uncertain':True}]
         self.assertEqual(VoiceProfiles.ranges(segments),{})
-        note={'segments':segments,'speaker_names':{'미확인':'미확인'}}
-        result=proposals(note,[{'start':0,'end':4,'speaker':'voice'}])
-        self.assertEqual(result['rows'][0]['after'],'S01')
-        self.assertTrue(result['rows'][0]['changed'])
         raw='[0.00][미확인]불분명한 말[4.00]\n[4.00][S01]다음 발화[5.00]'
         self.assertEqual([s['speaker'] for s in parse_transcript(raw)],['미확인','S01'])
 
@@ -242,7 +237,7 @@ class UIResourceTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),base_url='http://localhost') as client:
             document=await client.get('/')
             parser=Resources();parser.feed(document.text)
-            self.assertIn('/speech.js?v=mac-nemotron-20261024',parser.paths)
+            self.assertIn('/speech.js?v=model-sizes-20261025',parser.paths)
             for path in ('/',*parser.paths):
                 with self.subTest(path=path):
                     response=await client.get(path)

@@ -61,11 +61,9 @@ async def main():
         model = page.locator('#model-choice').locator('..').locator('button')
         await model.click()
         menu = page.locator('.custom-select-menu')
-        disabled = menu.locator('[data-value="cuda-original"]')
-        assert await disabled.get_attribute('aria-disabled') == 'true'
-        await disabled.click(force=True)
-        assert await page.locator('#model-choice').input_value() == 'mlx-8bit'
-        assert await menu.is_visible(), 'Disabled option dismissed the menu'
+        assert await menu.locator('[role=option]').count() == 3
+        assert await menu.locator('[data-value="cuda-original"], [data-value="custom"]').count() == 0
+        assert await page.locator('#model-custom-id, #model-folder-path').count() == 0
         await menu.locator('[role=option]').first.evaluate('el=>window.__stableOption=el')
         await page.evaluate('renderDevices()')
         assert await page.evaluate('window.__stableOption.isConnected'), 'Unrelated status update rebuilt the open menu'
@@ -84,7 +82,8 @@ async def main():
         assert await page.locator('#local-model-dialog').evaluate('el=>el.open'), 'Escape closed the whole settings dialog'
         await choose_option(page, '#model-choice', 'mlx-4bit')
         assert await page.locator('#model-choice').input_value() == 'mlx-4bit'
-        await page.locator('#model-knobs > summary').click()
+        assert await page.locator('[data-knob=chunk_minutes]').is_visible()
+        assert await page.locator('#model-knobs > summary').count() == 0
         await choose_option(page, '[data-knob=kv_bits]', '0')
         assert await page.locator('[data-knob=kv_bits]').input_value() == '0'
         await page.locator('#close-local-model').click()

@@ -135,6 +135,7 @@ class SubtitleAPITests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         from src import main
         self.main = main
+        self.enterContext(patch.object(main.SUMMARY_MODELS, 'resolve', new=AsyncMock(return_value={})))
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()

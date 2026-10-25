@@ -54,6 +54,7 @@ metadata = {
     'SUFeedURL': 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml',
     'SUPublicEDKey': (root / 'macos/UpdatePublicKey.txt').read_text().strip(),
     'SUEnableAutomaticChecks': True,
+    'SUAutomaticallyUpdate': True,
     'SURequireSignedFeed': True,
     'SUVerifyUpdateBeforeExtraction': True,
     'SUSignedFeedFailureExpirationInterval': 0,

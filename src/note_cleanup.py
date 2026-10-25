@@ -15,16 +15,16 @@ logger = logging.getLogger(__name__)
 
 
 class NoteCleanup:
-    def __init__(self, store, library, summaries, diarization, trash, *, active=None, missing_since=None):
+    def __init__(self, store, library, summaries, speaker_records, trash, *, active=None, missing_since=None):
         self.store, self.library = store, library
-        self.summaries, self.diarization, self.trash = summaries, diarization, trash
+        self.summaries, self.speaker_records, self.trash = summaries, speaker_records, trash
         self.active = active or (lambda _: False)
         self.missing_since = missing_since if missing_since is not None else {}
 
     def _idle(self, notes, document_ids):
         ids = {note['id'] for note in notes} | set(document_ids)
         if (any(note['status'] in {'queued', 'processing'} for note in notes)
-                or any(self.active(key) or self.summaries.busy(key) or self.diarization.busy('note:' + key) for key in ids)):
+                or any(self.active(key) or self.summaries.busy(key) for key in ids)):
             raise ValueError('이 파일의 전사·AI 작업이 끝난 뒤 다시 시도해 주세요.')
 
     def _group(self, path):
@@ -53,7 +53,7 @@ class NoteCleanup:
             for key in ids:
                 # Check paths before moving any file, including JSON locations.
                 self.summaries._path(key)
-                for directory in (self.summaries.directory, self.diarization.directory):
+                for directory in (self.summaries.directory, self.speaker_records.directory):
                     if directory.resolve() != directory:
                         raise ValueError('앱 내부 기록의 저장 경로를 확인해 주세요.')
             if not trash_transcript:
@@ -75,7 +75,7 @@ class NoteCleanup:
                     self.trash(folder)
             for key in ids:
                 self.summaries.forget(key)
-                self.diarization.forget(key)
+                self.speaker_records.forget(key)
             for note in notes:
                 self.store.delete(note['id'])
             for row in documents:

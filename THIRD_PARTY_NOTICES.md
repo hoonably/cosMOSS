@@ -79,6 +79,7 @@ included in this source repository:
 | Package | License | Source |
 |---|---|---|
 | FastAPI | MIT | [Package metadata](https://pypi.org/project/fastapi/) |
+| markdown-it-py | MIT | [Source and license](https://github.com/executablebooks/markdown-it-py) |
 | HTTPX | BSD-3-Clause | [Package metadata](https://pypi.org/project/httpx/) |
 | python-multipart | Apache-2.0 | [Package metadata](https://pypi.org/project/python-multipart/) |
 | Uvicorn | BSD-3-Clause | [Package metadata](https://pypi.org/project/uvicorn/) |
@@ -141,15 +142,11 @@ from sherpa-onnx's [speaker recognition model release](https://github.com/k2-fsa
 The ONNX model is SHA-256 pinned in `src/voice_engine.py`; neither the weights nor
 personal voice profiles are bundled in the application or this repository.
 
-## Optional speaker re-diarization
+## Speaker analysis in transcription
 
-The separately installed SSH runtime uses NVIDIA's
+The transcription pipelines use NVIDIA's
 [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)
-under OpenMDW-1.1 and
-[pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
-under CC-BY-4.0. Community-1 requires each downloading user's Hugging Face
-access agreement. User credentials are not bundled or forwarded by cosMOSS.
-Model revisions are pinned in `src/diarization_worker.py`; weights are downloaded
-on the selected server and are not redistributed with the app.
-PyTorch, torchaudio, torchcodec, Transformers, pyannote.audio, librosa, SoundFile
-and their dependencies retain the license files in that runtime.
+under OpenMDW-1.1. Model revisions are pinned in `src/diarization_worker.py` and
+`src/speech_engines.py`. Weights are downloaded on the selected device and are
+not redistributed with the app. PyTorch, Transformers, librosa, NumPy and their
+dependencies retain the license files in their isolated runtime.

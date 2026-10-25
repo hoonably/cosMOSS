@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.diarization import Diarization
+from src.speaker_records import SpeakerRecords
 from src.note_retention import RETENTION_SECONDS, RecoverableNoteCleanup
 from src.store import NoteStore
 from src.summaries import Summaries
@@ -21,7 +21,7 @@ class NoteRetentionTests(unittest.TestCase):
         self.store = NoteStore(self.data / 'notes.sqlite3')
         self.library = TextLibrary(self.data / 'library.sqlite3')
         self.summaries = Summaries(self.data / 'summaries')
-        self.diarization = Diarization(self.data, self.root)
+        self.diarization = SpeakerRecords(self.data)
         self.cleaner = self.make_cleaner()
         self.transcript = self.exports / '회의.txt'; self.transcript.write_text('개인 전사문')
 

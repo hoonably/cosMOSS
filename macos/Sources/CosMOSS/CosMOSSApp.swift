@@ -52,7 +52,6 @@ struct CosMOSSApp: App {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .appInfo) {
                 Button("업데이트 확인…") { updates.checkForUpdates() }
-                    .disabled(!updates.canCheckForUpdates)
             }
         }
     }
@@ -349,15 +348,11 @@ struct WorkspaceView: NSViewRepresentable {
             }
             if message.name == "getAppInfo" {
                 replyHandler(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
-                              "updatesAvailable": Bundle.main.object(forInfoDictionaryKey: "CosMOSSProjectRoot") == nil,
+                              "updatesAvailable": true,
                               "canCheckForUpdates": UpdateController.shared.canCheckForUpdates], nil)
                 return
             }
             if message.name == "checkForUpdates" {
-                guard UpdateController.shared.canCheckForUpdates else {
-                    replyHandler(nil, "잠시 후 다시 확인해 주세요.")
-                    return
-                }
                 UpdateController.shared.checkForUpdates()
                 replyHandler(true, nil)
                 return

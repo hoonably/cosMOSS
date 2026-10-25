@@ -10,6 +10,7 @@ from ui_helpers import choose_option
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.summaries import DEFAULT_QUERY
+from src.summary_preview import preview_document
 
 
 async def main():
@@ -42,6 +43,7 @@ async def main():
             {'id':'claude','name':'Claude','installed':False,'ready':False,'message':'CLI를 설치해 주세요.','install':'npm install -g @anthropic-ai/claude-code','login':'claude auth login','url':'https://code.claude.com/docs/en/quickstart'},
         ]))
         await page.route('**/api/summary/default-prompt', lambda r:r.fulfill(json={'default_prompt':DEFAULT_QUERY}))
+        await page.route('**/api/summary/models**', lambda r:r.fulfill(json={'provider':'codex','models':[{'id':'current','name':'GPT Current','efforts':['medium'],'default_effort':'medium'}],'selection':{'model':'current','effort':'medium'}}))
         await page.route('**/api/devices', lambda r: r.fulfill(json=[{'id':'local','name':'이 Mac','kind':'local','backend':'mlx','model_key':'mlx-8bit','model':'moss-mtd','remote_port':8001,'setup':{'phase':'ready'}}]))
         await page.route('**/api/local-model', lambda r: r.fulfill(json={'phase':'ready','model_key':'mlx-8bit','cache_dir':'/Users/tester/.cache/huggingface/hub'}))
         await page.route('**/api/notes', lambda r: r.fulfill(json=[note]))
@@ -50,6 +52,10 @@ async def main():
             path = route.request.url.split('/api/notes/')[1].split('/', 1)
             action = path[1] if len(path) > 1 else ''
             method = route.request.method
+            if action.startswith('summary/preview'):
+                from urllib.parse import parse_qs, urlsplit
+                kind = parse_qs(urlsplit(route.request.url).query).get('kind',['markdown'])[0]
+                return await route.fulfill(json=preview_document(summary['result'],kind))
             if action == 'media': return await route.fulfill(status=404)
             if method == 'POST': calls.append((action, route.request.post_data_json))
             if action in ('text-file', 'speakers'):
@@ -105,7 +111,7 @@ async def main():
         await page.wait_for_function('state.current && !state.openingNote')
         assert await page.locator('#note-dialog').is_hidden(), 'Selecting a note opened the editor'
         assert await page.locator('.note-select').get_attribute('aria-pressed') == 'true'
-        assert await page.locator('#run-summary').is_enabled()
+        await page.locator('#run-summary:not([disabled])').wait_for(state='attached')
         assert not calls, 'Selection saved or summarized without an explicit action'
         await page.locator('.note-edit').click()
         try:
@@ -153,7 +159,8 @@ async def main():
         await page.locator('#close-note').click()
         await page.locator('#note-dialog').wait_for(state='hidden')
         await choose_option(page, '#summary-provider', 'claude')
-        assert await page.locator('#run-summary').is_disabled()
+        assert await page.locator('#run-summary').is_enabled()
+        assert 'CLI 연결하기' in await page.locator('#run-summary').inner_text()
         assert 'claude auth login' in await page.locator('#cli-setup-command').inner_text()
         await choose_option(page, '#summary-provider', 'codex')
         prompt = page.locator('#summary-prompt')
@@ -185,7 +192,7 @@ async def main():
         await page.locator('.summary-scroll').evaluate('(e)=>e.scrollTop=0')
         if output:
             await page.screenshot(path=str(output.with_name(output.stem + '-prompt.png')), animations='disabled')
-        assert '전사문 보정·요약하기' in await page.locator('#run-summary').inner_text()
+        assert 'CLI로 요약하기' in await page.locator('#run-summary').inner_text()
         await page.locator('#run-summary').click()
         assert calls[-1][1]['use_default_prompt'] is False
         assert calls[-1][1]['prompt'] == '발표자별로 간결하게 정리해 주세요.'
@@ -197,14 +204,18 @@ async def main():
         assert calls[-1][1]['use_default_prompt'] is True
         assert calls[-1][1]['prompt'] == '발표자별로 간결하게 정리해 주세요.'
         await page.locator('#summary-result-wrap').wait_for(state='visible')
-        assert '결정 사항' in await page.locator('#summary-result').inner_text()
+        assert await page.locator('#summary-result').count() == 0
+        await page.locator('#preview-summary').click()
+        await page.locator('#summary-preview-content').filter(has_text='결정 사항').wait_for()
+        await page.keyboard.press('Escape')
         await page.locator('#reveal-summary').click()
         await page.wait_for_function('window.__revealed?.endsWith("_요약.md")')
         # Legacy two-file results can still reveal their previous correction file.
         await page.locator('#reveal-corrected').click()
         await page.wait_for_function('window.__revealed?.endsWith("_보정.txt")')
-        await page.locator('#corrected-transcript-preview summary').click()
-        assert '금요일까지' in await page.locator('#corrected-transcript-result').inner_text()
+        await page.locator('#preview-corrected').click()
+        await page.locator('#summary-preview-content pre').filter(has_text='금요일까지').wait_for()
+        await page.keyboard.press('Escape')
         assert calls[-1][1]['directory'] == '/Users/tester/Downloads'
         assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.'
         assert await page.locator('#summary-path-note').text_content() == '보정 전사문을 포함한 요약 Markdown을 저장합니다.'

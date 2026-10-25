@@ -92,7 +92,8 @@ async def main():
         await page.locator('[data-device-id="remote"] [data-device-action="install"]').click()
         await page.locator('#prepare-local-model:not([disabled])').wait_for()
         assert await page.locator('[data-knob="chunk_minutes"]').input_value() == '60'
-        await page.click('#model-knobs > summary')
+        assert await page.locator('[data-knob=chunk_minutes]').is_visible()
+        assert await page.locator('#model-knobs > summary').count() == 0
         await page.fill('[data-knob="chunk_minutes"]','90')
         await page.click('#save-chunk-default')
         await page.wait_for_function('document.querySelector("#chunk-default-status").textContent.includes("저장됨")')

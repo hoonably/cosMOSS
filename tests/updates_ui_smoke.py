@@ -13,7 +13,7 @@ async def main():
         await page.add_init_script('''
             window.updateChecks = 0;
             window.webkit = {messageHandlers: {
-                getAppInfo: {postMessage: async () => ({version:'0.1.0', updatesAvailable:true, canCheckForUpdates:true})},
+                getAppInfo: {postMessage: async () => ({version:'1.0.0', updatesAvailable:true, canCheckForUpdates:false})},
                 checkForUpdates: {postMessage: async () => { window.updateChecks++; return true; }}
             }};
         ''')
@@ -24,7 +24,8 @@ async def main():
         await page.goto(sys.argv[1])
         await page.click('#open-developer-info')
         await page.locator('#check-app-update').wait_for()
-        assert await page.locator('#app-version').inner_text() == 'v0.1.0'
+        assert await page.locator('#app-version').inner_text() == 'v1.0.0'
+        assert await page.locator('#check-app-update').is_enabled()
         assert await page.evaluate('document.activeElement.id') == 'developer-dialog-title'
         await page.click('#check-app-update')
         assert await page.evaluate('window.updateChecks') == 1
@@ -39,7 +40,8 @@ async def main():
         writes = []
         async def save(route):
             writes.append(route.request.post_data_json)
-            await route.fulfill(json={'id':'fixture','title':'저장할 제목','status':'done','segments':[],'speaker_names':{}})
+            await route.fulfill(json={'id':'fixture','title':'저장할 제목','status':'done','segments':[],'speaker_names':{},
+                                      'created_at':'2026-10-25T00:00:00+00:00','updated_at':'2026-10-25T00:00:00+00:00'})
         await page.route('**/api/notes/fixture', save)
         assert await page.evaluate('window.prepareForAppUpdate()')
         assert writes == [{'title':'저장할 제목'}]

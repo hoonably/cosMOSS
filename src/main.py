@@ -44,6 +44,8 @@ from src.remote_workers import RemoteWorkers
 from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host, gpu_warning_token
 from src.store import NoteStore
 from src.summaries import Summaries, provider_status, DEFAULT_QUERY
+from src.summary_models import SummaryModels
+from src.summary_preview import preview_document
 from src.text_files import save_text, speaker_changes, write_text
 from src.note_files import read_file, convert_file, rename_file, trash_file
 from src.note_retention import RecoverableNoteCleanup
@@ -53,7 +55,8 @@ from src.transcript import json_text, parse_transcript, plain_text, srt_text, vt
 from src.voice_memos import VoiceMemos
 from src.voice_engine import VoiceEngine
 from src.voice_profiles import VoiceProfiles, MAX_PROFILE_BYTES
-from src.diarization import Diarization, MODELS as DIARIZATION_MODELS, DEFAULT_MODEL_KEY as DEFAULT_DIARIZATION_MODEL
+from src.local_diarization import LocalDiarization
+from src.speaker_records import SpeakerRecords
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,12 +86,14 @@ TEXT_LIBRARY = TextLibrary(DATA_DIR / "text-library.sqlite3")
 VOICE_MEMOS = VoiceMemos()
 VOICE_ENGINE = VoiceEngine(RUNTIME_DIR)
 VOICE_PROFILES = VoiceProfiles(DATA_DIR, VOICE_ENGINE)
-DIARIZATION = Diarization(DATA_DIR, RUNTIME_DIR)
+LOCAL_DIARIZATION = LocalDiarization(RUNTIME_DIR)
+SPEAKER_RECORDS = SpeakerRecords(DATA_DIR)
 SUMMARIES = Summaries(DATA_DIR / "summaries")
+SUMMARY_MODELS = SummaryModels(DATA_DIR)
 DEVICES = DeviceStore(DATA_DIR / "devices.sqlite3")
 PERFORMANCE = PerformanceHistory(DATA_DIR / 'performance.sqlite3')
 SPEECH = SpeechJobs(DATA_DIR / 'performance.sqlite3')
-LOCAL_MODELS = LocalModels(RUNTIME_DIR, DATA_DIR, DEVICES.get("local")["remote_port"], DEVICES.get("local")["model"], diarization=DIARIZATION.local)
+LOCAL_MODELS = LocalModels(RUNTIME_DIR, DATA_DIR, DEVICES.get("local")["remote_port"], DEVICES.get("local")["model"], diarization=LOCAL_DIARIZATION)
 TUNNELS = SSHTunnels()
 def remote_worker_stopped(device_id: str) -> None:
     with suppress(KeyError):
@@ -137,6 +142,15 @@ class SummaryRequest(TextFileRequest):
     provider: Literal["codex", "claude"]
     prompt: str = Field(default="", max_length=20000)
     use_default_prompt: bool = True
+    model: str | None = Field(default=None, max_length=200)
+    effort: str | None = Field(default=None, max_length=100)
+
+
+class SummaryModelSelection(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    provider: Literal['codex', 'claude']
+    model: str = Field(min_length=1, max_length=200)
+    effort: str = Field(default='', max_length=100)
 
 
 class SummaryPromptRequest(BaseModel):
@@ -180,10 +194,6 @@ class SSHHostRequest(BaseModel):
     host: str = Field(min_length=1, max_length=128)
 
 
-class DiarizationSetupRequest(SSHHostRequest):
-    model_key: Literal['nemotron-3', 'pyannote-community-1']
-
-
 ManagedSpeechPipelineKey = Literal['moss-batch', 'qwen-batch', 'moss-sglang', 'qwen-transformers', 'moss-qwen-sequential']
 SpeechPipelineKey = Literal['moss-batch', 'qwen-batch', 'moss-original', 'moss-sglang', 'qwen-transformers', 'moss-qwen-sequential']
 
@@ -224,17 +234,6 @@ class DeviceModelSelection(BaseModel):
     model_config = ConfigDict(extra='forbid')
     pipeline: SpeechPipelineKey | None = None
     model_key: str = Field(default='', max_length=100)
-
-
-class DiarizationRequest(DiarizationSetupRequest):
-    gpu_uuid: str = Field(min_length=5, max_length=100)
-    busy_confirmation: str | None = Field(default=None, max_length=64)
-    num_speakers: int | None = Field(default=None, ge=1, le=32)
-
-
-class DiarizationApproval(TextFileRequest):
-    proposal_id: str = Field(min_length=32, max_length=32)
-    segment_ids: list[int] = Field(min_length=1, max_length=100000)
 
 
 class SSHDeviceRequest(SSHHostRequest):
@@ -1011,7 +1010,7 @@ async def transcribe(note_id: str) -> None:
                 STORE.update(note_id, progress_phase='transcribing',
                              model_progress={'pipeline_phase': 'diarizing', 'engine': 'nemotron-3'})
             on_diarization({})
-            response = await DIARIZATION.local.execute('nemotron-3', 'run', on_diarization, audio=normalized)
+            response = await LOCAL_DIARIZATION.execute('nemotron-3', 'run', on_diarization, audio=normalized)
             diarization = response['result']
             result.update(segments=attribute_speakers(segments, diarization['turns']), turns=diarization['turns'],
                           diarization_seconds=diarization['inference_seconds'],
@@ -1198,7 +1197,7 @@ def note_cleanup() -> RecoverableNoteCleanup:
         return (any(task and not task.done() for task in
                     (TRANSCRIPTION_TASKS.get(note_id), PREPARATION_TASKS.get(note_id)))
                 or any(not task.done() for task in VOICE_PROFILES.operations))
-    return RecoverableNoteCleanup(STORE, TEXT_LIBRARY, SUMMARIES, DIARIZATION, trash_file,
+    return RecoverableNoteCleanup(STORE, TEXT_LIBRARY, SUMMARIES, SPEAKER_RECORDS, trash_file,
                                   active=active, missing_since=MISSING_NOTE_FILES)
 
 
@@ -1247,7 +1246,6 @@ async def lifespan(_: FastAPI):
             task.cancel()
         await asyncio.gather(*VOICE_PROFILES.operations, return_exceptions=True)
         await VOICE_ENGINE.close()
-        await DIARIZATION.close()
         await SPEECH.close()
 
 
@@ -1277,8 +1275,8 @@ def valid_basic_auth(header: str | None) -> bool:
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    local_action = (request.method == "POST" and request.url.path in {"/api/notes", "/api/notes/batch"}) or request.url.path.startswith(("/api/diarization", "/api/voice-profiles", "/api/voice-memos", "/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/", "/api/trash")) or (
-        request.url.path.startswith("/api/notes/") and any(part in {"diarization", "text-file", "speakers", "identify-speakers", "summary", "trash", "convert", "rename"} for part in request.url.path.split("/")[4:])
+    local_action = (request.method == "POST" and request.url.path in {"/api/notes", "/api/notes/batch"}) or request.url.path.startswith(("/api/voice-profiles", "/api/voice-memos", "/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/", "/api/trash")) or (
+        request.url.path.startswith("/api/notes/") and any(part in {"text-file", "speakers", "identify-speakers", "summary", "trash", "convert", "rename"} for part in request.url.path.split("/")[4:])
     )
     if local_action:
         try:
@@ -1289,7 +1287,7 @@ async def security_middleware(request: Request, call_next):
             return JSONResponse({"detail": "이 작업은 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "외부 웹사이트에서는 이 작업을 실행할 수 없습니다."}, status_code=403)
-        if (request.url.path.startswith(('/api/diarization', '/api/voice-memos', '/api/voice-profiles', '/api/trash')) or '/diarization' in request.url.path or request.url.path in {'/api/notes','/api/notes/batch','/api/summary/default-prompt'} or request.url.path.endswith(('/identify-speakers','/rename','/trash'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
+        if (request.url.path.startswith(('/api/voice-memos', '/api/voice-profiles', '/api/trash')) or request.url.path in {'/api/notes','/api/notes/batch','/api/summary/default-prompt'} or request.url.path.endswith(('/identify-speakers','/rename','/trash'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
             return JSONResponse({'detail': '외부 웹사이트에서는 이 작업을 실행할 수 없습니다.'}, status_code=403)
     if request.url.path not in {"/healthz", "/readyz"} and not valid_basic_auth(
         request.headers.get("Authorization")
@@ -1388,7 +1386,7 @@ async def update_status() -> dict[str, bool]:
     """Do not relaunch during owned work; loaded, idle models can be stopped."""
     tasks = [*PREPARATION_TASKS.values(), *TRANSCRIPTION_TASKS.values(),
              *SUMMARIES.tasks.values(), *REMOTE_WORKERS.tasks.values(), *VOICE_PROFILES.operations,
-             *DIARIZATION.tasks.values(), *SPEECH.tasks.values(), LOCAL_MODELS.task, MEDIA_TOOLS.task, VOICE_ENGINE.task]
+             *SPEECH.tasks.values(), LOCAL_MODELS.task, MEDIA_TOOLS.task, VOICE_ENGINE.task]
     return {"busy": any(task is not None and not task.done() for task in tasks)
             or any(note["status"] in {"queued", "processing"} for note in STORE.list())}
 
@@ -1514,95 +1512,6 @@ async def identify_note_speakers(note_id: str, request: VoiceMatchRequest | None
         raise HTTPException(404, '노트를 찾을 수 없습니다.') from None
     except (ValueError, RuntimeError, OSError, asyncio.TimeoutError) as error:
         raise HTTPException(409, str(error) or '목소리 처리 시간이 초과되었습니다. 다시 시도해 주세요.') from None
-
-
-@app.get('/api/diarization/models')
-def diarization_models():
-    return {'models': DIARIZATION_MODELS, 'hosts': ['@local', *discover_hosts()],
-            'default_model_key': DEFAULT_DIARIZATION_MODEL}
-
-
-@app.get('/api/diarization/setup')
-async def diarization_setup_status(host: str, model_key: Literal['nemotron-3', 'pyannote-community-1']):
-    identity = 'setup:' + host + ':' + model_key
-    if identity not in DIARIZATION.states:
-        try:
-            DIARIZATION.states[identity] = await DIARIZATION.execute(host, model_key, 'inspect', lambda _: None)
-        except (ValueError, RuntimeError, OSError, TimeoutError) as error:
-            raise HTTPException(409, str(error)) from None
-    return DIARIZATION.status(identity)
-
-
-@app.post('/api/diarization/setup', status_code=202)
-async def prepare_diarization(request: DiarizationSetupRequest):
-    if request.host == '@local' and request.model_key != 'nemotron-3':
-        raise HTTPException(400, '이 Mac의 화자 분리는 Nemotron을 사용합니다.')
-    if request.host != '@local' and request.host not in discover_hosts():
-        raise HTTPException(400, '등록된 SSH 서버를 선택해 주세요.')
-    return DIARIZATION.install(request.host, request.model_key)
-
-
-def diarization_note(note_id):
-    if TEXT_LIBRARY.is_document(note_id):
-        raise HTTPException(409, '화자 재분리에는 이 앱에서 전사한 원본 녹음이 필요합니다.')
-    try: note = STORE.get(note_id)
-    except KeyError:
-        raise HTTPException(404, '노트를 찾을 수 없습니다.') from None
-    if note['status'] != 'done':
-        raise HTTPException(409, '전사가 완료된 녹음을 선택해 주세요.')
-    return note
-
-
-@app.get('/api/notes/{note_id}/diarization')
-def note_diarization_status(note_id: str):
-    diarization_note(note_id)
-    return DIARIZATION.status('note:' + note_id)
-
-
-@app.post('/api/notes/{note_id}/diarization', status_code=202)
-async def start_note_diarization(note_id: str, request: DiarizationRequest):
-    note = diarization_note(note_id)
-    try:
-        if request.model_key == 'nemotron-3' and request.num_speakers is not None:
-            raise ValueError('Nemotron은 화자 인원수를 자동으로 판단합니다.')
-        if request.host == '@local':
-            if request.model_key != 'nemotron-3' or request.gpu_uuid != 'local':
-                raise ValueError('이 Mac의 화자 분리는 Nemotron을 사용합니다.')
-            gpu = {'uuid': 'local'}
-        else:
-            inventory = await probe_host(request.host)
-            gpu = next((gpu for gpu in inventory['gpus'] if gpu['uuid'] == request.gpu_uuid), None)
-            if not gpu or (not gpu['idle_candidate'] and request.busy_confirmation != gpu['busy_confirmation']):
-                raise ValueError('GPU 상태가 바뀌었습니다. 사용 중인 프로세스를 확인하고 GPU를 다시 선택해 주세요.')
-        await MEDIA_TOOLS.require_ready()
-        source = STORE.resolve_path(note_id, note.get('normalized_path') or note['source_path'])
-        if not source.is_file(): raise ValueError('원본 녹음 파일을 찾을 수 없습니다.')
-        return DIARIZATION.start(note, source, MEDIA_TOOLS.executable('ffmpeg'), request.host,
-                                 request.model_key, gpu['uuid'], request.num_speakers)
-    except (ValueError, RuntimeError, OSError, TimeoutError) as error:
-        raise HTTPException(409, str(error)) from None
-
-
-@app.post('/api/notes/{note_id}/diarization/cancel')
-async def cancel_note_diarization(note_id: str):
-    diarization_note(note_id)
-    task = DIARIZATION.tasks.get('note:' + note_id)
-    if task and not task.done():
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    return DIARIZATION.status('note:' + note_id)
-
-
-@app.post('/api/notes/{note_id}/diarization/approve')
-def approve_note_diarization(note_id: str, request: DiarizationApproval):
-    try:
-        with STORE.lock:
-            note = diarization_note(note_id)
-            changes = DIARIZATION.approved(note, request.proposal_id, request.segment_ids)
-            changes.update(write_text({**note, **changes}, request.directory))
-            return public_note(STORE.update(note_id, **changes, text_save_error=None))
-    except (ValueError, OSError) as error:
-        raise HTTPException(409, str(error)) from None
 
 
 @app.get("/readyz", include_in_schema=False)
@@ -1786,7 +1695,7 @@ async def speech_setup(device_id: str, pipeline: ManagedSpeechPipelineKey):
 
 
 @app.post('/api/devices/{device_id}/speech-setup', status_code=202)
-def prepare_speech(device_id: str, request: SpeechSetupRequest):
+async def prepare_speech(device_id: str, request: SpeechSetupRequest):
     device = speech_device(device_id)
     if (not has_model_selection(device) or device.get('model_key') == 'custom'
             or (device.get('options', {}).get('speech_pipeline') != request.pipeline and request.pipeline not in ENGINE_PIPELINES)):
@@ -2425,7 +2334,7 @@ def review_note(note_id: str) -> dict:
 def file_action_source(note_id, request):
     note = review_note(note_id)
     related = [note_id] + [n['id'] for n in STORE.list() if n.get('text_path')==note.get('text_path')]
-    if any(SUMMARIES.busy(key) or DIARIZATION.busy('note:'+key) for key in related):
+    if any(SUMMARIES.busy(key) for key in related):
         raise ValueError('이 파일의 AI 작업이 끝난 뒤 다시 시도해 주세요.')
     version = dict(expected_hash=request.text_hash,mtime_ns=request.file_mtime_ns,size=request.file_size,file_version=request.file_version)
     return note, version
@@ -2590,6 +2499,22 @@ def summary_default_prompt() -> dict:
     return SUMMARIES.preferences()
 
 
+@app.get('/api/summary/models')
+async def summary_models(provider: Literal['codex', 'claude'], refresh: bool = False):
+    try:
+        return await SUMMARY_MODELS.get(provider, refresh=refresh)
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.put('/api/summary/models/selection')
+async def save_summary_model_selection(request: SummaryModelSelection):
+    try:
+        return await SUMMARY_MODELS.select(request.provider, request.model, request.effort)
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
 @app.put('/api/summary/default-prompt')
 def save_summary_default_prompt(request: SummaryPromptRequest) -> dict:
     try:
@@ -2624,14 +2549,28 @@ async def start_summary(note_id: str, request: SummaryRequest) -> dict:
         status = await provider_status(request.provider)
         if not status["ready"]:
             raise ValueError(f"{status['name']}: {status['message']} {status['login'] if status['installed'] else status['install']}")
+        selection = await SUMMARY_MODELS.resolve(request.provider, request.model, request.effort)
         if not TEXT_LIBRARY.is_document(note_id):
             note = save_text(STORE, note_id, request.directory)
         return SUMMARIES.start(note, request.provider, prompt, request.directory,
                                use_default_prompt=request.use_default_prompt, additional_prompt=additional,
-                               base_prompt=base_prompt)
+                               base_prompt=base_prompt, **selection)
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
     except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.get('/api/notes/{note_id}/summary/preview')
+def summary_preview(note_id: str, kind: Literal['markdown', 'corrected'] = 'markdown'):
+    try:
+        result = SUMMARIES.status(review_note(note_id)).get('result')
+        if not result:
+            raise HTTPException(404, '미리 볼 결과가 없습니다.')
+        return preview_document(result, kind)
+    except KeyError:
+        raise HTTPException(404, '노트를 찾을 수 없습니다.') from None
+    except (OSError, ValueError) as error:
         raise HTTPException(409, str(error)) from None
 
 
@@ -2745,8 +2684,6 @@ async def restart_note(note_id: str) -> dict[str, Any]:
 
 @app.delete("/api/notes/{note_id}", status_code=204)
 async def delete_note(note_id: str) -> Response:
-    if DIARIZATION.busy('note:' + note_id):
-        raise HTTPException(409, '화자 재분리를 취소하거나 완료한 후 노트를 삭제해 주세요.')
     if TEXT_LIBRARY.is_document(note_id):
         raise HTTPException(409, "외부 TXT 파일은 Finder에서 관리해 주세요.")
     if SUMMARIES.busy(note_id):

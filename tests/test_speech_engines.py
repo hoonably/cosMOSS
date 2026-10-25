@@ -62,6 +62,45 @@ class PlanningTests(unittest.TestCase):
 
 
 class EngineAPITests(unittest.IsolatedAsyncioTestCase):
+    async def test_download_endpoint_starts_real_background_task_on_event_loop(self):
+        from src import main
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            devices = DeviceStore(root / 'devices.db')
+            device = devices.add_ssh(name='server', host='fixture', remote_port=8001,
+                                     backend='cuda', model='OpenMOSS-Team/MOSS-Transcribe-Diarize')
+            devices.configure(device['id'], model_selected=True, model_key='cuda-original',
+                              options={'speech_pipeline':'moss-sglang'})
+            jobs = SpeechJobs(root / 'samples.db')
+            entered, release = asyncio.Event(), asyncio.Event()
+            async def execute(host, pipeline, action, on_event):
+                entered.set()
+                await release.wait()
+                on_event({'phase':'installed'})
+                return {'phase':'installed'}
+            with patch.object(main, 'DEVICES', devices), patch.object(main, 'SPEECH', jobs), \
+                 patch('src.speech_jobs.discover_hosts', return_value=['fixture']), \
+                 patch.object(jobs, 'execute', side_effect=execute):
+                try:
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url='http://localhost') as client:
+                        for preset in PIPELINES:
+                            key = preset['key']
+                            response = await client.post(f"/api/devices/{device['id']}/speech-setup", json={'pipeline':key})
+                            self.assertEqual(response.status_code, 202, response.text)
+                            await asyncio.wait_for(entered.wait(), 1)
+                            task = jobs.tasks[('fixture', key)]
+                            # Repeated clicks share the same running installation.
+                            response = await client.post(f"/api/devices/{device['id']}/speech-setup", json={'pipeline':key})
+                            self.assertEqual(response.status_code, 202, response.text)
+                            self.assertIs(jobs.tasks[('fixture', key)], task)
+                            release.set()
+                            await asyncio.wait_for(task, 1)
+                            self.assertEqual(jobs.status('fixture', key)['phase'], 'installed')
+                            entered.clear()
+                            release.clear()
+                finally:
+                    await jobs.close()
+
     async def test_per_note_choice_and_download_leave_device_default_unchanged(self):
         from src import main
         with tempfile.TemporaryDirectory() as folder:

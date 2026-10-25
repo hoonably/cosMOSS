@@ -9,6 +9,7 @@ from playwright.async_api import async_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.summaries import markdown_document
+from src.summary_preview import preview_document
 
 
 async def main():
@@ -32,6 +33,7 @@ async def main():
               Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.__copied=text;}}});'''
                 .replace('LOCATION', json.dumps({'path':str(folder),'name':folder.name})))
             await page.route('**/api/summary/providers', lambda r:r.fulfill(json=[{'id':'codex','name':'Codex','ready':True,'installed':True,'message':'로그인됨'}]))
+            await page.route('**/api/summary/models**', lambda r:r.fulfill(json={'provider':'codex','models':[{'id':'current','name':'GPT Current','efforts':['medium'],'default_effort':'medium'}],'selection':{'model':'current','effort':'medium'}}))
             await page.route('**/api/devices', lambda r:r.fulfill(json=[]))
 
             async def summarize(route):
@@ -46,6 +48,7 @@ async def main():
                             'completed_at':'2026-10-23T06:00:00Z','markdown_path':str(folder/'제품 개발 회의_요약.md')})
                 await route.fulfill(status=202 if route.request.method == 'POST' else 200,json=summary)
             await page.route('**/api/notes/*/summary', summarize)
+            await page.route('**/api/notes/*/summary/preview?*', lambda r:r.fulfill(json=preview_document(summary['result'])))
 
             async def discard(route):
                 identity = route.request.url.split('/api/notes/')[1].split('/')[0]
@@ -100,10 +103,13 @@ async def main():
             assert requests[-1]['prompt'] == '할 일을 마지막에 모아 주세요.'
             assert summary['prompt'] == custom+'\n\n할 일을 마지막에 모아 주세요.'
             assert await page.locator('#reveal-corrected').is_hidden()
-            assert not await page.locator('#corrected-transcript-preview').evaluate('e=>e.open')
-            assert await page.locator('#summary-result').evaluate('e=>Boolean(e.compareDocumentPosition(document.querySelector("#corrected-transcript-preview")) & Node.DOCUMENT_POSITION_FOLLOWING)')
-            await page.locator('#copy-summary').click()
-            assert await page.evaluate('window.__copied') == summary['result']['document_markdown']
+            assert await page.locator('#copy-summary').count() == 0
+            assert await page.locator('#summary-result').count() == 0
+            await page.locator('#preview-summary').click()
+            await page.locator('#summary-preview-content h1').filter(has_text='제품 개발 회의').wait_for()
+            assert not await page.locator('#summary-preview-content details').evaluate('e=>e.open')
+            await page.keyboard.press('Escape')
+            await page.locator('#summary-preview-dialog').wait_for(state='hidden')
             assert summary['result']['document_markdown'].startswith('# 제품 개발 회의\n')
             assert summary['result']['document_markdown'].endswith('</details>\n')
             assert transcript.read_bytes() == before
@@ -142,7 +148,7 @@ async def main():
             assert (trash/transcript.name).read_bytes() == before
             assert not errors, errors
             await browser.close()
-    print(engine,'PASS: STEP 02 Trash, persisted editable default, cancel/reset/save failure, appended requests, one Markdown copy and responsive layout')
+    print(engine,'PASS: STEP 02 Trash, persisted editable default, cancel/reset/save failure, appended requests, one Markdown preview and responsive layout')
 
 
 asyncio.run(main())

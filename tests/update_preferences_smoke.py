@@ -44,7 +44,7 @@ def main():
                 str(ROOT / "macos/Sources/CosMOSS/UpdateController.swift"),
                 str(ROOT / "tests/UpdatePreferencesChecks.swift"), "-o", str(executable),
             ], check=True)
-            for mode in ("default", "latest", "available", "error"):
+            for mode in ("default", "latest", "available", "error", "development"):
                 info = {
                     "CFBundleIdentifier": identity,
                     "CFBundleName": "cosMOSS Update Preferences Checks",
@@ -56,11 +56,14 @@ def main():
                     "SUFeedURL": f"http://127.0.0.1:{server.server_port}/" + ("tampered.xml" if mode == "error" else "appcast.xml"),
                     "SUPublicEDKey": (ROOT / "macos/UpdatePublicKey.txt").read_text().strip(),
                     "SUEnableAutomaticChecks": True,
+                    "SUAutomaticallyUpdate": True,
                     "SURequireSignedFeed": True,
                     "SUVerifyUpdateBeforeExtraction": True,
                     "SUSignedFeedFailureExpirationInterval": 0,
                     "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True},
                 }
+                if mode == "development":
+                    info["CosMOSSProjectRoot"] = str(ROOT)
                 with (contents / "Info.plist").open("wb") as stream:
                     plistlib.dump(info, stream)
                 subprocess.run(["codesign", "--force", "--sign", "-", str(bundle)], check=True, capture_output=True)

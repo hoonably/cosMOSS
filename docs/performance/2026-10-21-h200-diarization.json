@@ -55,51 +55,6 @@
         54.27,
         20.88
       ]
-    },
-    {
-      "model_id": "pyannote/speaker-diarization-community-1",
-      "revision": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
-      "speaker_count": 4,
-      "mode": "offline",
-      "precision": "fp32",
-      "num_speakers_requested": null,
-      "peak_process_mib": 2734,
-      "peak_reserved_gib": 1.9921875,
-      "peak_allocated_gib": 1.613962173461914,
-      "peak_host_rss_gib": 3.9633750915527344,
-      "key": "pyannote-auto",
-      "mean_inference_seconds": 26.19108315743506,
-      "mean_wall_seconds": 49.410745520999626,
-      "mean_load_seconds": 9.256825093179941,
-      "repeat_timeline_exactly_identical": true,
-      "speaker_totals_seconds": [
-        1128.701,
-        1114.324,
-        541.671,
-        158.49
-      ]
-    },
-    {
-      "model_id": "pyannote/speaker-diarization-community-1",
-      "revision": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee",
-      "speaker_count": 3,
-      "mode": "offline",
-      "precision": "fp32",
-      "num_speakers_requested": 3,
-      "peak_process_mib": 2734,
-      "peak_reserved_gib": 1.9921875,
-      "peak_allocated_gib": 1.613962173461914,
-      "peak_host_rss_gib": 3.9799880981445312,
-      "key": "pyannote-3-speakers",
-      "mean_inference_seconds": 26.037459483370185,
-      "mean_wall_seconds": 49.92810202150031,
-      "mean_load_seconds": 8.990426504984498,
-      "repeat_timeline_exactly_identical": true,
-      "speaker_totals_seconds": [
-        1164.088,
-        1161.506,
-        617.591
-      ]
     }
   ],
   "mac_smoke": {

@@ -54,12 +54,11 @@ aligned words, speaker turns and metrics. The normal API exposes concise metrics
 
 Zero-duration Qwen words are assigned only to a unique active speaker at that
 point. Overlapping or missing evidence stays `미확인`; this label is neither a
-speaker embedding candidate nor an identity to preserve during re-diarization.
+speaker embedding candidate nor a known speaker identity.
 Native ASR text and timing are never rewritten to fabricate a confident match.
-Reviewing another diarization model still requires explicit subset approval.
 
 Validation: `tests/test_speech_pipeline.py`, `tests/speech_pipeline_ui_smoke.py`,
-the existing transcription/progress/diarization checks, and the
+the existing transcription/progress checks, and the
 [actual H200 integration run](performance/2026-10-21-app-pipelines.md).
 
 ## Run from source
@@ -198,37 +197,37 @@ Hugging Face uses `~/.cache/huggingface/hub` by default and honors `HF_HOME` and
 
 ## Boundaries
 
-Speaker re-diarization lives in `src/diarization*.py`, `src/local_diarization.py` and `static/diarization.js`.
-Nemotron FP32 is the default. The other two UI presets use Community-1 with
-automatic or explicit speaker count; they are one model, not two checkpoints.
-The Mac Nemotron runtime is isolated under the configured runtime root,
-uses MPS when available (otherwise CPU), and does not install a transcription
-model itself. It is also reused by the local transcription bundle. Its child
-watches the backend parent and is reaped on cancellation.
-Mac process peak RSS is reported as RAM, never as CUDA VRAM.
-It has a separate, versioned per-SSH-user runtime and pinned model revisions,
-and never changes the active MOSS runtime. Setup explicitly downloads on the
-server, reuses that user's Hugging Face login, and returns `auth_required` for
-missing credentials or a gated-model agreement. No tokens cross the app API.
-Finite jobs bind a GPU UUID, transfer mono 16 kHz PCM16 over SSH into a private
-temporary folder, retain a 5-second heartbeat, and revoke the worker on EOF or
-a 60-second silent lease. The Linux worker arms the parent-death guard before
-loading Torch. Only its owned process group is stopped; other GPU work is never
-signalled. Model/runtime caches survive job cleanup.
+Step 3 model discovery lives in `src/summary_models.py`. Codex uses the installed
+CLI's app-server `initialize` + `model/list` protocol with pagination. Claude uses
+the SDK streaming `initialize` control response's `models` capability list. Neither
+probe sends a user message or starts a generation. Probes run in a temporary working
+directory, have a timeout, and reap their own process group on cancellation.
 
-Whole utterances are matched by overlapping speech time; mixed-speaker
-utterances are flagged rather than heuristically splitting their text. A
-fingerprinted proposal snapshot permits only selected server-generated speaker
-changes, rejects edited/stale notes, and preserves ASR text/times/raw segments.
-Saving retains external-file conflict protection. Model timelines and private
-audio stay in the user's data/cache or temporary directory, outside benchmark
-documentation. `tests/test_diarization.py` exercises approval, stale snapshots,
-cross-origin protection and a real subprocess lease. The Chromium/WebKit
-`tests/diarization_ui_smoke.py` covers setup, agreement help, model/GPU/count
-selection, unchecked review, cancellation of review and partial persistence.
-The fixture tests do not measure model accuracy. `scripts/benchmark-diarization.py`
-runs four actual CUDA configurations, storing audio-derived timelines only in
-an explicitly chosen private output folder.
+Model IDs, display names and supported effort strings come from the CLI rather than
+a versioned app list. User selections are stored per provider in
+`summary-model-preferences.json`; `summary-model-catalog.json` is a one-hour metadata
+cache invalidated by a CLI binary change or explicit refresh. The initial selection
+is the CLI default model with Medium when available. A successful refresh can reset
+a removed model or unsupported effort; a failed refresh retains the previous choice.
+The selected model and effort are validated and copied into each summary job/result.
+They are passed as process arguments, without rewriting the user's CLI configuration.
+
+`tests/test_summary_models.py` covers protocol framing, capability parsing, restart
+and refresh persistence, unavailable-model fallback, cancellation cleanup, and API-to-
+CLI option propagation. `tests/summary_models_ui_smoke.py` covers both provider UIs
+using simulated catalogs. Codex also has a synthetic live-run check. Claude's real
+account execution still needs verification on a Mac with an installed, logged-in CLI.
+
+The Mac transcription pipeline uses `src/local_diarization.py` and
+`src/diarization_worker.py` to run Nemotron FP32 after releasing the ASR model.
+The isolated runtime uses MPS when available and CPU otherwise. Its child watches
+the backend parent and is reaped on cancellation; tests cover serialization with
+MLX, failed setup, and process cleanup. CPU peak RSS is reported as RAM, never as
+CUDA VRAM or combined unified-memory peak.
+
+`src/speaker_records.py` retains cleanup of private speaker-analysis records
+created by older app versions. They follow the note's seven-day recovery period.
+There is no separate speaker-analysis setup, rerun or approval endpoint.
 
 cosMOSS is a local-first Mac application. Its default device is This Mac; connecting
 another device is optional. Keep infrastructure terms out of the default user

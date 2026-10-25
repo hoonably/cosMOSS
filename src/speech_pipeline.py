@@ -13,14 +13,14 @@ except ModuleNotFoundError:
     from speech_engines import ENGINE_PIPELINES, ENGINE_VERSION
 
 PIPELINES = [
-    {'key': 'moss-sglang', 'name': 'MOSS · SGLang Omni', 'badge': '추천',
-     'description': '전체 녹음의 문맥을 유지해 전사한 뒤 Nemotron으로 화자를 구분합니다. 최대 90분.',
+    {'key': 'moss-sglang', 'name': 'MOSS 0.9B · SGLang Omni', 'badge': '추천',
+     'description': '전체 녹음의 문맥을 유지해 전사한 뒤 Nemotron 0.1B로 화자를 구분합니다. 최대 90분.',
      'reference': 'H200 · 65분37초 · 모델 준비 포함 3분19초 · Peak 약24.4 GiB'},
-    {'key': 'qwen-transformers', 'name': 'Qwen · Transformers', 'badge': '빠른 전사',
-     'description': '공식 SDK로 약 3분씩 전사한 뒤 시간 정렬과 Nemotron을 순서대로 실행합니다.',
+    {'key': 'qwen-transformers', 'name': 'Qwen3-ASR 1.7B · Transformers', 'badge': '빠른 전사',
+     'description': '공식 SDK로 약 3분씩 전사한 뒤 시간 정렬과 Nemotron 0.1B를 순서대로 실행합니다.',
      'reference': 'H200 · 65분37초 · 모델 준비 포함 1분27초 · Peak 약31.3 GiB'},
-    {'key': 'moss-qwen-sequential', 'name': 'MOSS + Qwen', 'badge': '보조 대본 비교',
-     'description': 'MOSS 전체 전사 → 모델 해제 → Qwen 약20분 보조 전사 → Nemotron. 본문은 MOSS를 유지합니다.',
+    {'key': 'moss-qwen-sequential', 'name': 'MOSS 0.9B + Qwen3-ASR 1.7B', 'badge': '보조 대본 비교',
+     'description': 'MOSS 전체 전사 → 모델 해제 → Qwen3-ASR 1.7B 약20분 보조 전사 → Nemotron 0.1B. 본문은 MOSS를 유지합니다.',
      'reference': 'H200 · 65분37초 · 모델 준비 포함 6분24초 · Peak 약35.2 GiB'},
 ]
 DEFAULT_PIPELINE = 'moss-sglang'

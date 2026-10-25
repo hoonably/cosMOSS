@@ -16,21 +16,35 @@ struct UpdatePreferencesChecks {
         Task { @MainActor in
             let updates = UpdateController.shared
             updates.start()
+            let mode = CommandLine.arguments[1]
+            if mode == "development" {
+                guard updates.isDevelopmentBuild && !updates.canCheckForUpdates else { fatalError("Development updater must stay stopped") }
+                updates.checkForUpdates()
+                guard NSApp.windows.contains(where: { $0.title == "업데이트 확인" && $0.isVisible }) else { fatalError("Development update window must open") }
+                guard updates.status.contains("개발용 앱") && !updates.isChecking else { fatalError(updates.status) }
+                updates.setAutomaticUpdates(true)
+                guard updates.automaticUpdatesEnabled else { fatalError("Could not enable automatic updates") }
+                updates.setAutomaticUpdates(false)
+                guard !updates.automaticallyChecksForUpdates && !updates.automaticallyDownloadsUpdates else { fatalError("Both automatic settings must be off") }
+                print("PASS development: window opens, settings work, updater stays stopped")
+                NSApp.terminate(nil)
+                return
+            }
+            if mode == "latest" { updates.checkForUpdates() }
             for _ in 0..<100 {
                 if updates.canCheckForUpdates { break }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
             guard updates.canCheckForUpdates else { fatalError("Updater did not start") }
-            let mode = CommandLine.arguments[1]
             if mode == "default" {
-                guard updates.automaticallyChecksForUpdates else { fatalError("First-install default must be enabled") }
-                updates.setAutomaticChecks(false)
-                guard !updates.automaticallyChecksForUpdates else { fatalError("Could not disable automatic notifications") }
+                guard updates.automaticUpdatesEnabled else { fatalError("First-install default must be enabled") }
+                updates.setAutomaticUpdates(false)
+                guard !updates.automaticallyChecksForUpdates && !updates.automaticallyDownloadsUpdates else { fatalError("Could not disable automatic updates") }
                 UserDefaults.standard.synchronize()
                 print("PASS default checked; user's off preference saved")
             } else {
-                guard !updates.automaticallyChecksForUpdates else { fatalError("User's off preference was reset on launch") }
-                updates.refreshUpdateInformation()
+                guard !updates.automaticallyChecksForUpdates && !updates.automaticallyDownloadsUpdates else { fatalError("User's off preference was reset on launch") }
+                if mode != "latest" { updates.refreshUpdateInformation() }
                 for _ in 0..<150 {
                     if !updates.isChecking { break }
                     try? await Task.sleep(nanoseconds: 100_000_000)

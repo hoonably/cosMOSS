@@ -156,16 +156,27 @@ async def provider_status(provider: str) -> dict:
             await process.wait()
 
 
-def command(provider: str, binary: str, output: Path, schema: Path) -> list[str]:
+def cli_environment(binary: str) -> dict:
+    environment = dict(os.environ)
+    environment['PATH'] = os.pathsep.join(dict.fromkeys([str(Path(binary).parent), str(Path.home() / '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin', environment.get('PATH', '/usr/bin:/bin')]))
+    return environment
+
+
+def command(provider: str, binary: str, output: Path, schema: Path, *, model: str = '', effort: str = '') -> list[str]:
+    options = ['--model', model] if model else []
     if provider == "codex":
+        if effort:
+            options += ['-c', 'model_reasoning_effort=' + json.dumps(effort)]
         return [binary, "--ask-for-approval", "never", "--search", "exec", "--ignore-user-config",
                 "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "hooks",
                 "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral", "--color", "never",
-                "--output-schema", str(schema), "--output-last-message", str(output), "-"]
+                "--output-schema", str(schema), "--output-last-message", str(output), *options, "-"]
+    if effort:
+        options += ['--effort', effort]
     return [binary, "-p", "--output-format", "json", "--json-schema", json.dumps(OUTPUT_SCHEMA),
             "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch", "--disallowedTools", "mcp__*",
             "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "",
-            "--disable-slash-commands", "--no-session-persistence"]
+            "--disable-slash-commands", "--no-session-persistence", *options]
 
 
 class Summaries:
@@ -277,7 +288,7 @@ class Summaries:
 
     def start(self, note: dict, provider: str, prompt: str, directory: str = "", *,
               use_default_prompt: bool | None = None, additional_prompt: str | None = None,
-              base_prompt: str | None = None) -> dict:
+              base_prompt: str | None = None, model: str = '', effort: str = '', model_name: str = '') -> dict:
         note_id = note["id"]
         if self.busy(note_id):
             raise ValueError("이 노트의 요약이 이미 실행 중입니다.")
@@ -297,6 +308,7 @@ class Summaries:
             note = {**note, "text_hash": digest(source)}
         previous = self.status(note).get("result")
         state = {"phase": "running", "provider": provider, "prompt": prompt,
+                 "model":model, "effort":effort, "model_name":model_name,
                  "started_at": datetime.now(UTC).isoformat(), "result": previous, "error": None}
         if use_default_prompt is not None:
             state.update(use_default_prompt=use_default_prompt, additional_prompt=additional_prompt or "", base_prompt=base_prompt)
@@ -328,11 +340,9 @@ class Summaries:
                 output = Path(temporary_folder) / "answer.txt"
                 schema = Path(temporary_folder) / "output-schema.json"
                 schema.write_text(json.dumps(OUTPUT_SCHEMA), encoding="utf-8")
-                environment = dict(os.environ)
-                # GUI launchers often lack the user's CLI dependency directories.
-                environment["PATH"] = os.pathsep.join(dict.fromkeys([str(Path(binary).parent), str(Path.home() / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", environment.get("PATH", "/usr/bin:/bin")]))
+                environment = cli_environment(binary)
                 process = await asyncio.create_subprocess_exec(
-                    *command(provider, binary, output, schema), cwd=temporary_folder, env=environment, start_new_session=True,
+                    *command(provider, binary, output, schema, model=state.get('model', ''), effort=state.get('effort', '')), cwd=temporary_folder, env=environment, start_new_session=True,
                     stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
                 stdout, stderr = await asyncio.wait_for(process.communicate(prompt.encode("utf-8")), timeout=900)
@@ -352,6 +362,7 @@ class Summaries:
                     "text": documents["summary_markdown"], "corrected_text": documents["corrected_transcript"],
                     "document_markdown": markdown_document(documents['corrected_transcript'], documents['summary_markdown']),
                     "provider": provider, "prompt": query, "source_hash": source_hash,
+                    "model":state.get('model', ''), "model_name":state.get('model_name', ''), "effort":state.get('effort', ''),
                     "completed_at": datetime.now(UTC).isoformat(),
                 }}
                 try:

@@ -18,8 +18,8 @@
 
 <div class="workflow-trail"><span>음성에서 기록으로</span><i>→</i><span>기록에서 정리로</span></div>
       <div class="topbar-actions">
-        <button class="app-settings-button" id="open-app-settings" type="button" aria-haspopup="dialog" aria-controls="app-settings-dialog">설정</button>
-        <button class="save-location-button" id="save-location" type="button" aria-label="기본 경로 설정" title="파일을 저장하고, 불러올 기본 경로를 지정하세요.">
+        <button class="topbar-control app-settings-button" id="open-app-settings" type="button" aria-haspopup="dialog" aria-controls="app-settings-dialog">설정</button>
+        <button class="topbar-control save-location-button" id="save-location" type="button" aria-label="기본 경로 설정" title="파일을 저장하고, 불러올 기본 경로를 지정하세요.">
           <svg class="save-location-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 10h18"/></svg>
           <strong>기본 경로</strong><span id="save-location-name">Downloads</span>
           <svg class="save-location-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
@@ -76,28 +76,55 @@
       <aside class="summary-panel" id="stage-summary" aria-labelledby="summary-title">
         <header class="stage-heading"><div><p class="eyebrow">STEP 03 · SUMMARIZE</p><h2 id="summary-title">AI 요약</h2></div><span class="stage-sparkle" aria-hidden="true">✳</span><p class="stage-path-note" id="summary-path-note">보정 전사문을 포함한 요약 Markdown을 저장합니다.</p></header>
         <div class="summary-scroll">
-          <label class="field"><span>함께 정리할 AI <button class="inline-link" id="refresh-summary-providers" type="button">연결 확인</button></span><select id="summary-provider" aria-describedby="summary-provider-status"><option value="codex">Codex</option><option value="claude">Claude</option></select></label>
+          <label class="field"><span>함께 정리할 AI <button class="inline-link" id="refresh-summary-providers" type="button">새로고침</button></span><select id="summary-provider" aria-describedby="summary-provider-status"><option value="codex">Codex</option><option value="claude">Claude</option></select></label>
           <p class="summary-provider-status" id="summary-provider-status" role="status">CLI 연결을 확인하고 있습니다…</p>
-          <div class="cli-setup hidden" id="cli-setup"><p id="cli-setup-copy"></p><code id="cli-setup-command"></code><a id="cli-docs" href="https://developers.openai.com/codex/cli/" target="_blank" rel="noopener">설정 방법 보기 ↗</a></div>
+          <div class="summary-model-controls">
+            <label class="field"><span>모델</span><select id="summary-model" aria-describedby="summary-model-status" disabled><option value="">모델 확인 중…</option></select></label>
+            <label class="field"><span>추론 강도</span><select id="summary-effort" disabled><option value="">확인 중…</option></select></label>
+          </div>
+          <p class="summary-model-status hidden" id="summary-model-status" role="status" aria-live="polite"></p>
           <div class="summary-default-option"><label><input id="use-default-summary-prompt" type="checkbox" checked /><span>기본 프롬프트</span></label><button class="summary-prompt-help" id="show-default-summary-prompt" type="button" aria-label="기본 프롬프트 보기·수정" aria-haspopup="dialog" aria-controls="default-summary-prompt-dialog">?</button><span class="summary-prompt-badge hidden" id="summary-prompt-badge">추천</span></div>
           <label class="field summary-prompt-field"><span><span id="summary-prompt-label">추가 요청</span> <small id="summary-prompt-optional">선택</small></span><textarea id="summary-prompt" rows="6" maxlength="20000" placeholder="추가로 요청할 내용을 적어 주세요."></textarea></label>
           <p class="summary-prompt-note" id="summary-prompt-note">기본 프롬프트 뒤에 이어서 전달됩니다.</p>
-          <div class="summary-source" id="summary-source">먼저 2단계에서 노트를 선택하세요.</div>
-          <button class="primary-action summary-run" id="run-summary" type="button" disabled><span>전사문 보정·요약하기</span><span aria-hidden="true">→</span></button>
+          <div class="summary-actions">
+            <button class="ghost-button summary-copy-prompt" id="copy-summary-prompt" type="button" title="기본 프롬프트와 추가 요청을 복사합니다. 전사 파일은 별도로 첨부해 주세요." disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg><span>프롬프트 복사하기</span></button>
+            <button class="primary-action summary-run" id="run-summary" type="button" disabled><span>CLI 확인 중…</span><span aria-hidden="true">→</span></button>
+          </div>
           <button class="ghost-button summary-cancel hidden" id="cancel-summary" type="button">보정·요약 취소</button>
-          <p class="summary-data-note">실행하면 전사 파일을 선택한 AI 서비스에 전달합니다.<br>이 Mac에 로그인된 CLI 계정을 사용합니다.</p>
           <div class="summary-status hidden" id="summary-status" role="status" aria-live="polite"></div>
           <div class="summary-result-wrap hidden" id="summary-result-wrap">
-            <div class="summary-result-head"><span id="summary-result-label">보정·요약 결과</span><button class="inline-link" id="copy-summary" type="button">Markdown 복사</button></div>
-            <button class="summary-saved-file hidden" id="reveal-corrected" type="button" title="파인더에서 보기"><span></span><span aria-hidden="true">↗</span></button>
-            <button class="summary-saved-file hidden" id="reveal-summary" type="button" title="파인더에서 보기"><span></span><span aria-hidden="true">↗</span></button>
+            <div class="summary-result-head"><span id="summary-result-label">보정·요약 결과</span></div>
+            <div class="summary-saved-file hidden" id="summary-summary-file">
+              <span id="summary-summary-name"></span>
+              <div class="summary-file-actions">
+                <button class="summary-file-action" id="preview-summary" type="button" aria-label="앱에서 미리보기" title="앱에서 미리보기" aria-haspopup="dialog" aria-controls="summary-preview-dialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                <button class="summary-file-action" id="reveal-summary" type="button" aria-label="Finder에서 보기" title="Finder에서 보기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-8Z"/><path d="M14 3h7v7M21 3l-8 8"/></svg></button>
+              </div>
+            </div>
+            <div class="summary-saved-file hidden" id="summary-corrected-file">
+              <span id="summary-corrected-name"></span>
+              <div class="summary-file-actions">
+                <button class="summary-file-action" id="preview-corrected" type="button" aria-label="앱에서 미리보기" title="앱에서 미리보기" aria-haspopup="dialog" aria-controls="summary-preview-dialog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                <button class="summary-file-action" id="reveal-corrected" type="button" aria-label="Finder에서 보기" title="Finder에서 보기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-8Z"/><path d="M14 3h7v7M21 3l-8 8"/></svg></button>
+              </div>
+            </div>
             <p class="summary-stale hidden" id="summary-stale">노트가 수정되었습니다. 최신 파일로 다시 보정·요약해 주세요.</p>
-            <div class="summary-result" id="summary-result"></div>
-            <details class="corrected-transcript-preview hidden" id="corrected-transcript-preview"><summary>보정 전사문 확인</summary><button class="inline-link" id="copy-corrected" type="button">보정 전사문 복사</button><pre class="summary-result" id="corrected-transcript-result"></pre></details>
           </div>
         </div>
       </aside>
     </div>
+    <dialog class="summary-cli-dialog" id="summary-cli-dialog" aria-labelledby="summary-cli-title">
+      <div class="dialog-head"><div><p class="eyebrow">AI 요약 연결</p><h2 id="summary-cli-title" tabindex="-1">CLI 연결</h2></div><button class="dialog-close" id="close-summary-cli" type="button" aria-label="CLI 연결 안내 닫기">×</button></div>
+      <p class="summary-cli-description">터미널에서 설치·로그인을 마친 뒤 연결을 확인해 주세요.<br>이 Mac에 로그인된 CLI 계정으로 요약합니다.</p>
+      <div class="cli-setup hidden" id="cli-setup"><p id="cli-setup-copy"></p><code id="cli-setup-command"></code><a id="cli-docs" href="https://developers.openai.com/codex/cli/" target="_blank" rel="noopener noreferrer">설정 방법 보기 ↗</a></div>
+      <p class="summary-cli-status" id="summary-cli-status" role="status"></p>
+      <div class="summary-cli-actions"><button class="ghost-button" id="copy-summary-cli-command" type="button">명령어 복사</button><button class="primary-action" id="check-summary-cli" type="button">연결 확인</button></div>
+    </dialog>
+    <dialog class="summary-preview-dialog" id="summary-preview-dialog" aria-labelledby="summary-preview-title">
+      <div class="dialog-head"><div><p class="eyebrow">결과 미리보기</p><h2 id="summary-preview-title" tabindex="-1">보정·요약.md</h2></div><button class="dialog-close" id="close-summary-preview" type="button" aria-label="미리보기 닫기">×</button></div>
+      <p class="summary-preview-status hidden" id="summary-preview-status" role="status"></p>
+      <article class="summary-preview-content" id="summary-preview-content" aria-label="결과 문서"></article>
+    </dialog>
     <dialog class="summary-prompt-dialog" id="default-summary-prompt-dialog" aria-labelledby="default-summary-prompt-title">
       <div class="dialog-head"><div><p class="eyebrow">요약의 기본 기준</p><h2 id="default-summary-prompt-title" tabindex="-1">기본 프롬프트</h2></div><button class="dialog-close" id="close-default-summary-prompt" type="button" aria-label="기본 프롬프트 닫기">×</button></div>
       <div class="summary-default-body">
@@ -129,7 +156,7 @@
             </div>
           </header>
 
-          <div class="note-file-actions"><button class="ghost-button" id="edit-speakers" type="button"><span aria-hidden="true">◎</span> 화자 설정</button><button class="ghost-button" id="open-diarization" type="button">화자 재분리</button><button class="ghost-button" id="reveal-txt" type="button">Finder에서 보기 ↗</button><button class="ghost-button hidden" id="retry-result-save" type="button">파일 저장 다시 시도</button></div>
+          <div class="note-file-actions"><button class="ghost-button" id="edit-speakers" type="button"><span aria-hidden="true">◎</span> 화자 설정</button><button class="ghost-button" id="reveal-txt" type="button">Finder에서 보기 ↗</button><button class="ghost-button hidden" id="retry-result-save" type="button">파일 저장 다시 시도</button></div>
           <p class="text-file-location" id="text-file-location"></p>
           <p class="note-close-error hidden" id="note-close-error" role="alert"></p>
           <div class="processing-card hidden" id="processing-card" role="status" aria-live="polite">
@@ -183,24 +210,6 @@
         </section>
     </dialog>
 
-    <dialog class="diarization-dialog" id="diarization-dialog" aria-labelledby="diarization-title">
-      <div class="dialog-head"><div><p class="eyebrow">화자 분리 모델</p><h2 id="diarization-title" tabindex="-1">화자 다시 분리하기</h2></div><button class="dialog-close" id="close-diarization" type="button" aria-label="화자 재분리 닫기">×</button></div>
-      <p class="diarization-help">원본 녹음에서 목소리를 다시 구분합니다. 전사문은 유지하며, 승인한 발화의 화자만 저장합니다.</p>
-      <div class="diarization-controls">
-        <label class="field"><span>화자 분리 방식</span><select id="diarization-model"><option value="nemotron-3">Nemotron 3 Diarization · 기본</option><option value="pyannote-community-1">pyannote Community-1 · 자동 · 무료</option><option value="pyannote-community-1-fixed">pyannote Community-1 · 인원수 지정 · 무료</option></select></label>
-        <label class="field"><span>실행 위치</span><select id="diarization-host"></select></label>
-        <label class="field"><span>화자 인원수</span><input id="diarization-count" type="number" min="1" max="32" step="1" placeholder="자동 판단" disabled></label>
-      </div>
-      <p class="diarization-help" id="diarization-model-help"></p>
-      <div class="diarization-setup"><p id="diarization-setup-status" role="status"></p><button class="ghost-button" id="prepare-diarization" type="button">모델 준비하기</button></div>
-      <details class="diarization-auth-help" id="diarization-auth-help"><summary>Hugging Face 로그인·이용 동의 방법</summary><ol><li>실행 서버에서 <code>hf auth login</code>으로 로그인합니다. 처음 한 번 읽기 권한 토큰이 필요하며, 앱에 토큰을 입력하지 않습니다.</li><li><a href="https://huggingface.co/pyannote/speaker-diarization-community-1" target="_blank" rel="noopener noreferrer">Community-1 모델 페이지 ↗</a>를 같은 계정으로 엽니다.</li><li>본인 소속과 용도를 입력한 뒤 <strong>Agree and access repository</strong>를 누릅니다. 동의하면 계정의 이메일·사용자명이 제작자에게 공유됩니다. 화면의 UNIST는 입력 예시입니다.</li><li>이 창에서 <strong>모델 준비하기</strong>를 다시 누릅니다. 무료 모델이며 다운로드 후에는 자체 서버에서 실행됩니다.</li></ol><img src="/help/pyannote-access.png" alt="Hugging Face 모델 페이지에서 소속과 용도를 선택하고 Agree and access repository를 누르는 이용 동의 화면" loading="lazy"></details>
-      <div class="diarization-gpu-head" id="diarization-gpu-head"><strong>GPU 번호 선택</strong><button class="inline-link" id="refresh-diarization-gpus" type="button">상태 확인</button></div>
-      <div class="diarization-gpus" id="diarization-gpus" role="radiogroup" aria-label="화자 재분리에 사용할 GPU"></div>
-      <div class="diarization-run-actions"><button class="primary-action" id="run-diarization" type="button" disabled>화자 분석 시작</button><button class="ghost-button danger hidden" id="cancel-diarization" type="button">분석 취소</button></div>
-      <p class="diarization-status" id="diarization-status" role="status" aria-live="polite"></p>
-      <div class="hidden" id="diarization-review"><p class="diarization-metrics" id="diarization-metrics"></p><p class="diarization-help">주로 말하는 사람 외에 잠깐 참여한 사람이 포함될 수 있습니다. 화자별 샘플을 듣고 같은 목소리가 나뉘었는지, 다른 목소리가 합쳐졌는지 확인하세요.</p><div class="diarization-voices" id="diarization-voices"></div><p class="diarization-help">승인할 발화만 선택하세요. 여러 목소리가 섞인 발화는 녹음을 듣고 확인해 주세요. 문장 내부를 자동으로 나누지는 않습니다.</p><audio id="diarization-player" controls preload="none"></audio><div id="diarization-rows"></div><p class="diarization-help" id="diarization-empty"></p></div>
-      <div class="diarization-footer"><span id="diarization-selection">선택한 변경 0개</span><button class="primary-action" id="approve-diarization" type="button" disabled>선택한 변경 저장</button></div>
-    </dialog>
 
     <dialog class="speaker-dialog" id="speaker-dialog" aria-labelledby="speaker-dialog-title">
       <div class="dialog-head"><div><p class="eyebrow">목소리에 이름 붙이기</p><h2 id="speaker-dialog-title">화자 설정</h2></div><button class="dialog-close" id="close-speakers" type="button" aria-label="화자 설정 닫기">×</button></div>
@@ -275,7 +284,7 @@
             </div>
             <div id="upload-processing-home"><div class="upload-processing" id="upload-processing">
             <section id="speech-options" class="speech-options hidden" aria-label="전사 방식">
-              <label class="field speech-model-field"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="speech-pipeline" name="speech_pipeline" aria-describedby="speech-description"><option value="moss-sglang" data-badge="추천">MOSS · SGLang Omni</option><option value="qwen-transformers" data-badge="빠른 전사">Qwen · Transformers</option><option value="moss-qwen-sequential" data-badge="보조 대본 비교">MOSS + Qwen</option></select></label>
+              <label class="field speech-model-field"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="speech-pipeline" name="speech_pipeline" aria-describedby="speech-description"><option value="moss-sglang" data-badge="추천">MOSS 0.9B · SGLang Omni</option><option value="qwen-transformers" data-badge="빠른 전사">Qwen3-ASR 1.7B · Transformers</option><option value="moss-qwen-sequential" data-badge="보조 대본 비교">MOSS 0.9B + Qwen3-ASR 1.7B</option></select></label>
               <label class="field speech-model-field hidden"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="upload-local-model" name="local_model_key" aria-describedby="speech-description local-model-caution"></select></label>
               <p id="speech-description" class="speech-description"></p>
               <p id="local-model-caution" class="speech-description model-risk-copy hidden" role="note"></p>
@@ -422,24 +431,13 @@
           <button class="dialog-close" id="close-local-model" type="button" aria-label="모델 준비 창 닫기">×</button>
         </div>
         <label class="field model-choice-field"><span>전사 모델</span><select id="model-choice" aria-describedby="model-choice-help"></select><small class="field-help" id="model-choice-help"></small></label>
-        <label class="field hidden" id="model-custom-field"><span>Hugging Face 모델 ID</span><input id="model-custom-id" placeholder="owner/moss-model" spellcheck="false"><small class="field-help">이 장치의 MLX 또는 Transformers용 MOSS-Transcribe-Diarize 형식이어야 합니다.</small></label>
         <div class="model-recommendation" id="model-recommendation"></div>
         <div class="model-profiles" id="model-profiles"></div>
-        <p class="model-intro">모델을 어디에서 불러올까요?</p>
-        <fieldset class="model-sources" id="model-sources">
-          <legend class="sr-only">모델 위치 선택</legend>
-          <label class="model-source"><input type="radio" name="source" value="cache" checked><span><strong>Hugging Face 기본 캐시</strong><small>이미 받은 모델을 재사용하고, 없으면 다운로드합니다.</small></span><span class="model-source-check" aria-hidden="true">✓</span></label>
-          <label class="model-source"><input type="radio" name="source" value="folder"><span><strong>이미 받은 모델 사용</strong><small id="model-folder-description">Mac용 MOSS MLX 모델 폴더를 직접 선택합니다.</small></span><span class="model-source-check" aria-hidden="true">✓</span></label>
-        </fieldset>
+        <p class="field-help">이미 받은 모델은 재사용하고, 없으면 다운로드합니다.</p>
         <div id="model-cache-info" class="model-location"><span>저장 위치</span><code id="model-cache-path"></code></div>
-        <div id="model-folder-fields" class="hidden">
-          <label class="field"><span>모델 폴더</span><input id="model-folder-path" name="path" placeholder="/Users/…/모델 폴더" autocomplete="off" spellcheck="false"><small class="field-help" id="model-folder-help">config.json과 safetensors가 있는 폴더를 선택하세요. 파일은 복사하지 않고 그대로 사용합니다.</small></label>
-          <button class="ghost-button" id="choose-model-folder" type="button">폴더 선택…</button>
-        </div>
         <div class="model-preparation hidden" id="model-preparation" role="status" aria-live="polite"><i aria-hidden="true"></i><div><strong id="model-preparation-title"></strong><p id="model-preparation-detail"></p><div id="model-download-progress"></div></div></div>
-        <details class="device-advanced model-knobs" id="model-knobs">
-          <summary><span class="advanced-toggle-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></span><span>고급 처리 설정</span><svg class="advanced-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>
-          <div class="advanced-fields" id="model-options">
+        <section class="model-knobs" id="model-knobs" aria-label="처리 설정">
+          <div id="model-options">
             <div class="knob-grid">
               <div class="chunk-default-setting"><label class="field"><span>기본 청크 상한 <small>분</small></span><input data-knob="chunk_minutes" type="number" min="1" max="90" value="30"><small class="field-help">처음에는 VRAM에 따라 30·60·90분을 권장합니다. 다음 노트의 기본 청크 분할 개수를 계산하는 기준입니다.</small></label><button class="ghost-button" id="save-chunk-default" type="button">분할 기준 저장</button><small id="chunk-default-status" role="status"></small></div>
               <label class="field"><span>화자 연결 구간 <small>초</small></span><input data-knob="bridge_seconds" type="number" min="0" max="120" value="30"><small class="field-help">청크 경계를 다시 읽는 길이입니다. 0이면 추가 처리를 생략합니다.</small></label>
@@ -451,8 +449,7 @@
               <label class="field cuda-knob"><span>KV 캐시 사용</span><select data-knob="use_cache"><option value="true">사용 · 속도 우선</option><option value="false">해제 · 느리게 처리</option></select><small class="field-help">해제하면 이전 토큰을 다시 계산합니다.</small></label>
             </div>
           </div>
-        </details>
-        <p class="field-help model-setup-help">처음에는 실행 환경도 함께 준비합니다. 준비 중 창을 닫아도 계속 진행됩니다.</p>
+        </section>
         <button class="primary-action" id="prepare-local-model" type="submit">모델 준비</button>
       </form>
     </dialog>
@@ -521,10 +518,9 @@
     </div>
     <div class="toast" id="toast" role="status"></div>
     <script src="/selects.js?v=mac-nemotron-20261024" defer></script>
-    <script src="/app.js?v=mac-nemotron-20261024" defer></script>
-    <script src="/speech.js?v=mac-nemotron-20261024" defer></script>
+    <script src="/app.js?v=model-settings-20261025" defer></script>
+    <script src="/speech.js?v=model-sizes-20261025" defer></script>
     <script src="/voice-review.js?v=voice-review-2" defer></script>
-    <script src="/diarization.js?v=diarization-2" defer></script>
     <script src="/voices.js?v=voice-profiles-1" defer></script>
   </body>
 </html>

@@ -44,7 +44,7 @@ class AutomaticOutputTests(unittest.IsolatedAsyncioTestCase):
                                  'load_seconds': 1, 'inference_seconds': 1}}
         with patch.object(self.main, 'resolve_device', new=AsyncMock(return_value=target)), \
              patch.object(self.main.LOCAL_MODELS, 'inference_session', new=session), \
-             patch.object(self.main.DIARIZATION.local, 'execute', new=AsyncMock(return_value=diarization)), \
+             patch.object(self.main.LOCAL_DIARIZATION, 'execute', new=AsyncMock(return_value=diarization)), \
              patch.object(self.main, 'estimate_note_inference', return_value=30), \
              patch.object(self.main, 'run_audio_work', new=AsyncMock(side_effect=[None, 4., [(source, 0.)], []])), \
              patch.object(self.main, 'transcribe_chunk', new=AsyncMock(return_value=('[1][S01]회의 내용입니다.[3]', segments))) as inference:

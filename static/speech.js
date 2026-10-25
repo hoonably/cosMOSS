@@ -5,9 +5,9 @@
   let deviceId = null, consentKey = null, localOptionsKey = null;
   let setupKey = null, setupState = null, setupRevision = 0, setupTimer = null, setupController = null;
   const descriptions = {
-    'moss-sglang': '전체 녹음의 문맥을 유지해 전사합니다. 최대 90분 · 화자 구분은 Nemotron.',
-    'qwen-transformers': '약 3분씩 빠르게 전사한 뒤 단어 시간을 정렬합니다. 화자 구분은 Nemotron.',
-    'moss-qwen-sequential': 'MOSS 전체 전사 후 Qwen을 순차 실행합니다. MOSS 본문과 비교용 Qwen 대본을 각각 보관합니다.',
+    'moss-sglang': '전체 녹음의 문맥을 유지해 전사합니다. 최대 90분 · 화자 구분은 Nemotron 0.1B.',
+    'qwen-transformers': '약 3분씩 빠르게 전사한 뒤 단어 시간을 정렬합니다. 화자 구분은 Nemotron 0.1B.',
+    'moss-qwen-sequential': 'MOSS 전체 전사 후 Qwen3-ASR 1.7B를 순차 실행합니다. MOSS 본문과 비교용 Qwen 대본을 각각 보관합니다.',
   };
   function available() { return executionDevice()?.backend === 'cuda' && executionDevice()?.model_key !== 'custom' && executionDevice()?.model_selected !== false; }
   function localActive() { return executionDevice()?.kind === 'local' && executionDevice()?.backend === 'mlx' && executionDevice()?.model_selected !== false; }
@@ -25,12 +25,7 @@
     const optionsKey = JSON.stringify([device.id, state.catalog?.models, state.catalog?.recommendation?.model_key, device.model_key]);
     if (optionsKey === localOptionsKey && !entering) return;
     localOptionsKey = optionsKey;
-    localModel.innerHTML = modelOptionsHtml('local', selected, false);
-    // A custom repository is configured in device settings; a per-note choice
-    // can reuse it but must never silently open or change the device defaults.
-    const custom = localModel.querySelector('option[value="custom"]');
-    if (device.model_key !== 'custom') custom?.remove();
-    else if (custom) custom.textContent = 'MOSS · 사용자 지정 MLX';
+    localModel.innerHTML = modelOptionsHtml('local', selected);
     if ([...localModel.options].some(option => option.value === selected)) localModel.value = selected;
   }
   function preferenceKey() { return `cosmoss.speech.${executionDevice()?.id}`; }
@@ -55,7 +50,7 @@
       : busy ? '선택한 모델을 준비하고 있어요…'
       : authRequired ? setupState.error || 'Hugging Face 로그인 또는 모델 이용 동의가 필요합니다.'
       : phase === 'error' ? setupState.error || '모델을 준비하지 못했습니다.'
-      : localActive() && setupState?.asr_ready && !setupState?.diarization_ready ? '화자 구분에 필요한 Nemotron을 준비해 주세요.'
+      : localActive() && setupState?.asr_ready && !setupState?.diarization_ready ? '화자 구분에 필요한 Nemotron 0.1B를 준비해 주세요.'
       : '선택한 전사 모델과 화자 구분 모델을 준비한 뒤 시작할 수 있습니다.';
     const button = $('#prepare-upload-model');
     button.classList.toggle('hidden', busy);
@@ -118,7 +113,7 @@
       $('#allow-speech-memory-risk').required = false;
     }
     $('#speech-description').textContent = local
-      ? 'MOSS MLX로 전사한 뒤 Nemotron으로 전체 녹음의 화자를 구분합니다. 두 모델은 순서대로 실행하고 메모리를 해제합니다.'
+      ? 'MOSS MLX로 전사한 뒤 Nemotron 0.1B로 전체 녹음의 화자를 구분합니다. 두 모델은 순서대로 실행하고 메모리를 해제합니다.'
       : descriptions[pipeline.value] || '';
     const caution = $('#local-model-caution');
     caution.classList.toggle('hidden', !local || localModel.value !== 'mlx-4bit');

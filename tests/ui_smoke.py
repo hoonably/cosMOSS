@@ -249,31 +249,26 @@ async def main():
         await page.click('[data-device-id="local"] [data-device-action="local-model"]')
         await page.locator('#prepare-local-model:not([disabled])').wait_for()
         assert await page.locator('#model-choice').input_value() == 'mlx-8bit'
-        assert await page.locator('#model-choice option[value="cuda-original"]').evaluate('el => el.disabled')
+        assert await page.locator('#model-choice option[value="cuda-original"], #model-choice option[value="custom"]').count() == 0
         await choose_option(page, '#model-choice', 'mlx-4bit')
-        await page.locator('#model-knobs > summary').click()
+        assert await page.locator('[data-knob=chunk_minutes]').is_visible()
+        assert await page.locator('#model-knobs > summary').count() == 0
         await page.locator('[data-knob="chunk_minutes"]').fill('10')
         await choose_option(page, '[data-knob="kv_bits"]', '0')
         await choose_option(page, '[data-knob="prefill_step_size"]', '256')
 
-        assert await page.locator('#model-sources input[value="cache"]').is_checked()
+        assert await page.locator('#model-sources, #model-custom-id, #model-folder-path').count() == 0
         assert await page.locator('#model-cache-path').inner_text() == local_setup['cache_dir']
-        await page.locator('.model-source:has(input[value="folder"])').click()
-        await page.click('#choose-model-folder')
-        assert await page.locator('#model-folder-path').input_value() == '/Users/tester/Models/moss mlx'
-        assert await page.locator('#model-folder-path').evaluate('el => el.offsetHeight') == 44
         await page.click('#prepare-local-model')
         await page.wait_for_function("state.localModel?.phase === 'ready' && !state.localModelSubmitting")
         assert await page.locator('#model-preparation').is_hidden()
-        assert local_prepared[-1]['source'] == 'folder' and local_prepared[-1]['path'] == '/Users/tester/Models/moss mlx'
+        assert local_prepared[-1]['source'] == 'cache' and local_prepared[-1]['path'] == ''
         assert local_prepared[-1]['model_key'] == 'mlx-4bit'
         assert local_prepared[-1]['options']['kv_bits'] == 0
         assert local_prepared[-1]['options']['prefill_step_size'] == 256
 
         await page.click('#close-local-model')
         await page.click('[data-device-id="local"] [data-device-action="local-model"]')
-        await page.wait_for_function("document.querySelector('#model-sources input[value=folder]').checked")
-        await page.locator('.model-source:has(input[value="cache"])').click()
         await page.click('#prepare-local-model')
         await page.locator('#model-download-progress strong').wait_for()
         assert await page.locator('#model-download-progress strong').inner_text() == '25.0%'
@@ -303,22 +298,18 @@ async def main():
         await page.locator('#local-model-dialog[open] #prepare-local-model:not([disabled])').wait_for()
         assert remote_prepared == [], 'Automatic setup should not submit the manual model form'
         assert await page.locator('#model-choice').input_value() == 'cuda-original'
-        assert await page.locator('#model-choice option[value="mlx-8bit"]').evaluate('el => el.disabled')
+        assert await page.locator('#model-choice option[value="mlx-8bit"], #model-choice option[value="custom"]').count() == 0
         assert await page.locator('#model-choice option[value="cuda-8bit"], #model-choice option[value="cuda-4bit"]').count() == 0
-        await page.locator('#model-knobs > summary').click()
+        assert await page.locator('[data-knob=chunk_minutes]').is_visible()
+        assert await page.locator('#model-knobs > summary').count() == 0
         await choose_option(page, '[data-knob="precision"]', 'bf16')
         assert await page.locator('[data-knob="precision"] option[value="int8"], [data-knob="precision"] option[value="int4"]').count() == 0
         await page.locator('[data-knob="chunk_minutes"]').fill('15')
         await choose_option(page, '[data-knob="attention"]', 'eager')
         assert await page.locator('[data-knob="cuda_kv_bits"]').count() == 0
 
-        assert await page.locator('#model-sources input[value="cache"]').is_checked()
+        assert await page.locator('#model-sources, #model-custom-id, #model-folder-path').count() == 0
         assert await page.locator('#model-cache-path').inner_text() == '/home/tester/.cache/huggingface/hub'
-        await page.locator('.model-source:has(input[value="folder"])').click()
-        assert await page.locator('#choose-model-folder').is_hidden(), 'Remote folders must never open the Mac picker'
-        assert 'lab-3090' in await page.locator('#model-folder-help').inner_text()
-        await page.locator('#model-folder-path').fill('~/models/moss')
-        await page.locator('.model-source:has(input[value="cache"])').click()
         await page.click('#prepare-local-model')
         await page.locator('#model-download-progress strong').wait_for()
         assert await page.locator('#model-download-progress strong').inner_text() == '25.0%'
@@ -332,13 +323,11 @@ async def main():
         assert all(.75 <= gap <= 1.4 for gap in intervals[:2]), intervals
         await page.click('[data-device-id="' + 'b' * 32 + '"] [data-device-action="install"]')
         await page.locator('#prepare-local-model:not([disabled])').wait_for()
-        await page.locator('.model-source:has(input[value="folder"])').click()
-        await page.locator('#model-folder-path').fill('~/models/moss')
         await page.click('#prepare-local-model')
         await page.wait_for_function("state.workerStates['b'.repeat(32)]?.phase === 'installed' && !state.localModelSubmitting")
         assert await page.locator('#model-preparation').is_hidden()
         assert 'GPU는 전사할 때' not in await page.locator('#local-model-dialog').inner_text()
-        assert remote_prepared[-1]['source'] == 'folder' and remote_prepared[-1]['path'] == '~/models/moss'
+        assert remote_prepared[-1]['source'] == 'cache' and remote_prepared[-1]['path'] == ''
         assert 'cuda_kv_bits' not in remote_prepared[-1]['options']
         assert remote_prepared[-1]['options']['precision'] == 'bf16'
         await page.click('#close-local-model')

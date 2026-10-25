@@ -75,7 +75,7 @@ def main():
                 raise RuntimeError('Speech pipeline lease disconnected')
         environment = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'HF_HUB_DISABLE_TELEMETRY': '1',
                        'HF_HUB_DISABLE_PROGRESS_BARS': '1', 'TQDM_DISABLE': '1',
-                       'PYANNOTE_METRICS_ENABLED': '0', 'OMP_NUM_THREADS': '4'}
+                       'OMP_NUM_THREADS': '4'}
         def run(args, measure_gpu=False, **kwargs):
             child = subprocess.Popen(args, start_new_session=True, env=environment, **kwargs)
             peak_memory, sampled = 0, 0.0

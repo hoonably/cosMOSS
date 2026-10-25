@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.diarization import Diarization
+from src.speaker_records import SpeakerRecords
 from src.note_cleanup import MISSING_GRACE_SECONDS, NoteCleanup
 from src.store import NoteStore
 from src.summaries import Summaries
@@ -23,7 +23,7 @@ class NoteCleanupTests(unittest.TestCase):
         self.store = NoteStore(self.data / 'notes.sqlite3')
         self.library = TextLibrary(self.data / 'library.sqlite3')
         self.summaries = Summaries(self.data / 'summaries')
-        self.diarization = Diarization(self.data, self.root)
+        self.diarization = SpeakerRecords(self.data)
         self.cleaner = NoteCleanup(self.store, self.library, self.summaries, self.diarization, self.move)
         self.export = self.folder / '회의.txt'; self.export.write_text('개인 전사문')
 
@@ -45,7 +45,6 @@ class NoteCleanupTests(unittest.TestCase):
         self.diarization.directory.mkdir(exist_ok=True)
         (self.diarization.directory / (key + '.json')).write_text('private speakers')
         (self.diarization.directory / (key + '.tmp')).write_text('interrupted write')
-        self.diarization.states['note:' + key] = {'phase': 'done'}
 
     def test_trash_cleans_all_path_owners_audio_json_states_and_index_only(self):
         keys = [self.note(key)[0] for key in ('a', 'b')]
@@ -71,14 +70,13 @@ class NoteCleanupTests(unittest.TestCase):
             self.assertFalse(self.summaries._path(key).exists())
             self.assertNotIn(key, self.summaries.states)
             self.assertFalse((self.diarization.directory / (key + '.json')).exists())
-            self.assertNotIn('note:' + key, self.diarization.states)
         self.assertTrue(other_folder.exists()); self.assertTrue(self.summaries._path(other_key).exists())
         self.assertTrue(summary.exists()); self.assertTrue(profile.exists()); self.assertTrue(original.exists())
 
     def test_busy_owner_or_related_document_blocks_before_any_move(self):
         key, folder = self.note()
         document = self.library.scan(str(self.folder))[0]
-        for attribute, identity in ((self.summaries, document['id']), (self.diarization, 'note:' + key)):
+        for attribute, identity in ((self.summaries, document['id']),):
             with patch.object(attribute, 'busy', side_effect=lambda value: value == identity):
                 with self.assertRaises(ValueError): self.cleaner.remove(self.export, trash_transcript=True)
             self.assertTrue(folder.exists()); self.assertTrue(self.export.exists())

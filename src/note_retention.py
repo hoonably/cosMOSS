@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 class RecoverableNoteCleanup(NoteCleanup):
-    def __init__(self, store, library, summaries, diarization, trash=None, *, active=None, missing_since=None):
-        super().__init__(store, library, summaries, diarization, trash, active=active, missing_since=missing_since)
+    def __init__(self, store, library, summaries, speaker_records, trash=None, *, active=None, missing_since=None):
+        super().__init__(store, library, summaries, speaker_records, trash, active=active, missing_since=missing_since)
         self.directory = store.data_dir / 'recycle-bin'
         self.database = store.data_dir / 'note-retention.sqlite3'
         with self.store.lock, self._connect() as connection:
@@ -111,7 +111,7 @@ class RecoverableNoteCleanup(NoteCleanup):
                 raise ValueError('노트의 녹음 저장 폴더를 확인해 주세요.')
         for key in {note['id'] for note in notes} | {row['id'] for row in documents}:
             self.summaries._path(key)
-        for directory in (self.summaries.directory, self.diarization.directory):
+        for directory in (self.summaries.directory, self.speaker_records.directory):
             if directory.resolve() != directory:
                 raise ValueError('앱 내부 기록의 저장 경로를 확인해 주세요.')
 
@@ -240,7 +240,7 @@ class RecoverableNoteCleanup(NoteCleanup):
             raise ValueError('이 파일은 이미 다른 노트에 연결되어 있습니다.')
         for row in indexed:
             if row['id'] not in old_ids and (self.summaries._path(row['id']).exists()
-                    or (self.diarization.directory / (row['id'] + '.json')).exists()):
+                    or (self.speaker_records.directory / (row['id'] + '.json')).exists()):
                 raise ValueError('이 파일에는 별도의 AI 기록이 있어 자동으로 연결하지 않았습니다.')
         info = target.stat()
         with self.library._connect() as connection:
@@ -329,7 +329,7 @@ class RecoverableNoteCleanup(NoteCleanup):
             if owned.exists(): shutil.rmtree(owned)
         for key in self._ids(entry):
             self.summaries.forget(key)
-            self.diarization.forget(key)
+            self.speaker_records.forget(key)
         for note in notes:
             self.store.delete(note['id'])
         for row in entry['documents']:

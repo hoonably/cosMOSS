@@ -8,6 +8,7 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     static let shared = UpdateController()
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var automaticallyChecksForUpdates = true
+    @Published private(set) var automaticallyDownloadsUpdates = true
     @Published private(set) var isChecking = false
     @Published private(set) var updateAvailable = false
     @Published private(set) var status = "새 버전을 확인합니다."
@@ -16,26 +17,45 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     private var manualCheck = false
     private var installationTask: Task<Void, Never>?
     private var started = false
+    private var pendingCheck = false
+    var isDevelopmentBuild: Bool { Bundle.main.object(forInfoDictionaryKey: "CosMOSSProjectRoot") != nil }
+    var automaticUpdatesEnabled: Bool { automaticallyChecksForUpdates && automaticallyDownloadsUpdates }
     private lazy var controller = SPUStandardUpdaterController(
         startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil
     )
 
     func start() {
-        // A development launcher must never replace a checkout-based app.
-        guard !started, Bundle.main.object(forInfoDictionaryKey: "CosMOSSProjectRoot") == nil else { return }
+        guard !started else { return }
         started = true
         controller.updater.publisher(for: \.canCheckForUpdates)
             .receive(on: RunLoop.main)
-            .sink { [weak self] value in self?.canCheckForUpdates = value }
+            .sink { [weak self] value in
+                guard let self else { return }
+                self.canCheckForUpdates = value
+                if value && self.pendingCheck { self.refreshUpdateInformation() }
+            }
             .store(in: &observers)
         controller.updater.publisher(for: \.automaticallyChecksForUpdates)
             .receive(on: RunLoop.main)
             .sink { [weak self] value in self?.automaticallyChecksForUpdates = value }
             .store(in: &observers)
+        controller.updater.publisher(for: \.automaticallyDownloadsUpdates)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] value in self?.automaticallyDownloadsUpdates = value }
+            .store(in: &observers)
+        automaticallyChecksForUpdates = controller.updater.automaticallyChecksForUpdates
+        automaticallyDownloadsUpdates = controller.updater.automaticallyDownloadsUpdates
+        // Preferences and the window remain available, but a development
+        // launcher must never replace the checkout-based app.
+        guard !isDevelopmentBuild else {
+            status = "개발용 앱입니다. 배포 버전은 릴리즈 페이지에서 확인할 수 있습니다."
+            return
+        }
         controller.startUpdater()
     }
 
     func checkForUpdates() {
+        start()
         if updateWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 270),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -50,14 +70,22 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
         refreshUpdateInformation()
     }
 
-    func setAutomaticChecks(_ enabled: Bool) {
-        // Sparkle persists this value itself. Never overwrite it on app launch.
+    func setAutomaticUpdates(_ enabled: Bool) {
+        // Sparkle persists both values. Never overwrite a user's choice at launch.
         controller.updater.automaticallyChecksForUpdates = enabled
+        controller.updater.automaticallyDownloadsUpdates = enabled
         automaticallyChecksForUpdates = controller.updater.automaticallyChecksForUpdates
+        automaticallyDownloadsUpdates = controller.updater.automaticallyDownloadsUpdates
     }
 
     func refreshUpdateInformation() {
-        guard canCheckForUpdates, !isChecking else { return }
+        guard !isDevelopmentBuild, !isChecking else { return }
+        guard canCheckForUpdates, !controller.updater.sessionInProgress else {
+            pendingCheck = true
+            status = "업데이트 확인을 준비하고 있습니다…"
+            return
+        }
+        pendingCheck = false
         manualCheck = true
         isChecking = true
         updateAvailable = false
@@ -78,7 +106,12 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
-        guard manualCheck else { return }
+        guard manualCheck else {
+            if pendingCheck {
+                DispatchQueue.main.async { [weak self] in self?.refreshUpdateInformation() }
+            }
+            return
+        }
         manualCheck = false
         isChecking = false
         if let error = error as NSError?, !(error.domain == SUSparkleErrorDomain && error.code == Int(SUError.noUpdateError.rawValue)) {
@@ -129,24 +162,38 @@ private struct UpdateCheckView: View {
             }
             .frame(minHeight: 20, alignment: .leading)
             Divider()
-            Toggle("새 업데이트가 있으면 자동으로 알림", isOn: Binding(
-                get: { updates.automaticallyChecksForUpdates },
-                set: { updates.setAutomaticChecks($0) }
-            ))
-            .toggleStyle(.checkbox)
-            .font(.system(size: 12))
-            .tint(accent)
-            .accessibilityIdentifier("automatic-update-notifications")
+            VStack(alignment: .leading, spacing: 7) {
+                Toggle("자동 업데이트", isOn: Binding(
+                    get: { updates.automaticUpdatesEnabled },
+                    set: { updates.setAutomaticUpdates($0) }
+                ))
+                .toggleStyle(.checkbox)
+                .font(.system(size: 13))
+                .tint(accent)
+                .accessibilityIdentifier("automatic-updates")
+                Text(updates.isDevelopmentBuild
+                     ? "설정은 저장되며, 자동 업데이트는 배포용 앱에서 적용됩니다."
+                     : "새 버전을 자동으로 다운로드하고 앱 종료 시 설치합니다.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Spacer()
-                Button(updates.updateAvailable ? "다운로드 및 설치…" : "다시 확인") {
-                    if updates.updateAvailable { updates.showAvailableUpdate() }
-                    else { updates.refreshUpdateInformation() }
+                if updates.isDevelopmentBuild {
+                    Button("릴리즈 보기") {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/hoonably/cosMOSS/releases/latest")!)
+                    }
+                    .buttonStyle(.borderedProminent).tint(accent).controlSize(.large)
+                } else {
+                    Button(updates.updateAvailable ? "다운로드 및 설치…" : "다시 확인") {
+                        if updates.updateAvailable { updates.showAvailableUpdate() }
+                        else { updates.refreshUpdateInformation() }
+                    }
+                    .disabled(!updates.canCheckForUpdates || updates.isChecking)
+                    .buttonStyle(.borderedProminent)
+                    .tint(accent)
+                    .controlSize(.large)
                 }
-                .disabled(!updates.canCheckForUpdates || updates.isChecking)
-                .buttonStyle(.borderedProminent)
-                .tint(accent)
-                .controlSize(.large)
             }
         }
         .padding(28)

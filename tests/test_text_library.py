@@ -122,6 +122,7 @@ class LibraryAPITests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from src import main
         self.main = main
+        self.enterContext(patch.object(main.SUMMARY_MODELS, 'resolve', new=AsyncMock(return_value={})))
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
