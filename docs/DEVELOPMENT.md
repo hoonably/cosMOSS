@@ -2,6 +2,15 @@
 
 [← cosMOSS](../README.md)
 
+## Website deployment
+
+Cloudflare Pages publishes `https://cosmoss-app.pages.dev/` from this repository.
+The `cosmoss-app` project uses `main`, root directory `docs`, build command
+`exit 0`, and output directory `.`. Build watch paths include only `docs/*`;
+automatic preview branch deployments are disabled. The site uses static files
+without Pages Functions, Workers, or database bindings. App downloads remain on
+GitHub Releases.
+
 ## CUDA speech presets
 
 `speech_pipeline.py` defines the ordered presets and conservative memory plans;
