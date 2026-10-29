@@ -29,7 +29,7 @@ def main():
     assert metadata['SUFeedURL'] == 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml'
     assert metadata['SURequireSignedFeed'] and metadata['SUVerifyUpdateBeforeExtraction']
     assert metadata['SUEnableAutomaticChecks']
-    assert metadata['SUAutomaticallyUpdate']
+    assert not metadata['SUAutomaticallyUpdate']
     assert metadata['NSMicrophoneUsageDescription']
     assert metadata['UTExportedTypeDeclarations'][0]['UTTypeTagSpecification']['public.filename-extension'] == ['mossvoice']
     assert (resources / 'app/static/voices.js').is_file()

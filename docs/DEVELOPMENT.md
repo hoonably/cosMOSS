@@ -4,12 +4,15 @@
 
 ## Website deployment
 
-Cloudflare Pages publishes `https://cosmoss-app.pages.dev/` from this repository.
-The `cosmoss-app` project uses `main`, root directory `docs`, build command
-`exit 0`, and output directory `.`. Build watch paths include only `docs/*`;
-automatic preview branch deployments are disabled. The site uses static files
-without Pages Functions, Workers, or database bindings. App downloads remain on
-GitHub Releases.
+The planned public address is `https://cosmoss.pages.dev/`. Project links use
+this address in advance; the new `cosmoss` Pages project has not been created or
+deployed yet, so the address may return 404 until deployment is configured.
+
+For the new project, reuse the existing build settings: branch `main`, root
+directory `docs`, build command `exit 0`, and output directory `.`. Build watch
+paths include only `docs/*`; automatic preview branch deployments are disabled.
+The site uses static files without Pages Functions, Workers, or database
+bindings. App downloads remain on GitHub Releases.
 
 ## CUDA speech presets
 
@@ -184,8 +187,12 @@ installation; `scripts/setup-update-key.swift` checks that both keys match.
 embedded public key. An install/relaunch waits for transcription, uploads,
 model preparation and summaries to finish, and for pending editor saves.
 The updater is disabled in checkout-based development launchers.
-The native update-check window exposes Sparkle's persisted automatic-check setting.
-`SUEnableAutomaticChecks` enables it on first launch; user choices are never reset.
+The native update-check window separates Sparkle's persisted automatic-check
+and automatic-download/install settings. `SUEnableAutomaticChecks` is true and
+`SUAutomaticallyUpdate` is false for a new installation. Existing saved on/off
+choices for both settings are preserved; enabling notifications does not enable
+installation. While checks are off the install checkbox is disabled and its
+saved choice remains visible for when checks are enabled again.
 Manual checks remain available when automatic notifications are off. Run
 `python tests/update_preferences_smoke.py` to verify the default, persistence,
 manual checks, update availability and signed-feed error handling in isolated apps.
@@ -756,6 +763,13 @@ and `tests/chunk_selection_ui_smoke.py` (with an existing recording).
 favicon live in `docs/assets/`; screenshots are shared with the README in
 `docs/images/`. All asset paths are relative so the site works under the
 `/cosMOSS/` GitHub Pages project path. Existing Markdown guides remain intact.
+
+Capture the current UI with example notes rather than personal recordings.
+Render the current UI at 4×, then export web-sized images: overview 3200×2000,
+note dialog 3200×1849, and speaker dialog 2560×2083. This redraws text before
+downsampling; it never enlarges an existing bitmap. WebP export adds no further
+lossy encoding. The README and website use the same three files. The image viewer
+is capped at 1200 CSS px and at the source pixels divided by the display pixel ratio.
 
 Preview locally with `python3 -m http.server 18777 --bind 127.0.0.1 --directory docs`,
 then open `http://127.0.0.1:18777/`. No package installation or build is required.

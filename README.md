@@ -8,7 +8,7 @@
 외부 전사 서비스 없이, Mac 온디바이스 또는 내 SSH 서버에서 처리합니다.
 
 [![Mac용 다운로드](https://img.shields.io/badge/macOS-1.0.0_%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C-11925A?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/hoonably/cosMOSS/releases/download/v1.0.0/cosMOSS-v1.0.0-macos-arm64.dmg)
-[![웹사이트](https://img.shields.io/badge/%EC%9B%B9%EC%82%AC%EC%9D%B4%ED%8A%B8-%EB%B0%A9%EB%AC%B8%ED%95%98%EA%B8%B0-11925A?style=for-the-badge&logo=safari&logoColor=white)](https://cosmoss-app.pages.dev/)
+[![웹사이트](https://img.shields.io/badge/%EC%9B%B9%EC%82%AC%EC%9D%B4%ED%8A%B8-%EB%B0%A9%EB%AC%B8%ED%95%98%EA%B8%B0-11925A?style=for-the-badge&logo=safari&logoColor=white)](https://cosmoss.pages.dev/)
 
 Apple Silicon · macOS 13 이상
 
@@ -30,7 +30,7 @@ Apple Silicon · macOS 13 이상
 대본 옆 재생 버튼으로 목소리를 확인하고, 화자 카드에서 이름을 바로 고치세요.
 방향키로 발화를 이동하고 **Space**로 재생·정지합니다. 같은 목소리는 드래그로 합칠 수 있습니다.
 
-![얀 르쿤·젠슨 황·샘 알트먼을 예시로 표시한 화자 설정 화면](docs/images/speakers.webp)
+![예시 화자의 이름과 발화를 확인하는 화자 설정 화면](docs/images/speakers.webp)
 
 <sub>실제 발언이 아닌 가상 대화 예시입니다.</sub>
 
@@ -52,6 +52,20 @@ Apple Silicon · macOS 13 이상
 서버만 사용한다면 Mac용 모델은 설치하지 않아도 됩니다.
 CLI 요약은 이 Mac에 설치하고 로그인한 Codex·Claude 계정을 사용합니다.
 음성과 노트는 Mac에 보관하며, 원격 전사·AI 요약 시 선택한 장치·서비스로 필요한 내용을 전달합니다.
+
+## 업데이트와 권한
+
+**cosMOSS → 업데이트 확인…**에서 현재 버전과 새 버전을 확인하세요.
+**새 버전 자동 알림**과 **자동 다운로드 및 설치**는 따로 선택할 수 있고, 선택은 다음 실행에도 유지됩니다.
+처음 설치하면 알림만 켜져 있으며 설치는 직접 선택합니다. 기존 사용자가 저장한 설정은 유지합니다.
+
+첫 실행의 권한 안내는 시스템 설정 옆에 열립니다. 안내의 앱 아이콘을 **전체 디스크 접근 권한** 목록으로 옮긴 뒤 스위치를 켜세요.
+권한은 macOS에서 직접 허용하며, 설정에서 돌아오면 접근 상태를 다시 확인합니다.
+
+## 개발·배포 안내
+
+직접 실행하거나 수정하려면 [개발 가이드](docs/DEVELOPMENT.md),
+배포를 준비하려면 [릴리스 가이드](docs/RELEASING.md)를 참고하세요.
 
 ## Credits
 
