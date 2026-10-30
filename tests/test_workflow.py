@@ -318,6 +318,32 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
         self.assertEqual(self.manager.status(self.note)['prompt'], '내가 수정한 요청')
         self.assertFalse(self.manager.status(self.note)['use_default_prompt'])
 
+    def test_release_migration_replaces_saved_default_once_and_preserves_later_edits(self):
+        for old in (TOPIC_DEFAULT_QUERY, '이전 버전에서 직접 저장한 기본 프롬프트'):
+            self.manager.preferences_path.parent.mkdir(parents=True, exist_ok=True)
+            self.manager.preferences_path.write_text(json.dumps({'default_prompt': old}))
+            self.assertEqual(self.manager.preferences()['default_prompt'], DEFAULT_QUERY)
+            self.assertFalse(self.manager.preferences()['customized'])
+            self.assertEqual(Summaries(self.manager.directory).preferences()['default_prompt'], DEFAULT_QUERY)
+            self.manager.save_preferences('업데이트 후 새로 지정한 기준')
+            restored = Summaries(self.manager.directory)
+            self.assertEqual(restored.preferences()['default_prompt'], '업데이트 후 새로 지정한 기준')
+            self.assertTrue(restored.preferences()['customized'])
+            restored.save_preferences(None)
+            restored.save_preferences('추천 복원 후 다시 지정한 기준')
+            self.assertEqual(Summaries(restored.directory).preferences()['default_prompt'], '추천 복원 후 다시 지정한 기준')
+
+    def test_failed_prompt_migration_preserves_previous_file_and_can_retry(self):
+        self.manager.preferences_path.parent.mkdir(parents=True, exist_ok=True)
+        original = json.dumps({'default_prompt': '이전 사용자 기준'}).encode()
+        self.manager.preferences_path.write_bytes(original)
+        with patch('src.summaries.os.replace', side_effect=PermissionError('denied')):
+            with self.assertRaises(PermissionError):
+                self.manager.preferences()
+        self.assertEqual(self.manager.preferences_path.read_bytes(), original)
+        self.assertFalse(list(self.root.glob('.summary-preferences-*')))
+        self.assertEqual(self.manager.preferences()['default_prompt'], DEFAULT_QUERY)
+
     async def test_invalid_output_directory_does_not_start_cli(self):
         self.fake_cli('pass\n')
         for directory in ('relative', str(self.root / 'missing')):

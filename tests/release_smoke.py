@@ -55,6 +55,9 @@ def main():
                            MOSS_DATA_DIR=str(root / 'data'), MOSS_RUNTIME_DIR=str(root),
                            MLX_VENV=str(root / 'mlx'), UV_BIN=str(resources / 'tools/bin/uv'))
         base = f'http://127.0.0.1:{port}'
+        # Simulate an existing user's edited default before this release starts.
+        (root / 'data').mkdir()
+        (root / 'data/summary-preferences.json').write_text(json.dumps({'default_prompt': 'old saved default'}))
 
         def request(path, body=None, method='GET'):
             headers = {'Origin': base}
@@ -84,6 +87,13 @@ def main():
                 else:
                     raise AssertionError('Embedded backend failed to start')
                 assert request('/api/notes') == []
+                preferences = request('/api/summary/default-prompt')
+                assert preferences['default_prompt'] == preferences['recommended_prompt']
+                assert preferences['default_prompt'] != 'old saved default'
+                assert not preferences['customized']
+                custom = 'edited after updating'
+                assert request('/api/summary/default-prompt', {'prompt':custom}, 'PUT')['default_prompt'] == custom
+                assert request('/api/summary/default-prompt')['default_prompt'] == custom
                 devices = request('/api/devices')
                 assert len(devices) == 1 and devices[0]['id'] == 'local'
                 runtime = request('/api/devices/local/environment')
@@ -111,8 +121,12 @@ def main():
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+        subprocess.run([str(resources / 'python/bin/python3.12'), '-c',
+                        "from pathlib import Path; from src.summaries import Summaries; "
+                        "assert Summaries(Path('data/summaries')).preferences()['default_prompt'] == 'edited after updating'"],
+                       cwd=root, env=environment, check=True)
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
-    print('PASS: relocated release, signature, embedded Python/uv, isolated data, VTT reading/editing, unchanged bundle')
+    print('PASS: relocated release, signature, embedded Python/uv, isolated data, one-time prompt reset and later edits, VTT reading/editing, unchanged bundle')
 
 
 if __name__ == '__main__':

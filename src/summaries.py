@@ -90,6 +90,8 @@ DEFAULT_QUERY = """전사문을 먼저 보정한 뒤, 한국어 Markdown 문서 
 
 요약을 먼저 배치하고, 보정 전사문 전체는 맨 뒤의 ‘보정 전사문 보기’ 접기 영역(<details>)에 넣어 처음에는 닫힌 상태로 표시하세요."""
 DEFAULT_QUERIES = {DEFAULT_QUERY, TOPIC_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY}
+# 1.0.1 replaces saved defaults once, including user-edited defaults.
+SUMMARY_PROMPT_REVISION = 1
 OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {"corrected_transcript": {"type": "string"}, "summary_markdown": {"type": "string"}},
@@ -207,9 +209,14 @@ class Summaries:
         with self.preferences_lock:
             try:
                 saved = json.loads(self.preferences_path.read_text(encoding='utf-8'))
-                prompt = saved.get('default_prompt') if isinstance(saved, dict) else None
             except (FileNotFoundError, json.JSONDecodeError):
-                prompt = None
+                saved = {}
+            if not isinstance(saved, dict) or saved.get('prompt_revision') != SUMMARY_PROMPT_REVISION:
+                # Persist the revision before serving the new default so later
+                # edits survive both a process restart and resetting to default.
+                self._write_preferences(None)
+                saved = {}
+            prompt = saved.get('default_prompt')
             if not isinstance(prompt, str) or not prompt.strip():
                 prompt = DEFAULT_QUERY
             return {'default_prompt': prompt, 'recommended_prompt': DEFAULT_QUERY, 'customized': prompt != DEFAULT_QUERY}
@@ -219,21 +226,21 @@ class Summaries:
         if not prompt or len(prompt) > 20000 or '\0' in prompt:
             raise ValueError('기본 프롬프트는 1~20,000자로 입력해 주세요.')
         with self.preferences_lock:
-            if prompt == DEFAULT_QUERY:
-                self.preferences_path.unlink(missing_ok=True)
-                return self.preferences()
-            self.preferences_path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=self.preferences_path.parent, prefix='.summary-preferences-', delete=False) as stream:
-                    temporary = Path(stream.name)
-                    stream.write(json.dumps({'default_prompt': prompt}, ensure_ascii=False).encode('utf-8'))
-                    stream.flush(); os.fsync(stream.fileno())
-                temporary.replace(self.preferences_path)
-            finally:
-                if temporary:
-                    temporary.unlink(missing_ok=True)
+            self._write_preferences(None if prompt == DEFAULT_QUERY else prompt)
             return self.preferences()
+
+    def _write_preferences(self, prompt: str | None):
+        self.preferences_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=self.preferences_path.parent, prefix='.summary-preferences-', delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(json.dumps({'default_prompt': prompt, 'prompt_revision': SUMMARY_PROMPT_REVISION}, ensure_ascii=False).encode('utf-8'))
+                stream.flush(); os.fsync(stream.fileno())
+            temporary.replace(self.preferences_path)
+        finally:
+            if temporary:
+                temporary.unlink(missing_ok=True)
 
     def _path(self, note_id: str) -> Path:
         if not note_id or Path(note_id).name != note_id or note_id in {".", ".."}:
