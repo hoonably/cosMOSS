@@ -1,6 +1,7 @@
 """Exercise the production Swift updater with isolated preferences and signed feeds."""
 import functools
 import http.server
+import os
 import pathlib
 import plistlib
 import shutil
@@ -8,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import uuid
+import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FRAMEWORK = ROOT / "macos/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
@@ -26,7 +28,11 @@ def main():
     identity = "io.github.hoonably.cosmoss.update-preferences-checks." + uuid.uuid4().hex
     with tempfile.TemporaryDirectory(prefix="cosmoss-update-preferences-") as directory:
         root = pathlib.Path(directory)
-        feed = (ROOT / "appcast.xml").read_text()
+        feed = pathlib.Path(os.environ.get('COSMOSS_TEST_FEED', ROOT / "appcast.xml")).read_text()
+        namespace = '{http://www.andymatuschak.org/xml-namespaces/sparkle}'
+        item = max(ET.fromstring(feed).findall('channel/item'), key=lambda value: int(value.findtext(namespace + 'version')))
+        build = int(item.findtext(namespace + 'version'))
+        version = item.findtext(namespace + 'shortVersionString')
         (root / "appcast.xml").write_text(feed)
         (root / "tampered.xml").write_text(feed.replace("<title>cosMOSS</title>", "<title>tampered</title>", 1))
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=directory))
@@ -50,8 +56,8 @@ def main():
                     "CFBundleName": "cosMOSS Update Preferences Checks",
                     "CFBundleExecutable": "UpdatePreferencesChecks",
                     "CFBundlePackageType": "APPL",
-                    "CFBundleVersion": "1" if mode == "available" else "1000",
-                    "CFBundleShortVersionString": "0.1.0",
+                    "CFBundleVersion": str(build - 1 if mode == "available" else build),
+                    "CFBundleShortVersionString": os.environ.get('COSMOSS_TEST_PREVIOUS_VERSION', version) if mode == "available" else version,
                     "LSMinimumSystemVersion": "13.0",
                     "SUFeedURL": f"http://127.0.0.1:{server.server_port}/" + ("tampered.xml" if mode == "error" else "appcast.xml"),
                     "SUPublicEDKey": (ROOT / "macos/UpdatePublicKey.txt").read_text().strip(),

@@ -178,10 +178,17 @@ change as a separate follow-up commit if necessary. Release notes stay short.
 
 The cosMOSS signing key is kept outside the checkout at
 `~/Library/Application Support/cosMOSS Development/sparkle-private-key` (0600).
-Back up and transfer this key securely for releases from another Mac. The
+`setup-update-key.swift` also backs it up in the login Keychain and restores a
+missing file only when the saved public key matches. Release preparation checks
+the key before building; a missing or mismatched key stops publication. Back up
+and transfer this key securely for releases from another Mac. The
 repository contains only `macos/UpdatePublicKey.txt`. `SPARKLE_PRIVATE_KEY_FILE`
 can select an existing restored key. Never regenerate a key for an existing
 installation; `scripts/setup-update-key.swift` checks that both keys match.
+The October 2026 1.0.1 reissue deliberately replaces a lost key. Older installed
+copies must be replaced manually once; the reissued installer is the baseline
+for subsequent signed in-app updates. Never use `--replace-lost-key` during a
+normal release; it is an explicit manual-reinstall migration only.
 
 `scripts/verify-update.swift` verifies both feed and archive using only the
 embedded public key. An install/relaunch waits for transcription, uploads,

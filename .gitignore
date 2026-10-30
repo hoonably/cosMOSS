@@ -29,3 +29,5 @@ logs/
 .env
 .env.*
 !.env.example
+sparkle-private-key
+sparkle-private-key.*
