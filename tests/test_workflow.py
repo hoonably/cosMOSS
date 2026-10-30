@@ -13,7 +13,7 @@ import httpx
 from src.store import NoteStore
 from src.text_files import save_text, speaker_changes, TextConflict
 from src.summaries import (Summaries, command, provider_status, DEFAULT_QUERY,
-                           PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY,
+                           PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY, TOPIC_DEFAULT_QUERY,
                            OUTPUT_SCHEMA, markdown_document, save_document)
 
 
@@ -306,7 +306,7 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
         self.assertEqual(restored.save_preferences(None), original)
 
     def test_default_migration_preserves_custom_prompts_and_history(self):
-        for old in (PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY):
+        for old in (PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY, TOPIC_DEFAULT_QUERY):
             self.manager._save(self.note['id'], {'phase':'done', 'prompt':old,
                 'result':{'prompt':old, 'source_hash':self.note['text_hash'], 'text':'이전 요약'}})
             state = self.manager.status(self.note)

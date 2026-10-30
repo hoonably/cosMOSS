@@ -60,7 +60,7 @@ FRONT_TRANSCRIPT_DEFAULT_QUERY = """전사문을 검토하여 한국어 Markdown
 - 주된 발표자나 발언의 중심이 뚜렷하게 바뀌면 대화 흐름에 따라 H2로 구분하세요. 단순한 발언 교대나 짧은 질의응답은 별도 구간으로 나누지 마세요.
 - 각 구간에서 주제가 바뀌면 H3 소제목을 사용하세요.
 - 각 소주제 끝에는 명시적으로 실행을 약속한 일이 있을 때만 ‘할 일’을 정리하세요. 담당자·기한은 확인되는 경우에만 적고, 제안이나 가능성을 확정된 과제로 바꾸지 마세요."""
-DEFAULT_QUERY = """전사문을 먼저 보정한 뒤, 보정된 내용을 바탕으로 한국어 Markdown 문서 하나를 작성하세요. 원본 파일은 유지하세요.
+TOPIC_DEFAULT_QUERY = """전사문을 먼저 보정한 뒤, 보정된 내용을 바탕으로 한국어 Markdown 문서 하나를 작성하세요. 원본 파일은 유지하세요.
 
 1. 전사문 보정
 - 전체 문맥을 바탕으로 음성 인식 오류와 잘못된 표현을 보정하세요. 최신 용어·고유명사는 필요하면 공식 자료에서 표기를 확인하세요.
@@ -73,7 +73,23 @@ DEFAULT_QUERY = """전사문을 먼저 보정한 뒤, 보정된 내용을 바탕
 - 각 소주제 끝에는 명시적으로 실행을 약속한 일이 있을 때만 ‘할 일’을 정리하세요. 담당자·기한은 확인되는 경우에만 적고, 제안이나 가능성을 확정된 과제로 바꾸지 마세요.
 
 최종 문서는 요약을 먼저 배치하고, 보정 전사문 전체를 맨 뒤의 ‘보정 전사문 보기’ 접기 영역(<details>)에 넣으세요. 접기 영역은 처음에는 닫힌 상태로 표시하세요."""
-DEFAULT_QUERIES = {DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY}
+DEFAULT_QUERY = """전사문을 먼저 보정한 뒤, 한국어 Markdown 문서 하나로 요약하세요. 원본 파일은 유지하세요.
+
+1. 전사문 보정
+- 전체 문맥을 바탕으로 음성 인식 오류를 보정하세요. 최신 용어·고유명사는 필요하면 공식 자료에서 표기를 확인하세요.
+- 발언의 의미·순서·시간표시는 유지하고, 화자는 오분류가 명백할 때만 수정하세요. 불확실한 내용을 확정하거나 발언을 추가하지 마세요.
+
+2. 요약
+- 제목(H1)을 쓰고 팀별로 H2를 나누세요. 팀 구분이 없으면 주요 주제별로 나누고, 소속을 추측하지 마세요.
+- 각 팀·주제는 다음 H3 항목으로 통일하세요.
+  - Recap: 핵심 요약 2–3줄.
+  - 핵심 이슈: 주요 논점과 해결이 필요한 문제.
+  - 현재까지 결과: 확인된 성과·진척·결정 사항.
+  - Action items: 명시적으로 약속하거나 합의한 후속 작업. 담당자·기한은 확인된 경우에만 기재.
+- 각 항목은 짧은 목록으로 적고 중복을 줄이세요. 내용 없는 항목은 생략하고, 제안·가능성을 확정된 결과나 할 일로 바꾸지 마세요.
+
+요약을 먼저 배치하고, 보정 전사문 전체는 맨 뒤의 ‘보정 전사문 보기’ 접기 영역(<details>)에 넣어 처음에는 닫힌 상태로 표시하세요."""
+DEFAULT_QUERIES = {DEFAULT_QUERY, TOPIC_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY}
 OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {"corrected_transcript": {"type": "string"}, "summary_markdown": {"type": "string"}},
