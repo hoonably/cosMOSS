@@ -8,23 +8,29 @@
 
 Apple Silicon용 DMG를 기본 설치 파일로 제공하고, 서명된 앱 ZIP은 Sparkle 업데이트에 사용합니다. 앱은 macOS 13 이상을 지원합니다. DMG를 열고 **cosMOSS → 응용 프로그램**으로 드래그하면 설치할 수 있습니다.
 
+## 다음 버전 배포
+
+`release.json`의 version과 build를 올리고 main에 푸시합니다. build는 표시 버전과 별개로 이전 배포보다 항상 커야 합니다. 중앙 빌드가 성공한 뒤 검증된 파일을 받아 공개합니다.
+
+```sh
+python3 scripts/release.py prepare
+python3 scripts/release.py status
+python3 scripts/release.py download
+python3 scripts/release.py stage
+python3 scripts/release.py publish
+```
+
+고정 키 일치, DMG·ZIP 앱 일치, 실제 다음 버전 교체와 변조 거절을 통과해야 배포할 수 있습니다. publish는 설치 파일의 공개 다운로드·서명을 확인한 뒤 appcast를 마지막에 게시합니다. 기존 버전이나 태그는 덮어쓰지 않습니다.
+
+## 로컬 패키징 확인
+
 ```sh
 ./scripts/prepare-release.sh
 ```
 
-`dist/cosMOSS-v<version>-macos-arm64.dmg`와 `.zip`이 생성됩니다. 기존 `build-mac-dmg.sh`는 앱 아이콘·Applications 바로가기·설치 배경을 구성합니다. 개인 노트·모델·인증정보는 포함하지 않습니다.
+검토용 `dist/cosMOSS-v<version>-macos-arm64.dmg`와 ZIP·피드를 생성합니다. 앱 아이콘·Applications 바로가기·설치 배경을 포함하며 개인 노트·모델·인증정보는 넣지 않습니다. 고정 공개키와 일치하는 키가 없으면 중단하며 새 키로 대체하지 않습니다. 로컬 생성물은 공식 중앙 배포를 대신하지 않습니다.
 
-이 명령은 기존 업데이트 키를 먼저 확인하고 필요하면 로그인 Keychain에서 복원한 뒤, 테스트·설치 파일 생성·업데이트 피드 서명까지 수행합니다. 키를 찾거나 일치를 확인하지 못하면 중단합니다. 키를 새로 생성해 기존 배포에 덮어쓰지 마세요.
-
-DMG·ZIP을 GitHub에 올려 다운로드와 체크섬을 확인한 **다음** 서명된 `appcast.xml`을 `main`에 푸시하세요. GitHub 릴리스 등록만으로 앱 내 업데이트가 연결되지는 않습니다. 피드·ZIP 서명 검증과 낮은 버전에서 새 버전 발견 테스트가 모두 통과해야 배포가 완료됩니다.
-
-```sh
-.venv/bin/python tests/future_update_smoke.py dist/cosMOSS-v<version>-macos-arm64.zip
-```
-
-실제 배포 ZIP을 임시 폴더에서 다음 버전으로 만들고 서명해, 다운로드·서명 검증·앱의 새 버전 발견·변조 거절을 확인합니다. 이 테스트는 사용자 앱을 교체하거나 가상 다음 버전을 공개하지 않습니다.
-
-서명·공증은 기존 배포 설정을 따릅니다. 임시 서명으로 검증한 로컬 산출물을 Apple 공증 완료로 표시하지 않습니다. 실제 사용자용 버전 번호를 결정하고, 서명과 앱 실행을 확인한 뒤 appcast를 생성합니다. **검토 전에는 태그·릴리스·appcast를 공개하지 않습니다.**
+현재 중앙 배포는 ad-hoc 코드 서명과 고정된 Ed25519 업데이트 서명을 사용합니다. Apple Developer ID 서명·공증은 별개이며, 공증되지 않은 산출물을 공증 완료로 표시하지 않습니다.
 
 ## 업데이트 정책
 
