@@ -153,7 +153,7 @@ class CleanupTests(unittest.TestCase):
         request={'device':self.device,'action':'prepare','source':'# generated worker','lease_protocol':1,'lifecycle_source':'# guard'}
         gpu=b'<nvidia_smi_log><gpu><uuid>GPU-test</uuid><processes/></gpu></nvidia_smi_log>'
         with patch.object(bootstrap.sys,'stdin',io.StringIO(json.dumps(request))),patch.object(bootstrap.sys,'stdout',io.StringIO()), \
-             patch.object(bootstrap.urllib.request,'urlopen',side_effect=urllib.error.URLError('not running')), \
+             patch.object(bootstrap.LOCAL_HTTP,'open',side_effect=urllib.error.URLError('not running')), \
              patch.object(bootstrap.socket,'socket',return_value=port),patch.object(bootstrap.subprocess,'check_output',return_value=gpu), \
              patch.object(bootstrap,'prepare_runtime',return_value=self.python), \
              patch.object(bootstrap,'WorkerLease'), \

@@ -25,6 +25,7 @@ class AutomaticOutputTests(unittest.IsolatedAsyncioTestCase):
                            'UPLOAD_DIR': self.root / 'data/uploads', 'QUEUE': asyncio.Queue()}.items():
             self.enterContext(patch.object(main, key, value))
         self.enterContext(patch.object(main.MEDIA_TOOLS, 'require_ready', new=AsyncMock()))
+        self.enterContext(patch.object(main.MEDIA_TOOLS, 'executable', side_effect=lambda name: name))
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url='http://127.0.0.1')
         self.addAsyncCleanup(self.client.aclose)
 

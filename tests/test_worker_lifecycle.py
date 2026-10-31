@@ -66,7 +66,9 @@ class SupervisorTests(unittest.TestCase):
         device = dict(id='a'*32, api_key='test-token', gpu_uuid='GPU-test', model='test/moss', remote_port=port)
         root = home/'.local/share/cosmoss/workers'/device['id']
         process = subprocess.Popen([sys.executable, '-u', '-c', SUPERVISOR, str(home), str(port), mode],
-                                   cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                   cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env={**os.environ, 'HTTP_PROXY':'http://127.0.0.1:1',
+                                        'http_proxy':'http://127.0.0.1:1', 'NO_PROXY':'', 'no_proxy':''})
         def cleanup():
             if process.poll() is None:
                 process.stdin.close()

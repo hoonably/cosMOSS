@@ -140,6 +140,10 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         for attribute, value in {"STORE": self.store, "DEVICES": self.devices, "UPLOAD_DIR": root / "uploads", "QUEUE": asyncio.Queue()}.items():
             self.enterContext(patch.object(main, attribute, value))
         self.enterContext(patch.object(main, "discover_hosts", return_value=["gpu-a"]))
+        # This fixture substitutes the complete audio pipeline; tool installation
+        # is covered in MediaToolsTests and must not depend on the host Mac.
+        self.enterContext(patch.object(main.MEDIA_TOOLS, "require_ready", new=AsyncMock()))
+        self.enterContext(patch.object(main.MEDIA_TOOLS, "executable", side_effect=lambda name: name))
         from src.remote_workers import RemoteWorkers
         self.workers = RemoteWorkers()
         self.enterContext(patch.object(main, "REMOTE_WORKERS", self.workers))
@@ -647,7 +651,7 @@ class BootstrapTests(unittest.TestCase):
             with patch.object(bootstrap.Path, "home", return_value=Path(temporary)), \
                  patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "source": "# worker", "action": "prepare", "lease_protocol": 1, "lifecycle_source": "# guard"}))), \
                  patch.object(bootstrap.sys, "stdout", io.StringIO()), \
-                 patch.object(bootstrap.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(identity).encode())), \
+                 patch.object(bootstrap.LOCAL_HTTP, "open", return_value=io.BytesIO(json.dumps(identity).encode())), \
                  patch.object(bootstrap.socket, "socket", return_value=fake_socket), \
                  patch.object(bootstrap.subprocess, "check_output", return_value=xml.encode()), \
                  patch.object(bootstrap.subprocess, "run") as install, \
@@ -676,7 +680,7 @@ class BootstrapTests(unittest.TestCase):
         fake_socket = MagicMock()
         fake_socket.__enter__.return_value.connect_ex.return_value = 1
         with patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "source": "# worker", "action": "prepare", "lease_protocol": 1}))), \
-             patch.object(bootstrap.urllib.request, "urlopen", side_effect=urllib.error.URLError("not running")), \
+             patch.object(bootstrap.LOCAL_HTTP, "open", side_effect=urllib.error.URLError("not running")), \
              patch.object(bootstrap.socket, "socket", return_value=fake_socket), \
              patch.object(bootstrap.subprocess, "check_output", return_value=busy.encode()), \
              patch.object(bootstrap.subprocess, "Popen") as launch, \
@@ -717,7 +721,7 @@ class BootstrapTests(unittest.TestCase):
             with patch.object(bootstrap.Path, "home", return_value=Path(temporary)), \
                  patch.object(bootstrap, "PROCESSES", processes), \
                  patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "action": "stop"}))), \
-                 patch.object(bootstrap.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(identity).encode())), \
+                 patch.object(bootstrap.LOCAL_HTTP, "open", return_value=io.BytesIO(json.dumps(identity).encode())), \
                  patch.object(bootstrap.os, "kill") as kill, \
                  self.assertRaisesRegex(RuntimeError, "ownership"):
                 bootstrap.main()
@@ -744,7 +748,7 @@ class BootstrapTests(unittest.TestCase):
                  patch.object(bootstrap, "PROCESSES", processes), \
                  patch.object(bootstrap.sys, "stdin", io.StringIO(json.dumps({"device": device, "action": "stop"}))), \
                  patch.object(bootstrap.sys, "stdout", io.StringIO()), \
-                 patch.object(bootstrap.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")), \
+                 patch.object(bootstrap.LOCAL_HTTP, "open", side_effect=urllib.error.URLError("offline")), \
                  patch.object(bootstrap.os, "kill", side_effect=lambda *_: shutil.rmtree(process)) as kill:
                 bootstrap.main()
             kill.assert_called_once_with(123456789, signal.SIGTERM)

@@ -27,6 +27,9 @@ RUNTIME_VERSION = "cuda128-torch280-moss-e3bdd93f-v1"
 JOB_FILES = ("src", "tmp", "cache", "__pycache__", "worker.log", "worker.pid", "worker.json")
 LEASE_SECONDS = 60
 WORKER_STOP_GRACE_SECONDS = 10
+# Health probes always target this supervisor's loopback worker. A user or CI
+# HTTP proxy must never receive its private bearer token or hide that worker.
+LOCAL_HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class WorkerLease:
@@ -275,7 +278,7 @@ def main():
     def status():
         try:
             query = urllib.request.Request(address, headers={"Authorization": "Bearer " + device["api_key"]})
-            with urllib.request.urlopen(query, timeout=2) as response:
+            with LOCAL_HTTP.open(query, timeout=2) as response:
                 return json.load(response)
         except (OSError, ValueError):
             return None
