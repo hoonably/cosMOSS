@@ -136,7 +136,7 @@ def publish(client,reset):
  feed_result=client.repo('/contents/appcast.xml',method='PUT',body=body)
  if reset:
   for old_release in old:
-   if old_release['id']!=release['id']:client.repo('/releases/'+str(old_release['id']),method='DELETE')
+   if old_release['id'] not in {release['id'],prior['id'] if prior else None}:client.repo('/releases/'+str(old_release['id']),method='DELETE',allow404=True)
   if SOURCE!=PUBLIC:
    for old_release in client.request('/repos/'+SOURCE+'/releases?per_page=100'):
     client.request('/repos/'+SOURCE+'/releases/'+str(old_release['id']),'DELETE')
