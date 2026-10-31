@@ -33,7 +33,7 @@ b.prepare_model = lambda *a, **kw: {'model_path':sys.argv[1]+'/model', 'model_ca
 b.subprocess.check_output = lambda *a, **kw: b'<nvidia_smi_log><gpu><uuid>GPU-test</uuid><processes/></gpu></nvidia_smi_log>'
 spawn = subprocess.Popen
 child_source = """
-import http.server, json, os, signal, sys, time
+import http.server, json, os, signal, socketserver, sys, time
 if sys.argv[2] == 'stubborn': signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if sys.argv[2] == 'loading': time.sleep(60)
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -41,7 +41,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.end_headers()
         self.wfile.write(json.dumps({'app':'cosMOSS CUDA worker', 'device_id':os.environ['COSMOSS_DEVICE_ID'], 'gpu_uuid':'GPU-test', 'ok':True}).encode())
     def log_message(self, *a): pass
-http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler).serve_forever()
+class LocalHTTPServer(http.server.HTTPServer):
+    def server_bind(self):
+        # HTTPServer normally reverse-resolves the machine hostname here, after
+        # binding but before serving. Hosted Mac DNS may stall; this loopback
+        # fixture needs no external name lookup.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
+LocalHTTPServer(('127.0.0.1', int(sys.argv[1])), Handler).serve_forever()
 """
 def worker(command, **kw):
     return spawn([sys.executable, '-u', '-c', child_source, sys.argv[2], sys.argv[3]], **kw)
