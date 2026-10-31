@@ -4,75 +4,61 @@ import Foundation
 import Security
 
 let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
-let defaultKey = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent("Library/Application Support/cosMOSS Development/sparkle-private-key").path
-let keyURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SPARKLE_PRIVATE_KEY_FILE"] ?? defaultKey)
-let publicURL = root.appendingPathComponent("macos/UpdatePublicKey.txt")
-let previousPublicKey = try? String(contentsOf: publicURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-let replaceLostKey = CommandLine.arguments.dropFirst(2).contains("--replace-lost-key")
-let service = "io.github.hoonably.cosmoss.sparkle-update-key"
-
-func keychainQuery(_ publicKey: String) -> [String: Any] {
-    [kSecClass as String: kSecClassGenericPassword,
-     kSecAttrService as String: service, kSecAttrAccount as String: publicKey]
+let config = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("release.json"))) as! [String: Any]
+let service = config["key_service"] as! String
+let publicURL = root.appendingPathComponent(config["public_key_file"] as! String)
+let defaultURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/\(config["key_directory"] as! String)/sparkle-private-key")
+let keyURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment[config["key_env"] as! String] ?? defaultURL.path)
+let checkOnly = CommandLine.arguments.contains("--check-only")
+let initialize = CommandLine.arguments.contains("--initialize")
+let pinned = (try? String(contentsOf: publicURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+func fail(_ message: String) -> Never { fputs(message + "\n", stderr); exit(1) }
+func decoded(_ data: Data) -> Data {
+    guard let text = String(data: data, encoding: .utf8), let raw = Data(base64Encoded: text.trimmingCharacters(in: .whitespacesAndNewlines)), raw.count == 32 else { fail("Invalid update-key encoding; no key values are logged") }
+    return raw
 }
-
-func restoredKey(_ publicKey: String) throws -> Curve25519.Signing.PrivateKey? {
-    var query = keychainQuery(publicKey)
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
+var login: SecKeychain?
+func loginKeychain() -> SecKeychain {
+    if let login { return login }
+    let path = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Keychains/login.keychain-db").path
+    guard SecKeychainOpen(path, &login) == errSecSuccess, let login else { fail("Unlock the login Keychain before restoring the existing update key") }
+    return login
+}
+func restore(_ publicKey: String) -> Data? {
+    let query: [String: Any] = [kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:service, kSecAttrAccount as String:publicKey, kSecMatchSearchList as String:[loginKeychain()], kSecReturnData as String:true, kSecMatchLimit as String:kSecMatchLimitOne]
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
     if status == errSecItemNotFound { return nil }
-    guard status == errSecSuccess, let data = result as? Data else {
-        fatalError("Could not read update-key backup from login Keychain (status \(status)); unlock Keychain and retry")
-    }
-    let key = try Curve25519.Signing.PrivateKey(rawRepresentation: data)
-    guard key.publicKey.rawRepresentation.base64EncodedString() == publicKey else { fatalError("Keychain backup does not match public key") }
-    return key
+    guard status == errSecSuccess, let data = result as? Data else { fail("Could not restore the existing update key (Keychain status \(status))") }
+    return data
 }
-
-func writePrivateKey(_ key: Curve25519.Signing.PrivateKey) throws {
-    try FileManager.default.createDirectory(at: keyURL.deletingLastPathComponent(), withIntermediateDirectories: true,
-                                           attributes: [.posixPermissions: 0o700])
-    guard FileManager.default.createFile(atPath: keyURL.path,
-                                        contents: Data(key.rawRepresentation.base64EncodedString().utf8),
-                                        attributes: [.posixPermissions: 0o600]) else { fatalError("Could not save signing key") }
-}
-
 let key: Curve25519.Signing.PrivateKey
-var replacedLostKey = false
-if FileManager.default.fileExists(atPath: keyURL.path) {
-    let encoded = try String(contentsOf: keyURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let data = Data(base64Encoded: encoded) else { fatalError("Invalid update signing key") }
-    key = try Curve25519.Signing.PrivateKey(rawRepresentation: data)
-} else if let previousPublicKey, let restored = try restoredKey(previousPublicKey) {
-    key = restored
-    try writePrivateKey(key)
-    print("Restored the existing cosMOSS update key from login Keychain")
-} else {
-    guard previousPublicKey == nil || replaceLostKey else {
-        fatalError("Restore the existing cosMOSS private key; never rotate it without an explicit manual-reinstall migration")
-    }
+if FileManager.default.fileExists(atPath:keyURL.path) {
+    key = try Curve25519.Signing.PrivateKey(rawRepresentation: decoded(Data(contentsOf:keyURL)))
+} else if !checkOnly, let pinned, let restored = restore(pinned) {
+    key = try Curve25519.Signing.PrivateKey(rawRepresentation: restored)
+} else if initialize && pinned == nil {
     key = Curve25519.Signing.PrivateKey()
-    try writePrivateKey(key)
-    replacedLostKey = previousPublicKey != nil
-}
-let publicKey = key.publicKey.rawRepresentation.base64EncodedString() + "\n"
-if FileManager.default.fileExists(atPath: publicURL.path) && !replacedLostKey {
-    guard try String(contentsOf: publicURL, encoding: .utf8) == publicKey else { fatalError("Update signing keys do not match") }
 } else {
-    try publicKey.write(to: publicURL, atomically: true, encoding: .utf8)
+    fail("Restore this app's existing update key or use the signed release workflow; automatic key rotation is forbidden")
 }
-try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)
-var backup = keychainQuery(publicKey.trimmingCharacters(in: .whitespacesAndNewlines))
-backup[kSecValueData as String] = key.rawRepresentation
-backup[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-let status = SecItemAdd(backup as CFDictionary, nil)
-if status == errSecDuplicateItem {
-    guard let existing = try restoredKey(publicKey.trimmingCharacters(in: .whitespacesAndNewlines)),
-          existing.rawRepresentation == key.rawRepresentation else { fatalError("Existing Keychain backup differs") }
-} else if status != errSecSuccess {
-    fatalError("Could not back up update key in login Keychain (status \(status)); private key file is intact")
+let derived = key.publicKey.rawRepresentation.base64EncodedString()
+if let pinned {
+    guard derived == pinned else { fail("Update key differs from the pinned public key; release stopped") }
+} else {
+    guard initialize else { fail("Public key is missing; release stopped") }
+    try FileManager.default.createDirectory(at:publicURL.deletingLastPathComponent(),withIntermediateDirectories:true)
+    try (derived+"\n").write(to:publicURL,atomically:true,encoding:.utf8)
 }
-print("cosMOSS update key ready and backed up in login Keychain; only the public key is stored in Git")
+if !checkOnly {
+    try FileManager.default.createDirectory(at:keyURL.deletingLastPathComponent(),withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+    guard FileManager.default.createFile(atPath:keyURL.path,contents:Data(key.rawRepresentation.base64EncodedString().utf8),attributes:[.posixPermissions:0o600]) else { fail("Could not store the update key") }
+    try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:keyURL.path)
+    let existing = restore(derived)
+    if let existing { guard existing == key.rawRepresentation else { fail("Existing Keychain backup differs; release stopped") } }
+    else {
+        let item: [String: Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:derived,kSecValueData as String:key.rawRepresentation,kSecUseKeychain as String:loginKeychain()]
+        guard SecItemAdd(item as CFDictionary,nil) == errSecSuccess else { fail("Could not back up the release key in login Keychain") }
+    }
+}
+print("Verified pinned update key; no private key values logged")

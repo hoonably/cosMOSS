@@ -42,7 +42,7 @@ def main():
         major, minor, patch = map(int, current.split('.'))
         following = f'{major}.{minor}.{patch + 1}'
         info['CFBundleShortVersionString'] = following
-        info['CFBundleVersion'] = str(major * 1_000_000 + minor * 1_000 + patch + 1)
+        info['CFBundleVersion'] = str(int(info['CFBundleVersion']) + 1)
         info_path.write_bytes(plistlib.dumps(info))
         subprocess.run(['codesign', '--force', '--sign', '-', str(app)], check=True, capture_output=True)
         subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)

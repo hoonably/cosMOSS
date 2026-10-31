@@ -25,6 +25,7 @@ if ! otool -l "$APP_DIR/Contents/MacOS/CosMOSS" | grep -q '@executable_path/../F
   install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_DIR/Contents/MacOS/CosMOSS"
 fi
 "$PROJECT_DIR/.venv/bin/python" - "$PROJECT_DIR" "$APP_DIR" <<'PY'
+import json
 import plistlib
 import sys
 import tomllib
@@ -32,7 +33,8 @@ from pathlib import Path
 
 root, app = map(Path, sys.argv[1:])
 version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
-major, minor, patch = map(int, version.split('.'))
+release = json.loads((root / 'release.json').read_text())
+assert release['version'] == version, 'Release metadata version mismatch'
 metadata = {
     'CFBundleName': 'cosMOSS',
     'CFBundleDisplayName': 'cosMOSS',
@@ -41,7 +43,7 @@ metadata = {
     'CFBundleIconFile': 'AppIcon.icns',
     'CFBundlePackageType': 'APPL',
     'CFBundleShortVersionString': version,
-    'CFBundleVersion': str(major * 1_000_000 + minor * 1_000 + patch),
+    'CFBundleVersion': str(release['build']),
     'LSMinimumSystemVersion': '13.0',
     'NSHighResolutionCapable': True,
     'NSMicrophoneUsageDescription': '화자 목소리 프로필을 등록하기 위해 약 5초 동안 목소리를 녹음합니다.',

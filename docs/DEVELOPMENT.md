@@ -184,7 +184,7 @@ can select an existing restored key. Never regenerate a key for an existing
 installation; `scripts/setup-update-key.swift` checks that both keys match.
 The October 2026 1.0.1 reissue deliberately replaces a lost key. Older installed
 copies must be replaced manually once; the reissued installer is the baseline
-for subsequent signed in-app updates. Never use `--replace-lost-key` during a
+for subsequent signed in-app updates. Never use the centrally signed release workflow during a
 normal release; it is an explicit manual-reinstall migration only.
 
 `scripts/verify-update.swift` verifies both feed and archive using only the

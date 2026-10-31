@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "build": 1000002,
+  "repository": "hoonably/cosMOSS",
+  "app_name": "cosMOSS",
+  "public_key_file": "macos/UpdatePublicKey.txt",
+  "key_service": "io.github.hoonably.cosmoss.sparkle-update-key",
+  "key_directory": "cosMOSS Development",
+  "key_env": "SPARKLE_PRIVATE_KEY_FILE",
+  "update_archive": "cosMOSS-v{version}-macos-arm64.zip",
+  "installer": "cosMOSS-v{version}-macos-arm64.dmg",
+  "bundle_identifier": "io.github.hoonably.cosmoss",
+  "source_repository": "hoonably/cosMOSS"
+}
