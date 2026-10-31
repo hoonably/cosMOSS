@@ -8,7 +8,7 @@
 외부 전사 서비스 없이, Mac 온디바이스 또는 내 SSH 서버에서 처리합니다.
 
 [![Mac용 다운로드](https://img.shields.io/badge/macOS-1.0.1_%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C-11925A?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/hoonably/cosMOSS/releases/download/v1.0.1/cosMOSS-v1.0.1-macos-arm64.dmg)
-[![웹사이트](https://img.shields.io/badge/%EC%9B%B9%EC%82%AC%EC%9D%B4%ED%8A%B8-%EB%B0%A9%EB%AC%B8%ED%95%98%EA%B8%B0-11925A?style=for-the-badge&logo=safari&logoColor=white)](https://cosmoss.pages.dev/)
+[![웹사이트](https://img.shields.io/badge/%EC%9B%B9%EC%82%AC%EC%9D%B4%ED%8A%B8-%EB%B0%A9%EB%AC%B8%ED%95%98%EA%B8%B0-11925A?style=for-the-badge&logo=safari&logoColor=white)](https://cosmoss-app.pages.dev/)
 
 Apple Silicon · macOS 13 이상
 

@@ -4,13 +4,10 @@
 
 ## Website deployment
 
-The planned public address is `https://cosmoss.pages.dev/`. Project links use
-this address in advance; the new `cosmoss` Pages project has not been created or
-deployed yet, so the address may return 404 until deployment is configured.
-
-For the new project, reuse the existing build settings: branch `main`, root
-directory `docs`, build command `exit 0`, and output directory `.`. Build watch
-paths include only `docs/*`; automatic preview branch deployments are disabled.
+The public address is `https://cosmoss-app.pages.dev/`. The existing
+`cosmoss-app` Pages project uses branch `main`, root directory `docs`, build
+command `exit 0`, and output directory `.`. Build watch paths include only
+`docs/*`; automatic preview branch deployments are disabled.
 The site uses static files without Pages Functions, Workers, or database
 bindings. App downloads remain on GitHub Releases.
 
