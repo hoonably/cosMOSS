@@ -46,6 +46,13 @@ http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler).serve_forever()
 def worker(command, **kw):
     return spawn([sys.executable, '-u', '-c', child_source, sys.argv[2], sys.argv[3]], **kw)
 b.subprocess.Popen = worker
+health_open = b.LOCAL_HTTP.open
+def probe(*a, **kw):
+    try: return health_open(*a, **kw)
+    except Exception as error:
+        print('HEALTH: '+repr(error), file=sys.stderr, flush=True)
+        raise
+b.LOCAL_HTTP.open = probe
 try: b.main()
 except Exception as error:
     print('ERROR:'+str(error), flush=True)
@@ -95,7 +102,14 @@ class SupervisorTests(unittest.TestCase):
                 output += os.read(process.stdout.fileno(), 65536)
                 if f'"phase": "{phase}"'.encode() in output:
                     return
-        self.fail('Missing phase '+phase+': '+output.decode(errors='replace'))
+        # Preserve the actual child/probe failure on clean CI machines.
+        diagnostics = ''
+        if select.select([process.stderr], [], [], 0)[0]:
+            diagnostics += os.read(process.stderr.fileno(), 65536).decode(errors='replace')
+        home = Path(process.args[-3])
+        for log in home.glob('.local/share/cosmoss/workers/*/worker.log'):
+            diagnostics += log.read_text(errors='replace')[-4000:]
+        self.fail('Missing phase '+phase+': '+output.decode(errors='replace')+'\n'+diagnostics)
 
     def assert_released(self, process, root, home, pid):
         self.assertEqual(process.wait(timeout=6), 1)
