@@ -3,7 +3,6 @@ import asyncio
 import sys
 from email.parser import BytesParser
 from email.policy import default
-from pathlib import Path
 from playwright.async_api import async_playwright
 
 

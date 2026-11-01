@@ -2,7 +2,6 @@
 import asyncio
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from playwright.async_api import async_playwright
 from ui_helpers import choose_option
 

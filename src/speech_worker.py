@@ -6,7 +6,6 @@ The bootstrap owns the GPU lock, lease, private input and process group.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import re
 import sys

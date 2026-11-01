@@ -1,7 +1,6 @@
 """Formats round-trip through storage, review, speaker merges and CLI summaries."""
 import asyncio
 import codecs
-import json
 import sys
 import tempfile
 import unittest

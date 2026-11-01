@@ -23,7 +23,7 @@ def seed(store):
     directory.mkdir(parents=True)
     source = directory / 'recording.wav'
     source.write_bytes(b'RIFF')
-    note = store.create({'id': note_id, 'title': '주간 회의', 'original_filename': 'recording.wav',
+    store.create({'id': note_id, 'title': '주간 회의', 'original_filename': 'recording.wav',
                          'source_path': str(source), 'status': 'done'})
     segments = [{'id': 0, 'start': 0, 'end': 2, 'speaker': 'S01', 'text': '금요일에 배포합니다.'},
                 {'id': 1, 'start': 2, 'end': 4, 'speaker': 'S02', 'text': '제가 테스트할게요.'},

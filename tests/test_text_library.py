@@ -1,5 +1,4 @@
 """Existing user TXT files stay in place, preserve their bytes, and reject stale edits."""
-import asyncio
 import codecs
 import hashlib
 import tempfile

@@ -13,7 +13,6 @@ from playwright.async_api import async_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.processing_estimates import estimate_processing
-from ui_helpers import choose_option
 
 
 async def main():

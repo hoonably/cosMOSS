@@ -1,5 +1,4 @@
 """Regression against held-out measurements, hardware boundaries and UI plans."""
-import asyncio
 import json
 from pathlib import Path
 import tempfile

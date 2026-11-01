@@ -198,7 +198,7 @@ class FastJobTests(unittest.IsolatedAsyncioTestCase):
             identity='b'*32;audio=store.upload_directory(identity)/'a.wav';audio.parent.mkdir(parents=True);audio.write_bytes(b'fixture')
             device={'id':'remote','backend':'cuda','host':'fixture','gpu_uuid':'GPU-fixture',
                     'gpu_hardware':H200,'options':{'speech_pipeline':'moss-batch','speech_batch':8}}
-            note=store.create({'id':identity,'title':'전사','original_filename':'a.wav','source_path':str(audio),
+            store.create({'id':identity,'title':'전사','original_filename':'a.wav','source_path':str(audio),
                 'normalized_path':str(audio),'duration':60,'status':'queued','device_id':'remote',
                 'device_snapshot_json':json.dumps(device),'output_directory':str(root/'output')})
             segments=[{'id':0,'start':0,'end':5,'text':'원문 그대로','speaker':'S01'}]

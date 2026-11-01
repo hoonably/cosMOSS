@@ -112,7 +112,6 @@ async def main():
           form.innerHTML='<fieldset><label class="field"><span>검증용</span><select name="choice" required><option value="">선택하세요</option><option value="b">Beta</option></select></label></fieldset><label class="field"><span>빈 목록</span><select id="empty-select"></select></label>';
           document.querySelector('.summary-scroll').prepend(form);
         }''')
-        field = page.locator('#custom-select-fixture select[name=choice]')
         await page.wait_for_function("document.querySelector('#custom-select-fixture .custom-select-trigger') !== null")
         await page.evaluate("document.querySelector('#custom-select-fixture').reportValidity()")
         assert await page.locator('.custom-select-menu').is_visible()

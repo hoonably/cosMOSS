@@ -1387,10 +1387,6 @@ async function showFiles(entries) {
     await prepareFile(preparation);
   }
 }
-function showFile(file,voiceMemo=null) {
-  if (!file) {cancelFilePreparation();return resetDropZone();}
-  return showFiles([{file,voiceMemo}]);
-}
 $('#retry-preparation').addEventListener('click', () => {
   const preparation = state.uploadPreparation;
   if (preparation?.status === 'error') prepareFile(preparation);
@@ -2339,7 +2335,7 @@ $("#add-device-form").addEventListener("submit", async event => {
   state.addingDevice = true;
   updateDeviceRegistration();
   try {
-    const device = await api("/api/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+    await api("/api/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
     await loadDevices();
     $("#device-dialog").close();
     toast("장치를 연결했습니다. 왼쪽에서 모델을 선택해 주세요.");

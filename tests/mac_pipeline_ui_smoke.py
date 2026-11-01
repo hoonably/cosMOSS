@@ -3,7 +3,6 @@ import asyncio
 from datetime import datetime, timezone
 from email.parser import BytesParser
 from email.policy import default
-from pathlib import Path
 import sys
 from urllib.parse import parse_qs, urlsplit
 

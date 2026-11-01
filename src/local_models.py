@@ -7,7 +7,6 @@ import json
 import hashlib
 import os
 import platform
-import shutil
 import signal
 import sys
 import uuid

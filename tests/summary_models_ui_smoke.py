@@ -1,7 +1,6 @@
 """Model/effort UI, refresh and persisted per-provider choices; no AI requests."""
 import asyncio
 from datetime import datetime, timezone
-from pathlib import Path
 import sys
 from urllib.parse import parse_qs, urlsplit
 from playwright.async_api import async_playwright

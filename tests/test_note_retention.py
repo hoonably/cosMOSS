@@ -64,7 +64,7 @@ class NoteRetentionTests(unittest.TestCase):
 
     def test_expires_after_seven_days_across_restart_only_removes_owned_data(self):
         key, folder = self.note()
-        doc = self.library.scan(str(self.exports))[0]
+        self.library.scan(str(self.exports))[0]
         original = self.root / 'original.m4a'; original.write_bytes(b'keep')
         exported_summary = self.exports / '회의_요약.md'; exported_summary.write_text('keep')
         profile = self.data / 'voice-profiles' / 'profile.json'; profile.parent.mkdir(); profile.write_text('keep')
@@ -231,7 +231,7 @@ class NoteRetentionTests(unittest.TestCase):
     def test_new_file_can_be_deleted_while_older_same_name_is_retained(self):
         key, folder = self.note()
         old = self.library.scan(str(self.exports))[0]
-        first = self.cleaner.remove(self.transcript, trash_transcript=True, now=100)
+        self.cleaner.remove(self.transcript, trash_transcript=True, now=100)
         self.transcript.write_text('new content')
         new = self.library.scan(str(self.exports))[0]
         second = self.cleaner.remove(self.transcript, trash_transcript=True, now=200)

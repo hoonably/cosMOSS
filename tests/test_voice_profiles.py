@@ -1,5 +1,4 @@
 """Profile file boundaries and optional matching; no model download or inference."""
-import asyncio
 import base64
 import io
 import json
@@ -12,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from src.voice_engine import VoiceEngine, MODEL_ID
-from src.voice_profiles import VoiceProfiles, MAX_PROFILE_BYTES, unit_vector
+from src.voice_profiles import VoiceProfiles, MAX_PROFILE_BYTES
 
 
 def sample():

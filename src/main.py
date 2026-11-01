@@ -43,7 +43,7 @@ from src.speech_engines import ENGINE_PIPELINES
 from src.remote_workers import RemoteWorkers
 from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host, gpu_warning_token
 from src.store import NoteStore
-from src.summaries import Summaries, provider_status, DEFAULT_QUERY
+from src.summaries import Summaries, provider_status
 from src.summary_models import SummaryModels
 from src.summary_preview import preview_document
 from src.text_files import save_text, speaker_changes, write_text

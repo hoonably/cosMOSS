@@ -7,9 +7,8 @@ import math
 from pathlib import Path
 import shlex
 import sqlite3
-import time
 
-from src.speech_pipeline import FAST_PIPELINES, RUNTIME_VERSION
+from src.speech_pipeline import FAST_PIPELINES
 from src.speech_engines import ENGINE_PIPELINES, runtime_for
 from src.ssh_devices import discover_hosts, ssh_arguments
 

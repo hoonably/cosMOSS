@@ -209,7 +209,7 @@ class ModelPreparationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.manager.settings_file.exists())
 
     async def test_prepare_alternative_without_rewriting_saved_selection(self):
-        engine = self.attach_diarization()
+        self.attach_diarization()
         original = model_folder(self.root / 'custom model')
         await self.manager.run('folder', original, model_id='org/custom', model_key='custom')
         saved = self.manager.settings_file.read_bytes()

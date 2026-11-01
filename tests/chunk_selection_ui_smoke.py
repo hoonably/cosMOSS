@@ -14,7 +14,6 @@ from email.policy import default
 from pathlib import Path
 
 from playwright.async_api import async_playwright
-from ui_helpers import choose_option
 
 
 async def main():

@@ -7,7 +7,6 @@ import binascii
 import io
 import json
 import math
-import os
 import sqlite3
 import tempfile
 import uuid

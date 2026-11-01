@@ -1,12 +1,11 @@
-import asyncio
 import json
 import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
-from src.model_catalog import MODELS, DEFAULT_OPTIONS, catalog, model_selection, recommendation
+from src.model_catalog import DEFAULT_OPTIONS, catalog, model_selection, recommendation
 
 
 class CatalogTests(unittest.TestCase):
