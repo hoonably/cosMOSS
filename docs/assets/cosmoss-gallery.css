@@ -1,0 +1,96 @@
+.cosmoss-page .summary-proof {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 28%);
+  align-items: center;
+  column-gap: clamp(20px, 3vw, 44px);
+  height: var(--stage-height);
+}
+
+.cosmoss-page .summary-proof .feature-stage {
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.cosmoss-page .summary-example {
+  min-width: 0;
+  padding: 8px 0 8px clamp(18px, 2.5vw, 34px);
+  border-left: 1px solid #cfc4d9;
+  color: var(--gallery-ink);
+  word-break: keep-all;
+}
+
+.cosmoss-page .summary-kicker,
+.cosmoss-page .summary-example h4 {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 650;
+  color: var(--gallery-muted);
+}
+
+.cosmoss-page .summary-example h3 {
+  margin: 9px 0 6px;
+  font-size: clamp(22px, 2vw, 30px);
+  letter-spacing: -.06em;
+  line-height: 1.3;
+}
+
+.cosmoss-page .summary-decision,
+.cosmoss-page .summary-example dl {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.cosmoss-page .summary-example h4 {
+  margin-top: 24px;
+}
+
+.cosmoss-page .summary-example dl {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.cosmoss-page .summary-example dl > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+}
+
+.cosmoss-page .summary-example dt {
+  color: var(--speaker-ink, var(--gallery-ink));
+  font-weight: 700;
+}
+
+.cosmoss-page .summary-example dd { margin: 0; }
+
+@media (max-width: 720px) {
+  .cosmoss-page .feature-gallery {
+    --stage-height: clamp(21rem, calc(55vw + 10rem), 33rem);
+  }
+
+  .cosmoss-page .summary-proof {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .cosmoss-page .summary-example {
+    padding: 12px 4px 0;
+    border-left: none;
+    border-top: 1px solid #cfc4d9;
+  }
+
+  .cosmoss-page .summary-example h3 {
+    margin: 3px 0;
+    font-size: 21px;
+  }
+
+  .cosmoss-page .summary-example h4 { margin-top: 8px; }
+  .cosmoss-page .summary-example dl { gap: 2px; margin-top: 2px; }
+}
+

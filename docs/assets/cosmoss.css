@@ -1,0 +1,24 @@
+.cover-copy { text-align: center; }
+.cover-copy h1 {
+  margin: 0;
+  font-size: clamp(38px, 5.1vw, 76px);
+  font-weight: 750;
+  line-height: 1.22;
+  letter-spacing: -.04em;
+  text-wrap: balance;
+  word-break: keep-all;
+  color: #211e30;
+}
+.cover-description {
+  margin: 18px auto 0;
+  color: #4f495a;
+  font-size: clamp(15px, 1.35vw, 19px);
+  line-height: 1.75;
+  word-break: keep-all;
+  text-wrap: balance;
+}
+@media (max-width: 540px) {
+  .cover-copy h1 { font-size: clamp(35px, 9vw, 46px); }
+  .cover-description { margin-top: 16px; font-size: 15px; }
+  .cover-description br { display: none; }
+}

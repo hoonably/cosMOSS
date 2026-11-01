@@ -1,0 +1,255 @@
+.voice-demo {
+  --demo-ink: #30223b;
+  --demo-muted: #57485e;
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  padding: 21px 0 19px;
+  color: var(--demo-ink);
+  text-align: start;
+}
+
+.voice-demo::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url("../images/conversation-field.webp") center 52% / cover no-repeat;
+  opacity: .85;
+  -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 55%, #0004 80%, transparent);
+  mask-image: linear-gradient(transparent, #000 18%, #000 55%, #0004 80%, transparent);
+}
+
+.voice-demo__inner {
+  width: min(1000px, calc(100% - 96px));
+  margin-inline: auto;
+}
+
+.voice-demo__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 11px;
+}
+
+.voice-demo .voice-demo__heading h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+  font-weight: 700;
+  letter-spacing: -.03em;
+}
+
+.voice-demo__heading p {
+  margin: 0;
+  color: var(--demo-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.voice-demo__body,
+.voice-demo__plot {
+  position: relative;
+}
+
+.voice-demo__plot {
+  display: grid;
+  align-items: center;
+}
+
+.voice-demo--violet { --speaker-ink: #513677; }
+.voice-demo--umber { --speaker-ink: #883a18; }
+.voice-demo--green { --speaker-ink: #165746; }
+
+/* Keep each native radio in the accessibility tree. Its label is the whole segment. */
+.voice-demo__radio {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.voice-demo__segment {
+  position: relative;
+  display: grid;
+  grid-row: 1;
+  align-items: center;
+  min-width: 0;
+  height: 83px;
+  color: var(--speaker-ink);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  background-image: linear-gradient(to bottom, transparent calc(50% - .5px),
+    currentColor calc(50% - .5px), currentColor calc(50% + .5px), transparent calc(50% + .5px));
+}
+
+.voice-demo__segment svg {
+  display: block;
+  width: 100%;
+  height: 72px;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  fill: none;
+  pointer-events: none;
+}
+
+.voice-demo__radio:checked + .voice-demo__segment {
+  background-color: rgb(255 251 246 / 70%);
+  box-shadow: inset 0 -3px var(--speaker-ink);
+}
+
+/* One needle joins the selected turn's time coordinate to its coloured strip. */
+.voice-demo__radio:checked + .voice-demo__segment::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto -3px 0;
+  width: 2px;
+  background: var(--demo-ink);
+}
+
+.voice-demo__radio:checked + .voice-demo__segment::after {
+  content: "선택";
+  position: absolute;
+  inset: -2px auto auto 0;
+  padding: 1px 4px 2px;
+  color: #fff;
+  background: var(--demo-ink);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.voice-demo__radio:focus-visible + .voice-demo__segment,
+.voice-demo__summary:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--demo-ink);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) {
+  .voice-demo__segment:hover { background-color: rgb(255 251 246 / 62%); }
+}
+
+.voice-demo__scale {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr)) 0;
+  color: var(--demo-muted);
+  font: 500 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-demo__scale span {
+  position: relative;
+  width: max-content;
+  padding-top: 8px;
+  transform: translateX(-50%);
+}
+
+.voice-demo__scale span::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 4px;
+  background: currentColor;
+}
+
+.voice-demo__scale span:first-child { transform: none; }
+.voice-demo__scale span:first-child::before { left: 0; }
+.voice-demo__scale span:last-child { transform: translateX(-100%); }
+.voice-demo__scale span:last-child::before { left: auto; right: 0; }
+
+.voice-demo__utterance {
+  display: none;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+  min-height: 44px;
+  box-sizing: border-box;
+  margin: 16px 0 0;
+  padding: 11px 165px 0 0;
+  border-top: 1px solid rgb(77 54 86 / 34%);
+}
+
+.voice-demo__radio:checked + .voice-demo__segment + .voice-demo__utterance { display: grid; }
+
+.voice-demo__utterance time {
+  color: var(--demo-muted);
+  font: 550 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-demo__utterance strong { color: var(--speaker-ink); font-size: 15px; white-space: nowrap; }
+
+.voice-demo__utterance q {
+  color: var(--demo-ink);
+  font-size: clamp(16px, 1.6vw, 21px);
+  line-height: 1.55;
+  font-weight: 600;
+  letter-spacing: -.028em;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  quotes: "“" "”";
+}
+
+.voice-demo__summary {
+  position: absolute;
+  right: 0;
+  bottom: -3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  color: #523176;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.voice-demo__summary svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (min-width: 721px) {
+  .voice-demo__inner { width: min(1000px, 66%); }
+  .voice-demo::before { background-size: 125% auto; }
+}
+
+@media (max-width: 720px) {
+  .voice-demo__inner { width: calc(100% - 40px); }
+  .voice-demo::before { background-size: max(145%, 850px) auto; }
+  .voice-demo__heading { margin-bottom: 8px; }
+  .voice-demo__segment { height: 69px; }
+  .voice-demo__segment svg { height: 57px; }
+  .voice-demo__utterance { padding-right: 0; gap: 9px; }
+  .voice-demo__summary { position: static; margin-top: 3px; min-height: 44px; }
+}
+
+@media (max-width: 440px) {
+  .voice-demo__heading { gap: 8px; }
+  .voice-demo .voice-demo__heading h2 { font-size: 15px; }
+  .voice-demo__heading p { font-size: 11px; }
+  .voice-demo__utterance { grid-template-columns: auto minmax(0, 1fr); row-gap: 4px; }
+  .voice-demo__utterance q { grid-column: 1 / -1; min-block-size: 3.1em; }
+  .voice-demo__scale { font-size: 10px; }
+}
