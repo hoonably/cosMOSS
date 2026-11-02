@@ -32,6 +32,7 @@ try:
   run(['node','--check','static/app.js'])
   os.environ['COSMOSS_RELEASE_CODESIGN_IDENTITY']='-'
   run(['./scripts/build-mac-release.sh'])
+  run(['.venv/bin/python','tests/release_smoke.py','dist/release/cosMOSS.app'])
  elif name=='Pickly':
   run(['./scripts/test.sh'])
   os.environ['PICKLY_VERSION']=cfg['version'];os.environ['PICKLY_BUILD_NUMBER']=str(cfg['build'])

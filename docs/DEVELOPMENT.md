@@ -330,23 +330,35 @@ background/batch UI smoke tests cover these flows without model inference.
 
 `scripts/build-mac-app.sh` builds a development launcher referencing its checkout
 via `CosMOSSProjectRoot` in Info.plist. `scripts/build-mac-release.sh` builds a
-relocatable Apple Silicon ZIP with the app sources, a standalone CPython 3.12.12,
-locked web dependencies, and uv 0.9.25. Set `UV_BIN` to the build machine's uv
-executable when it is not on PATH. Dependency and interpreter license files remain
-inside the bundle. Models, MLX packages, FFmpeg, personal data, and credentials
-are excluded. Common file tools are prepared separately through app settings.
+relocatable Apple Silicon ZIP containing the launcher, app sources, hashed web
+requirements and `install-desktop-runtime.sh`. Python and uv are not in the app.
+On first launch the native screen offers an explicit install button. It downloads
+a SHA-256-pinned uv 0.9.25 wheel, uses its managed CPython 3.12.12 (no system Python
+or Homebrew), and installs hash-locked binary wheels in a private virtual environment.
+`uv python install --no-bin` prevents global Python links. No shell profiles are changed.
+
+Desktop environments live under `desktop-runtimes/<requirements-and-installer-hash>`
+in Application Support/cosMOSS, while managed Python is shared under `.cache/uv/python`.
+The installer checks imports before marking a slot ready. Launch checks are offline;
+missing or broken environments return to the install screen. Install failure is
+retryable; an OS advisory lock prevents simultaneous modification and releases on exit/crash.
+Updates reuse a compatible slot and create a separate slot when requirements change.
+Old slots and personal data are preserved. Downloads require internet on first setup;
+afterwards the desktop backend starts offline. Model and FFmpeg setup remain separate.
+The installer has arm64/x86_64 tool URLs, but the distributed launcher and local MLX
+support remain Apple Silicon; Intel support is not claimed by this release.
 
 The release launcher uses `~/Library/Application Support/cosMOSS/` for writable
 data, the MLX venv, caches and logs. `MOSS_RUNTIME_DIR` separates these writable
 runtime paths from the read-only bundled source. Finder launches add Homebrew's
 executable directories to PATH so FFmpeg and optional AI CLIs can be found.
 Release bundles use ad-hoc signatures, not Developer ID signing or notarization.
-The build retains the matching python-build-standalone license inventory and
-verifies its source archive's SHA-256 before copying the notices.
+Downloaded environments retain the Python distribution notices, uv licenses and
+installed Python package metadata. The signed bundle is never modified by setup.
 
 After extracting the release ZIP into a different directory, validate it with
 `python tests/release_smoke.py /path/to/cosMOSS.app`. This checks bundle signatures,
-embedded Python/uv, writable runtime separation, and actual VTT reading/editing
+separate Python/uv installation and offline reuse, writable runtime separation, and actual VTT reading/editing
 without invoking models or AI services.
 
 The app binds its backend to loopback, uses port 18760 by default, verifies the

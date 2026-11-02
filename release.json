@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "build": 1000002,
+  "build": 1000003,
   "repository": "hoonably/cosMOSS",
   "app_name": "cosMOSS",
   "public_key_file": "macos/UpdatePublicKey.txt",
@@ -10,5 +10,6 @@
   "update_archive": "cosMOSS-v{version}-macos-arm64.zip",
   "installer": "cosMOSS-v{version}-macos-arm64.dmg",
   "bundle_identifier": "io.github.hoonably.cosmoss",
-  "source_repository": "hoonably/cosMOSS"
+  "source_repository": "hoonably/cosMOSS",
+  "site_directory": "docs"
 }
