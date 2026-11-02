@@ -105,7 +105,7 @@ uv licenses live in the desktop runtime's `tools/licenses/`, and Python packages
 retain their distribution metadata and license files. These files are stored in
 Application Support/cosMOSS, outside the signed app. The app's MIT license and
 this notice remain in `Contents/Resources/`. Python, uv, model weights, MLX/CUDA
-runtimes and FFmpeg are not included in the app ZIP or DMG.
+runtimes and FFmpeg are not included in the app DMG.
 
 ## FFmpeg
 
@@ -113,7 +113,7 @@ cosMOSS invokes `ffmpeg` and `ffprobe` as separate executables. Working system
 installations are reused. Otherwise app setup downloads the Apple Silicon LGPL
 variant of [dfloresc/ffmpeg-macos-builds 9.0.1-1](https://github.com/dfloresc/ffmpeg-macos-builds/releases/tag/v9.0.1-1),
 verified against a pinned archive SHA-256 in `src/media_tools.py`.
-These binaries are not included in this repository or the cosMOSS release ZIP.
+These binaries are not included in this repository or the cosMOSS release DMG.
 The downloaded installation preserves its `LICENSES/`, `BUILDINFO.txt`, binaries
 and companion libraries together. Build sources and checksum-pinned upstream
 versions are available from the [build project](https://github.com/dfloresc/ffmpeg-macos-builds/tree/v9.0.1-1).

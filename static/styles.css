@@ -32,7 +32,7 @@ summary, .gpu-table tbody { -webkit-user-select: none; user-select: none; }
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 228px minmax(0, 1fr) 320px; }
 .sidebar { height: 100vh; position: sticky; top: 0; display: flex; flex-direction: column; padding: 30px 22px 20px; color: white; background: radial-gradient(circle at 20% 0, #263d31, transparent 34%), var(--sidebar); }
 .brand { display: flex; align-items: center; gap: 12px; margin: 0 8px 32px; color: inherit; text-decoration: none; border-radius: 5px; font-size: 18px; letter-spacing: .08em; }
-.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
+.brand { cursor: default; -webkit-user-select: none; user-select: none; }
 .brand b { color: var(--accent); }
 .brand-mark { width: 29px; height: 25px; display: flex; align-items: center; justify-content: center; gap: 2px; }
 .brand-mark i { width: 3px; border-radius: 3px; background: var(--accent); }
@@ -978,6 +978,7 @@ dialog::backdrop { background: rgba(11,25,17,.62); backdrop-filter: blur(4px); }
 .summary-prompt-actions > :first-child { margin-right: auto; font-size: 11px; }
 .summary-prompt-actions .ghost-button, .summary-prompt-actions .primary-action { min-width: 72px; height: 38px; padding: 0 16px; font-size: 12px; }
 .summary-prompt-field textarea { display: block; width: 100%; min-height: 160px; max-height: none; overflow: hidden; padding: 13px; border: 1px solid #dce4d7; border-radius: 10px; background: white; color: #536750; resize: none; font-family: inherit; font-size: 12px; line-height: 1.9; }
+.summary-prompt-field textarea:focus { outline: none; border-color: #8a968d; }
 .summary-actions { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
 .summary-actions > button { width: 100%; min-width: 0; height: auto; min-height: 46px; padding: 11px 10px; font-size: 12px; line-height: 1.6; }
 .summary-copy-prompt { white-space: normal; }

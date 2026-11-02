@@ -41,6 +41,7 @@ x86_64)
 *) echo '이 Mac의 프로세서에서는 실행 환경을 설치할 수 없습니다.' >&2; exit 1 ;;
 esac
 {
+    printf '\nCOSMOSS_RUNTIME_STAGE:tools\n' >&2
     echo '실행 도구를 내려받고 있어요…' >&2
     /usr/bin/curl --fail --location --proto '=https' --tlsv1.2 --retry 2 --connect-timeout 20 --max-time 300 \
         "$url" -o "$temporary/uv.whl" >&2
@@ -59,14 +60,17 @@ export UV_PYTHON_PREFERENCE=only-managed
 export UV_NO_PROGRESS=1
 export UV_LINK_MODE=copy
 # Keep managed Python in a shared stable location, also reused by local model setup.
+printf '\nCOSMOSS_RUNTIME_STAGE:python\n' >&2
 echo 'Python 실행 환경을 준비하고 있어요…' >&2
 "$uv" python install --no-config --no-bin 3.12.12 >&2
 python=$("$uv" python find --no-config 3.12.12)
 "$uv" venv --no-config --clear --python "$python" "$slot/venv" >&2
+printf '\nCOSMOSS_RUNTIME_STAGE:packages\n' >&2
 echo '앱 실행에 필요한 파일을 설치하고 있어요…' >&2
 "$uv" pip sync --no-config --python "$slot/venv/bin/python" --require-hashes \
     --index-url https://pypi.org/simple --only-binary :all: "$requirements" >&2
 # Probe before committing readiness. A failed or interrupted setup stays retryable.
+printf '\nCOSMOSS_RUNTIME_STAGE:verifying\n' >&2
 touch "$slot/ready"
 if ! ready; then rm -f "$slot/ready"; exit 1; fi
 printf '%s\n' "$slot"

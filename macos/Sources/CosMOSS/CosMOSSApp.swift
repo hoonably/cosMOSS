@@ -23,23 +23,10 @@ struct CosMOSSApp: App {
                 } else if let url = backend.url {
                     WorkspaceView(url: url)
                 } else if backend.needsRuntime {
-                    VStack(spacing: 18) {
-                        Text("처음 한 번, 실행 환경을 설치해 주세요").font(.title2)
-                        Text("서버 연결과 파일 관리에 필요한 파일을 내려받습니다.\n전사 모델은 사용할 기기에서 따로 설치할 수 있어요.")
-                            .multilineTextAlignment(.center)
-                        if backend.installingRuntime {
-                            ProgressView("실행 환경을 설치하고 있어요. 잠시 기다려 주세요.")
-                        } else {
-                            Button("실행 환경 설치") { Task { await backend.installRuntime() } }
-                                .buttonStyle(.borderedProminent)
-                        }
-                        if let error = backend.error {
-                            Text(error).textSelection(.enabled).multilineTextAlignment(.center)
-                        }
-                        if let logURL = backend.logURL {
-                            Button("로그 보기") { NSWorkspace.shared.open(logURL) }
-                        }
-                    }.padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    RuntimeSetupView(installing: backend.installingRuntime, status: backend.runtimeStage.message,
+                                     error: backend.error, logURL: backend.logURL) {
+                        Task { await backend.installRuntime() }
+                    }
                 } else if let error = backend.error {
                     VStack(spacing: 18) {
                         Image(systemName: "waveform.badge.exclamationmark")
@@ -52,10 +39,8 @@ struct CosMOSSApp: App {
                         }
                     }.padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    VStack(spacing: 16) {
-                        ProgressView()
-                        Text("cosMOSS를 준비하고 있어요")
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    RuntimeSetupView(installing: true, status: "cosMOSS를 여는 중…",
+                                     error: nil, logURL: nil, install: {})
                 }
             }
             .frame(minWidth: 1100, minHeight: 720)
@@ -106,15 +91,19 @@ final class BackendController: ObservableObject {
     @Published var error: String?
     @Published var needsRuntime = false
     @Published var installingRuntime = false
+    @Published private(set) var runtimeStage = DesktopRuntime.Stage.preparing
     private var runtimeURL: URL?
 
     func installRuntime() async {
         guard !installingRuntime, !starting, let resources = Bundle.main.resourceURL else { return }
         installingRuntime = true
+        runtimeStage = .preparing
         error = nil
         let storage = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("cosMOSS", isDirectory: true)
-        let result = await DesktopRuntime.prepare(resources: resources, storage: storage, install: true)
+        let result = await DesktopRuntime.prepare(resources: resources, storage: storage, install: true) { [weak self] stage in
+            self?.runtimeStage = stage
+        }
         logURL = result.logURL
         installingRuntime = false
         guard result.path != nil else {

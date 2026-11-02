@@ -237,7 +237,7 @@ async def main():
         await page.wait_for_function("document.querySelector('#save-location-name').textContent === '노트'")
         assert '/Users/tester/Documents/노트' in await page.locator('#save-location').get_attribute('title')
         assert await page.locator('#review-path-note').text_content() == '기본 경로에 있는 txt, srt, vtt 파일을 불러옵니다.'
-        assert await page.locator('#summary-path-note').text_content() == '기본 경로에 보정 TXT·요약 MD를 저장합니다.'
+        assert await page.locator('#summary-path-note').text_content() == '보정 전사문을 포함한 요약 Markdown을 저장합니다.'
         await page.evaluate('window.__cancelSaveLocation = true')
         await page.click('#save-location')
         assert await page.locator('#save-location-name').inner_text() == '노트'
@@ -335,7 +335,7 @@ async def main():
         assert await page.locator("#server-state").count() == 0
         assert await page.get_by_text("All connection attempts failed", exact=False).count() == 0
         assert "gpu_uuid" not in added and "gpu_index" not in added
-        assert added["model_cache"] == "" and added["remote_port"] == 18400
+        assert "model_cache" not in added and added["remote_port"] == 18400
         assert calls == 0, "Model preparation must not touch GPUs"
         presentations = await page.evaluate('''() => {
             const id = 'b'.repeat(32);
@@ -358,6 +358,10 @@ async def main():
         assert presentations == ['', '', '작업 정리', 'GPU 해제'], presentations
         if screenshot:
             await page.locator(".device-panel").screenshot(path=screenshot.replace(".png", "-devices.png"))
+        # GPU/chunk-count coverage uses a custom server model; managed pipeline readiness
+        # and fixed chunk controls are covered by speech_pipeline_ui_smoke.py.
+        targets[-1]['model_key'] = 'custom'
+        await page.evaluate("state.devices.find(device => device.id === 'b'.repeat(32)).model_key = 'custom'")
         await page.locator('[data-device-id="' + "b" * 32 + '"] .use-device').click()
         assert await page.evaluate('state.executionDeviceId') == 'b' * 32
         await choose_option(page, '#output-format', 'srt')
@@ -374,8 +378,9 @@ async def main():
         assert await page.locator('#probe-ssh-host').count() == 0
         assert '3초마다 갱신' in await page.locator('#execution-gpu-meta').inner_text()
         assert await page.locator('.gpu-table th').nth(1).inner_text() == '사용 / 전체 VRAM'
-        assert await page.locator('.gpu-table tbody tr').nth(0).locator('td').nth(1).inner_text() == '4 MiB / 24576 MiB'
-        assert await page.locator('.gpu-table tbody tr').nth(1).locator('td').nth(1).inner_text() == '0 MiB / 24576 MiB'
+        assert await page.locator('.gpu-table tbody tr').nth(0).locator('td').nth(1).inner_text() == '0.0 / 24.0 GiB'
+        assert await page.locator('.gpu-table tbody tr').nth(0).locator('td').nth(1).get_attribute('title') == '4 MiB / 24576 MiB'
+        assert await page.locator('.gpu-table tbody tr').nth(1).locator('td').nth(1).get_attribute('title') == '0 MiB / 24576 MiB'
         data = io.BytesIO()
         with wave.open(data, "wb") as audio:
             audio.setnchannels(1)
@@ -477,7 +482,7 @@ async def main():
         if await page.locator('#note-dialog').is_visible():
             await page.click('#close-note')
             await page.locator('#note-dialog').wait_for(state='hidden')
-        await page.click('#go-home')
+        assert await page.locator('.app-topbar .brand').evaluate("element => element.tagName === 'DIV' && getComputedStyle(element).cursor === 'default'")
         await page.locator('#welcome').wait_for(state='visible')
         await page.click('[data-device-id="local"] .use-device')
         assert await page.locator("#execution-gpu").is_hidden(), "Local target showed GPU selection"

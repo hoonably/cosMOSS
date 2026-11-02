@@ -935,12 +935,6 @@ async function openHome() {
   }
 }
 
-$("#go-home").addEventListener("click", event => {
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  event.preventDefault();
-  openHome();
-});
-
 function openUpload(deviceId) {
   if (state.deletingId || $("#upload-dialog").open) return;
   state.executionDeviceId = typeof deviceId === "string" ? deviceId : "local";

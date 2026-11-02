@@ -51,6 +51,18 @@ for scale in [1, 2] {
     arrow.lineJoinStyle = .round
     arrow.stroke()
 
+    // Keep first-launch help below the drag targets, at both Finder display scales.
+    let centered = NSMutableParagraphStyle()
+    centered.alignment = .center
+    ("처음 실행할 때 차단되면, 아래 설정에서 허용해 주세요." as NSString).draw(
+        in: NSRect(x: 40, y: 37, width: 560, height: 18),
+        withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: muted,
+                         .paragraphStyle: centered])
+    ("시스템 설정 → 개인정보 보호 및 보안 → 보안 → ‘확인 없이 열기’" as NSString).draw(
+        in: NSRect(x: 40, y: 17, width: 560, height: 18),
+        withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: ink,
+                         .paragraphStyle: centered])
+
     NSGraphicsContext.restoreGraphicsState()
     image.addRepresentation(bitmap)
 }

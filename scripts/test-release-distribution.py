@@ -41,6 +41,13 @@ with tempfile.TemporaryDirectory(prefix='release-distribution-test-') as tmp:
  client=Client();ns['stage'](client)
  assert set(uploads)=={'App.dmg','App.zip'},uploads
  print('PASS: original private Releases stage only installer/update binaries')
+ uploads.clear()
+ dmg_report=dict(report,archive='App.dmg',sha256=report['installer_sha256'])
+ ns['validate']=lambda *_args:dmg_report
+ ns['stage'](client)
+ assert uploads==['App.dmg'],uploads
+ ns['validate']=lambda *_args:report
+ print('PASS: shared installer/update DMG uploads only one public asset')
  ns['publish_cloudflare'](client,out,report,{},dict(state))
  assert (root/'appcast.xml').read_bytes()==(root/'website/updates/appcast.xml').read_bytes()
  record=json.loads((root/'website/updates/releases.json').read_text())[0]

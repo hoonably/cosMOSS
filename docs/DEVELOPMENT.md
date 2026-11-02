@@ -131,10 +131,10 @@ node --check static/app.js
 node --check static/selects.js
 ```
 
-Build the downloadable app, DMG installer and updater ZIP with
-`./scripts/build-mac-release.sh`. The outputs are
-`dist/cosMOSS-v<version>-macos-arm64.dmg` and `.zip`.
-Normal development builds (`build-mac-app.sh`) do not generate either archive.
+Build the downloadable app and shared installer/update DMG with
+`./scripts/build-mac-release.sh`. The public output is
+`dist/cosMOSS-v<version>-macos-arm64.dmg`.
+Normal development builds (`build-mac-app.sh`) do not generate installers.
 Local signing uses `scripts/sign-mac-app.py`: it automatically uses the one
 available Apple Development certificate (or Developer ID Application certificate).
 Set `COSMOSS_CODESIGN_IDENTITY` to a certificate name or SHA-1 if several exist.
@@ -163,15 +163,17 @@ Both development and release bundles include the same icon.
 ## Publishing updates
 
 The app uses Sparkle 2.9.6 with signed appcasts and Ed25519 archive validation.
-Both the app version and monotonic build number come from `pyproject.toml`
-(build = major × 1,000,000 + minor × 1,000 + patch). Update the matching project
-version in `uv.lock` when bumping the version; keep dependency pins unchanged.
+The display version and monotonically increasing build number are recorded in
+`release.json`; keep the project version in `pyproject.toml` and `uv.lock` aligned.
+Never decrease the build number, including explicitly approved v1.0.0 resets.
 
-Run `UV_BIN=/path/to/uv ./scripts/prepare-release.sh` to test, build the DMG/ZIP, and
-generate `appcast.xml`. This feed is served from the repository's `main` branch.
-Publish the DMG and ZIP on the matching GitHub release before pushing
-the new feed, so installed apps only see downloadable updates. Publish a feed
-change as a separate follow-up commit if necessary. Release notes stay short.
+Public releases use `signed-release.yml` and the existing Actions signing secret.
+Run `python3 scripts/release.py prepare`, `status`, `download`, `stage`, then
+`publish`. Baseline/history reset flags are reserved for explicitly approved
+v1.0.0 reissues. CI checks runtime installation, the signed DMG and replacement of
+a disposable prior app using a DMG update. Publish the DMG and verify anonymous
+downloads before publishing the signed feed. The DMG is the sole public asset;
+release notes retain the one-sentence product description.
 
 The cosMOSS signing key is kept outside the checkout at
 `~/Library/Application Support/cosMOSS Development/sparkle-private-key` (0600).
@@ -330,7 +332,7 @@ background/batch UI smoke tests cover these flows without model inference.
 
 `scripts/build-mac-app.sh` builds a development launcher referencing its checkout
 via `CosMOSSProjectRoot` in Info.plist. `scripts/build-mac-release.sh` builds a
-relocatable Apple Silicon ZIP containing the launcher, app sources, hashed web
+relocatable Apple Silicon DMG containing the launcher, app sources, hashed web
 requirements and `install-desktop-runtime.sh`. Python and uv are not in the app.
 On first launch the native screen offers an explicit install button. It downloads
 a SHA-256-pinned uv 0.9.25 wheel, uses its managed CPython 3.12.12 (no system Python
@@ -339,12 +341,23 @@ or Homebrew), and installs hash-locked binary wheels in a private virtual enviro
 
 Desktop environments live under `desktop-runtimes/<requirements-and-installer-hash>`
 in Application Support/cosMOSS, while managed Python is shared under `.cache/uv/python`.
-The installer checks imports before marking a slot ready. Launch checks are offline;
+The installer checks imports before marking a slot ready.
+During installation, the native screen shows a spinner and one current stage line.
+Explicit `COSMOSS_RUNTIME_STAGE:<code>` messages on stderr drive these stages;
+version-dependent tool output is retained in the log, never used as UI copy.
+Unknown stages are ignored and split pipe reads are reassembled. Logs and retry
+controls appear only on failure. `tests/runtime_progress_smoke.swift` exercises
+streaming, noisy logs, unknown stages, reuse and failure handling in release CI.
+
+Launch checks are offline;
 missing or broken environments return to the install screen. Install failure is
 retryable; an OS advisory lock prevents simultaneous modification and releases on exit/crash.
 Updates reuse a compatible slot and create a separate slot when requirements change.
 Old slots and personal data are preserved. Downloads require internet on first setup;
 afterwards the desktop backend starts offline. Model and FFmpeg setup remain separate.
+The same signed DMG is used for first installation and Sparkle updates; no public
+ZIP is needed. Release CI also tests the prior signed production app receiving a
+DMG update and actually replacing a disposable copy.
 The installer has arm64/x86_64 tool URLs, but the distributed launcher and local MLX
 support remain Apple Silicon; Intel support is not claimed by this release.
 
@@ -356,7 +369,7 @@ Release bundles use ad-hoc signatures, not Developer ID signing or notarization.
 Downloaded environments retain the Python distribution notices, uv licenses and
 installed Python package metadata. The signed bundle is never modified by setup.
 
-After extracting the release ZIP into a different directory, validate it with
+After copying the app from the release DMG into a different directory, validate it with
 `python tests/release_smoke.py /path/to/cosMOSS.app`. This checks bundle signatures,
 separate Python/uv installation and offline reuse, writable runtime separation, and actual VTT reading/editing
 without invoking models or AI services.

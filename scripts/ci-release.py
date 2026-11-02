@@ -30,6 +30,9 @@ try:
   run(['uv','sync','--frozen'])
   run(['.venv/bin/python','-m','unittest','discover','-s','tests'])
   run(['node','--check','static/app.js'])
+  progress_test=Path(os.environ['RUNNER_TEMP'])/'runtime-progress-test'
+  run(['swiftc','-parse-as-library','macos/Sources/CosMOSS/DesktopRuntime.swift','tests/runtime_progress_smoke.swift','-o',progress_test])
+  run([progress_test]);progress_test.unlink()
   os.environ['COSMOSS_RELEASE_CODESIGN_IDENTITY']='-'
   run(['./scripts/build-mac-release.sh'])
   run(['.venv/bin/python','tests/release_smoke.py','dist/release/cosMOSS.app'])
@@ -49,7 +52,7 @@ try:
  out=root/'dist/verified-release';out.mkdir(parents=True,exist_ok=True)
  files=[root/'appcast.xml',root/'docs/RELEASE_NOTES.md']
  files.extend([root/'dist'/cfg['installer'].format(version=cfg['version']),root/'dist'/cfg['update_archive'].format(version=cfg['version'])])
- for p in files:shutil.copy2(p,out/p.name)
+ for p in dict.fromkeys(files):shutil.copy2(p,out/p.name)
  shutil.copy2(root/'dist/release-verification.json',out/'release-verification.json')
  import hashlib
  payloads=sorted({cfg['installer'].format(version=cfg['version']),cfg['update_archive'].format(version=cfg['version'])})

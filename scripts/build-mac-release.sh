@@ -48,9 +48,5 @@ PY
 # Sign embedded code first, then seal the bundle. Notarization is separate.
 "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/sign-mac-app.py" "$APP_DIR" \
   --identity "$RELEASE_IDENTITY" --embedded
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/Contents/Info.plist")"
-ZIP="$PROJECT_DIR/dist/cosMOSS-v$VERSION-macos-arm64.zip"
-COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --keepParent --norsrc "$APP_DIR" "$ZIP"
 echo "배포용 앱: $APP_DIR"
-echo "릴리스 ZIP: $ZIP"
 "$PROJECT_DIR/scripts/build-mac-dmg.sh" "$APP_DIR"
