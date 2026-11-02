@@ -5,17 +5,17 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <title>cosMOSS</title>
         <item>
             <title>1.0.0</title>
-            <pubDate>Mon, 02 Nov 2026 05:29:04 +0000</pubDate>
+            <pubDate>Mon, 02 Nov 2026 06:01:58 +0000</pubDate>
             <link>https://github.com/hoonably/cosMOSS/releases</link>
             <sparkle:fullReleaseNotesLink>https://github.com/hoonably/cosMOSS/releases/tag/v1.0.0</sparkle:fullReleaseNotesLink>
-            <sparkle:version>1000003</sparkle:version>
+            <sparkle:version>1000004</sparkle:version>
             <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/hoonably/cosMOSS/releases/download/v1.0.0/cosMOSS-v1.0.0-macos-arm64.zip" length="1593236" type="application/octet-stream" sparkle:edSignature="KXdUtRIFvw4TDi4t4qtW2V2PKazaYINhhICQKMJF9HJRvDAINUw2nSKG44EuIYqg+u42FtZUsQ2toNKfOP3/Cw=="></enclosure>
+            <enclosure url="https://github.com/hoonably/cosMOSS/releases/download/v1.0.0/cosMOSS-v1.0.0-macos-arm64.dmg" length="1817794" type="application/octet-stream" sparkle:edSignature="Wq/nYglSj4M8dtTMCbEbBTiKEbK+gGwsF/bw29ErFjrnwIB8VNpjoZU6LtYCxMCLirJIqUS6fj/LPVnBSdmEDQ=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: 3L+RiO2VYthd0aaKH8pzDb84JseCRDSp9EOv3iZ0ccGsIV0fnB9ibM/K6VOe2F7l4O+pGuNyTcbZX/rL+TZOCA==
+edSignature: Rin0gAPqvabVjM6oaQZl3vg0Yn/HTThhIh19glqaLwMGGv7iWwLNPqIU/py/9VffYiHYMUzvACB7ReuSxVuGAQ==
 length: 1335
 -->
