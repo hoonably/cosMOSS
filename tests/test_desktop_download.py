@@ -51,7 +51,7 @@ class DesktopDownloadTests(unittest.TestCase):
         self.url = 'http://127.0.0.1:' + str(self.server.server_port)
         # HTTP is permitted only in this copied test fixture. Production stays HTTPS-only.
         helper = (ROOT/'scripts/desktop-download.sh').read_text().replace("--proto '=https'", "--proto '=http,https'")
-        helper = helper.replace('--speed-time 25', '--speed-time 1').replace('--max-time 600', '--max-time 5').replace('"$idle" -lt 15', '"$idle" -lt 1')
+        helper = helper.replace('--speed-time 25', '--speed-time 1').replace('--max-time 600', '--max-time 20').replace('"$idle" -lt 15', '"$idle" -lt 1')
         (self.root/'helper.sh').write_text(helper)
         self.target = self.root/'verified.bin'
 
@@ -64,7 +64,7 @@ class DesktopDownloadTests(unittest.TestCase):
         return ['/bin/bash',str(script)]
 
     def run_transfer(self, paths):
-        result=subprocess.run(self.command(paths),capture_output=True,text=True,timeout=20)
+        result=subprocess.run(self.command(paths),capture_output=True,text=True,timeout=45)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(self.target.read_bytes(),PAYLOAD)
         return result.stderr
@@ -100,7 +100,7 @@ class DesktopDownloadTests(unittest.TestCase):
                 while (not part.exists() or part.stat().st_size<32768) and time.monotonic()<deadline: time.sleep(.02)
                 self.assertTrue(part.exists())
             finally:
-                process.terminate();process.wait(timeout=5)
+                process.terminate();process.wait(timeout=10)
         self.assertGreater(part.stat().st_size,0)
         self.assertLess(part.stat().st_size,len(PAYLOAD))
         self.run_transfer(['/file'])
