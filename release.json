@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "build": 1000004,
+  "build": 1000005,
   "repository": "hoonably/cosMOSS",
   "app_name": "cosMOSS",
   "public_key_file": "macos/UpdatePublicKey.txt",
@@ -11,5 +11,10 @@
   "installer": "cosMOSS-v{version}-macos-arm64.dmg",
   "bundle_identifier": "io.github.hoonably.cosmoss",
   "source_repository": "hoonably/cosMOSS",
-  "site_directory": "docs"
+  "site_directory": "docs",
+  "public_mirror_site": "https://cosmoss-app.pages.dev",
+  "feed_url": "https://cosmoss-app.pages.dev/updates/appcast.xml",
+  "download_url_prefix": "https://cosmoss-app.pages.dev/downloads/v{version}/",
+  "release_notes_url": "https://cosmoss-app.pages.dev/updates/v{version}.html",
+  "installer_url": "https://cosmoss-app.pages.dev/downloads/latest.dmg"
 }

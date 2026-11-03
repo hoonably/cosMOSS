@@ -71,3 +71,9 @@ with tempfile.TemporaryDirectory(prefix='release-distribution-test-') as tmp:
  else:raise AssertionError('Public source unexpectedly accepted')
  assert not events
  print('PASS: private-source mode refuses a publicly visible repository')
+
+ cfg['public_mirror_site']='https://app.pages.dev'
+ ns['wait_for_public_file']=wait
+ ns['publish_cloudflare'](client,out,report,{},dict(state))
+ assert ('commit','assets') in events and ('commit','feed') in events
+ print('PASS: explicitly configured public mirror publishes verified assets before its feed')

@@ -96,16 +96,19 @@ for in-app updates under its permissive license. Its complete upstream license
 and third-party notices are included as `Contents/Resources/Sparkle-LICENSE`;
 the bundled framework retains its own resources and signatures.
 
-The Mac app downloads its desktop runtime separately after an explicit install
-action: CPython 3.12.12 through python-build-standalone, uv 0.9.25 (MIT or
-Apache-2.0), and web dependencies pinned in `uv.lock`. The uv wheel is checked
-against a pinned SHA-256; Python package installs require the exported hashes.
-CPython and its bundled libraries retain the notices in the managed distribution;
-uv licenses live in the desktop runtime's `tools/licenses/`, and Python packages
-retain their distribution metadata and license files. These files are stored in
-Application Support/cosMOSS, outside the signed app. The app's MIT license and
-this notice remain in `Contents/Resources/`. Python, uv, model weights, MLX/CUDA
-runtimes and FFmpeg are not included in the app DMG.
+The Mac app includes CPython 3.12.12 from python-build-standalone and the core
+web dependencies pinned in `uv.lock`. The Python archive is SHA-256-pinned and
+package installation at build time requires exported hashes. CPython and library
+notices are preserved in `Contents/Resources/python/licenses/`, with installed
+package distribution metadata. Python GUI tools and the pip package manager are
+excluded. Startup requires no runtime download.
+
+Explicit local AI environment setup may download uv 0.9.25 (MIT or Apache-2.0).
+Its original upstream wheel is mirrored byte-for-byte under the site's
+content-addressed runtime path. Wheel and executable hashes are pinned, and
+licenses are retained in Application Support/cosMOSS/runtime-tools/licenses.
+uv, model weights, MLX/CUDA engines and FFmpeg are not included in the app DMG.
+The app's MIT license and this notice remain in `Contents/Resources/`.
 
 ## FFmpeg
 

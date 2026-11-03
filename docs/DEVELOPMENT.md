@@ -160,6 +160,20 @@ The app icon uses the existing green waveform. Run `swift scripts/build-app-icon
 to regenerate `macos/Assets/AppIcon.icns` and its PNG/SVG previews after changing the artwork.
 Both development and release bundles include the same icon.
 
+## Use the latest code on this Mac
+
+Run `python3 scripts/install-local-app.py` after app changes pass validation.
+It builds a standalone app and Swift dependencies in a temporary directory,
+verifies the app, replaces `/Applications/cosMOSS.app`, then removes intermediate
+apps, the previous app copy and that build's scratch cache. Add `--open` to launch
+it afterwards. It does not create DMG/ZIP files, publish a release or modify
+personal data, models or installed runtime environments. App updates remain enabled.
+A running app must be saved and normally quit before replacement; it is never
+force-terminated. A failed installation restores the previous app. If restoration
+itself fails, the backup is preserved and its location is reported.
+`COSMOSS_LOCAL_CODESIGN_IDENTITY` can select an existing local signing identity;
+otherwise the standard identity selection and ad-hoc fallback apply.
+
 ## Publishing updates
 
 The app uses Sparkle 2.9.6 with signed appcasts and Ed25519 archive validation.
@@ -331,47 +345,59 @@ from persisted summary results/source hashes, including after app restart.
 background/batch UI smoke tests cover these flows without model inference.
 
 `scripts/build-mac-app.sh` builds a development launcher referencing its checkout
-via `CosMOSSProjectRoot` in Info.plist. `scripts/build-mac-release.sh` builds a
-relocatable Apple Silicon DMG containing the launcher, app sources, hashed web
-requirements and `install-desktop-runtime.sh`. Python and uv are not in the app.
-On first launch the native screen offers an explicit install button. It downloads
-a SHA-256-pinned uv 0.9.25 wheel, uses its managed CPython 3.12.12 (no system Python
-or Homebrew), and installs hash-locked binary wheels in a private virtual environment.
-`uv python install --no-bin` prevents global Python links. No shell profiles are changed.
+via `CosMOSSProjectRoot` in Info.plist. Public/local standalone builds contain a
+pinned CPython 3.12.12 interpreter and the hash-locked core backend packages.
+Basic startup, text editing and the workspace require no package installation,
+no system Python, no uv and no outbound download. The local server explicitly
+uses Uvicorn's asyncio loop and h11 HTTP implementation, with WebSockets disabled.
 
-Desktop environments live under `desktop-runtimes/<requirements-and-installer-hash>`
-in Application Support/cosMOSS, while managed Python is shared under `.cache/uv/python`.
-The installer checks imports before marking a slot ready.
-During installation, the native screen shows a spinner and one current stage line.
-Explicit `COSMOSS_RUNTIME_STAGE:<code>` messages on stderr drive these stages;
-version-dependent tool output is retained in the log, never used as UI copy.
-Unknown stages are ignored and split pipe reads are reassembled. Logs and retry
-controls appear only on failure. `tests/runtime_progress_smoke.swift` exercises
-streaming, noisy logs, unknown stages, reuse and failure handling in release CI.
+The direct core dependencies are FastAPI (HTTP API), HTTPX (remote HTTP clients),
+python-multipart (uploads), markdown-it-py (summary preview) and base Uvicorn
+(local HTTP server). Their transitive dependencies are included in `uv.lock`.
+The optional standard extras (uvloop/httptools, watchfiles, dotenv, PyYAML and
+websockets) are not needed for this single-user desktop server. Removing them
+changes the local server implementation, not the transcription engine.
 
-Launch checks are offline;
-missing or broken environments return to the install screen. Install failure is
-retryable; an OS advisory lock prevents simultaneous modification and releases on exit/crash.
-Updates reuse a compatible slot and create a separate slot when requirements change.
-Old slots and personal data are preserved. Downloads require internet on first setup;
-afterwards the desktop backend starts offline. Model and FFmpeg setup remain separate.
-The same signed DMG is used for first installation and Sparkle updates; no public
-ZIP is needed. Release CI also tests the prior signed production app receiving a
-DMG update and actually replacing a disposable copy.
-The installer has arm64/x86_64 tool URLs, but the distributed launcher and local MLX
-support remain Apple Silicon; Intel support is not claimed by this release.
+`scripts/bundle-desktop-runtime.py` validates the official Python archive's
+SHA-256, installs only frozen binary wheels, preserves license notices and removes
+pip/ensurepip, Tk/IDLE, Tcl/Tk GUI libraries, and bytecode/test caches. It retains
+SSL, SQLite, ctypes, multiprocessing, venv and Python headers. Model environments
+are isolated but use the bundled `sys.executable`; they do not need a second
+Python download. Relocation and an isolated uv venv with Python downloads disabled
+are checked on the build host. `desktop-runtime.json` records the package contents.
+
+uv is an optional environment-management tool for explicitly requested local AI
+setup. It is not in the DMG. The signed app pins the optional uv wheel and binary
+hashes; an immutable copy on the existing Pages site is tried before its upstream
+PyPI URL. Completed/partial downloads are cached under
+`Application Support/cosMOSS/.cache/desktop-downloads`, with resume, bounded
+connection/stall waits, failover and SHA-256 verification before extraction.
+A verified uv from an older interrupted setup can be reused. Local environment
+setup exposes real byte counts; errors retain progress for a retry. No DNS/hosts
+settings or hard-coded CDN IPs are used. Download fixtures cover slow/stalled
+sources, interrupted requests/processes, corrupt cache and completed cache reuse.
+
+Model weights, MLX/CUDA engines and FFmpeg remain separate, explicit setup steps.
+Remote-server-only transcription does not need a Mac MLX environment or local
+model weights. FFmpeg is used on the Mac for audio preprocessing when requested;
+this is a current pipeline choice, not a prerequisite for opening the workspace.
+The same signed DMG is used for first installation and Sparkle updates. Public
+DMG/update bytes and the signed feed are mirrored on the existing Pages site;
+GitHub Releases retains the same one-sentence product description and DMG.
+Previous installed apps can continue to use the signed root appcast while the
+current app uses the Pages feed. Apple Silicon/macOS 13+ remain the support target.
 
 The release launcher uses `~/Library/Application Support/cosMOSS/` for writable
 data, the MLX venv, caches and logs. `MOSS_RUNTIME_DIR` separates these writable
 runtime paths from the read-only bundled source. Finder launches add Homebrew's
 executable directories to PATH so FFmpeg and optional AI CLIs can be found.
 Release bundles use ad-hoc signatures, not Developer ID signing or notarization.
-Downloaded environments retain the Python distribution notices, uv licenses and
-installed Python package metadata. The signed bundle is never modified by setup.
+The bundled runtime retains Python/library notices and installed package metadata.
+Optional uv installations retain their license files. The signed bundle is never modified by setup.
 
 After copying the app from the release DMG into a different directory, validate it with
 `python tests/release_smoke.py /path/to/cosMOSS.app`. This checks bundle signatures,
-separate Python/uv installation and offline reuse, writable runtime separation, and actual VTT reading/editing
+cold offline core startup without uv/downloads, writable runtime separation, and actual VTT reading/editing
 without invoking models or AI services.
 
 The app binds its backend to loopback, uses port 18760 by default, verifies the

@@ -26,7 +26,7 @@ def main():
     version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
     assert metadata['CFBundleShortVersionString'] == version
     assert metadata['SUPublicEDKey'] == (root / 'macos/UpdatePublicKey.txt').read_text().strip()
-    assert metadata['SUFeedURL'] == 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml'
+    assert metadata['SUFeedURL'] == json.loads((root / 'release.json').read_text()).get('feed_url', 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml')
     assert metadata['SURequireSignedFeed'] and metadata['SUVerifyUpdateBeforeExtraction']
     assert metadata['SUEnableAutomaticChecks']
     assert not metadata['SUAutomaticallyUpdate']
@@ -38,9 +38,10 @@ def main():
     assert (resources / 'AppIcon.icns').read_bytes().startswith(b'icns')
     assert (app / 'Contents/Frameworks/Sparkle.framework').is_dir()
     assert 'CosMOSSProjectRoot' not in metadata
-    assert (resources / 'install-desktop-runtime.sh').is_file()
-    assert not (resources / 'python').exists()
+    assert not (resources / 'install-desktop-runtime.sh').exists()
+    assert (resources / 'python/bin/python3.12').is_file()
     assert not (resources / 'tools').exists()
+    assert json.loads((resources / 'desktop-runtime.json').read_text())['first_launch_downloads'] == []
     for path in app.rglob('*'):
         if path.is_symlink():
             assert path.resolve().is_relative_to(app), path
@@ -50,25 +51,15 @@ def main():
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
-        installer = ['/bin/bash', str(resources / 'install-desktop-runtime.sh'), str(resources), str(root)]
-        assert subprocess.run(installer + ['--check'], capture_output=True).returncode != 0
-        installed_runtime = Path(subprocess.check_output(installer + ['--install'], text=True).strip())
-        assert Path(subprocess.check_output(installer + ['--check'], text=True).strip()) == installed_runtime
-        assert (installed_runtime / 'tools/licenses/LICENSE-MIT').is_file()
-        offline = dict(os.environ, HTTPS_PROXY='http://127.0.0.1:1', HTTP_PROXY='http://127.0.0.1:1', ALL_PROXY='http://127.0.0.1:1')
-        assert Path(subprocess.check_output(installer + ['--install'], env=offline, text=True).strip()) == installed_runtime
-        module = installed_runtime / 'venv/lib/python3.12/site-packages/fastapi/__init__.py'
-        saved = module.read_bytes()
-        try:
-            module.unlink()
-            assert subprocess.run(installer + ['--check'], capture_output=True).returncode != 0
-        finally:
-            module.write_bytes(saved)
+        # Cold first launch must not download Python, uv or packages. No cache is seeded.
+        assert not (root / '.cache').exists()
+        installed_runtime = resources
         environment = dict(os.environ)
         environment.pop('PYTHONHOME', None)
         environment.update(PYTHONPATH=str(resources / 'app'), PYTHONNOUSERSITE='1', PYTHONDONTWRITEBYTECODE='1',
                            MOSS_DATA_DIR=str(root / 'data'), MOSS_RUNTIME_DIR=str(root),
-                           MLX_VENV=str(root / 'mlx'), UV_BIN=str(installed_runtime / 'tools/bin/uv'))
+                           MLX_VENV=str(root / 'mlx'), UV_BIN=str(root / 'runtime-tools/uv'), COSMOSS_BUNDLED_RESOURCES=str(resources),
+                           HTTPS_PROXY='http://127.0.0.1:1', HTTP_PROXY='http://127.0.0.1:1', ALL_PROXY='http://127.0.0.1:1')
         base = f'http://127.0.0.1:{port}'
         # Simulate an existing user's edited default before this release starts.
         (root / 'data').mkdir()
@@ -87,7 +78,8 @@ def main():
                 raise AssertionError(f'{method} {path}: {error.code} {error.read().decode()}') from error
 
         with (root / 'backend.log').open('wb') as log:
-            process = subprocess.Popen([str(installed_runtime / 'venv/bin/python'), '-m', 'uvicorn', 'src.main:app',
+            process = subprocess.Popen([str(installed_runtime / 'python/bin/python3.12'), '-m', 'uvicorn', 'src.main:app',
+                                        '--loop', 'asyncio', '--http', 'h11', '--ws', 'none',
                                         '--host', '127.0.0.1', '--port', str(port)],
                                        cwd=root, env=environment, stdout=log, stderr=log)
             try:
@@ -112,7 +104,8 @@ def main():
                 devices = request('/api/devices')
                 assert len(devices) == 1 and devices[0]['id'] == 'local'
                 runtime = request('/api/devices/local/environment')
-                assert runtime['uv']['ready'] and runtime['uv']['path'] == environment['UV_BIN']
+                assert not (root / 'runtime-tools/uv').exists()
+                assert not (root / '.cache/desktop-downloads').exists()
                 assert Path(runtime['venv']['path']).resolve() == Path(environment['MLX_VENV']).resolve()
                 folder = root / 'transcripts'
                 folder.mkdir()
@@ -136,12 +129,12 @@ def main():
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-        subprocess.run([str(installed_runtime / 'venv/bin/python'), '-c',
+        subprocess.run([str(installed_runtime / 'python/bin/python3.12'), '-c',
                         "from pathlib import Path; from src.summaries import Summaries; "
                         "assert Summaries(Path('data/summaries')).preferences()['default_prompt'] == 'edited after updating'"],
                        cwd=root, env=environment, check=True)
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
-    print('PASS: relocated release, signature, separately installed Python/uv, isolated data, one-time prompt reset and later edits, VTT reading/editing, unchanged bundle')
+    print('PASS: relocated release, signature, offline bundled Python/core, no uv or startup downloads, isolated data, one-time prompt reset and later edits, VTT reading/editing, unchanged bundle')
 
 
 if __name__ == '__main__':

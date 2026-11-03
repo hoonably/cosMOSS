@@ -1,3 +1,6 @@
 /embed/*
   ! X-Frame-Options
   Content-Security-Policy: frame-ancestors 'self' https://jeonghoonpark.com https://www.jeonghoonpark.com
+
+/runtime/*
+  Cache-Control: public, max-age=31536000, immutable

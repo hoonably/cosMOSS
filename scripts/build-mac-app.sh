@@ -11,15 +11,20 @@ if [[ ! -x "$PROJECT_DIR/.venv/bin/python" ]]; then
   echo "먼저 ./scripts/setup-app.sh 를 실행하세요." >&2
   exit 1
 fi
-swift build --package-path "$PROJECT_DIR/macos" -c release
-BIN_DIR="$(swift build --package-path "$PROJECT_DIR/macos" -c release --show-bin-path)"
+SWIFT_BUILD_ARGS=(--package-path "$PROJECT_DIR/macos" -c release)
+SWIFT_BUILD_ROOT="${COSMOSS_SWIFT_SCRATCH_PATH:-$PROJECT_DIR/macos/.build}"
+if [[ -n "${COSMOSS_SWIFT_SCRATCH_PATH:-}" ]]; then
+  SWIFT_BUILD_ARGS+=(--scratch-path "$COSMOSS_SWIFT_SCRATCH_PATH")
+fi
+swift build "${SWIFT_BUILD_ARGS[@]}"
+BIN_DIR="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)"
 APP_DIR="${COSMOSS_APP_DIR:-$PROJECT_DIR/dist/cosMOSS.app}"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cp "$BIN_DIR/CosMOSS" "$APP_DIR/Contents/MacOS/CosMOSS"
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$PROJECT_DIR/macos/Assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP_DIR/Contents/Frameworks"
-SPARKLE_FRAMEWORK="$PROJECT_DIR/macos/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+SPARKLE_FRAMEWORK="$SWIFT_BUILD_ROOT/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 ditto "$SPARKLE_FRAMEWORK" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
 if ! otool -l "$APP_DIR/Contents/MacOS/CosMOSS" | grep -q '@executable_path/../Frameworks'; then
   install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_DIR/Contents/MacOS/CosMOSS"
@@ -53,7 +58,7 @@ metadata = {
                                     'public.mime-type': 'application/vnd.cosmoss.voice+json'}}],
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
     'CosMOSSProjectRoot': str(root),
-    'SUFeedURL': 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml',
+    'SUFeedURL': release.get('feed_url', 'https://raw.githubusercontent.com/hoonably/cosMOSS/main/appcast.xml'),
     'SUPublicEDKey': (root / 'macos/UpdatePublicKey.txt').read_text().strip(),
     'SUEnableAutomaticChecks': True,
     'SUAutomaticallyUpdate': False,

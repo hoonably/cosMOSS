@@ -30,9 +30,6 @@ try:
   run(['uv','sync','--frozen'])
   run(['.venv/bin/python','-m','unittest','discover','-s','tests'])
   run(['node','--check','static/app.js'])
-  progress_test=Path(os.environ['RUNNER_TEMP'])/'runtime-progress-test'
-  run(['swiftc','-parse-as-library','macos/Sources/CosMOSS/DesktopRuntime.swift','tests/runtime_progress_smoke.swift','-o',progress_test])
-  run([progress_test]);progress_test.unlink()
   os.environ['COSMOSS_RELEASE_CODESIGN_IDENTITY']='-'
   run(['./scripts/build-mac-release.sh'])
   run(['.venv/bin/python','tests/release_smoke.py','dist/release/cosMOSS.app'])

@@ -9,7 +9,7 @@ if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
   exit 1
 fi
 UV_BOOTSTRAP="${UV_BIN:-uv}"
-BUILD_DIR="$PROJECT_DIR/dist/release"
+BUILD_DIR="${COSMOSS_RELEASE_BUILD_DIR:-$PROJECT_DIR/dist/release}"
 APP_DIR="$BUILD_DIR/cosMOSS.app"
 RESOURCES="$APP_DIR/Contents/Resources"
 mkdir -p "$BUILD_DIR"
@@ -34,8 +34,11 @@ for name in ('src', 'static'):
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.DS_Store'))
 for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
     shutil.copy2(root / name, resources / name)
-shutil.copy2(root / 'macos/.build/checkouts/Sparkle/LICENSE', resources / 'Sparkle-LICENSE')
-shutil.copy2(root / 'scripts/install-desktop-runtime.sh', resources / 'install-desktop-runtime.sh')
+import os
+swift_build = Path(os.environ.get('COSMOSS_SWIFT_SCRATCH_PATH', str(root / 'macos/.build')))
+shutil.copy2(swift_build / 'checkouts/Sparkle/LICENSE', resources / 'Sparkle-LICENSE')
+for helper in ('install-optional-tools.sh', 'desktop-download.sh'):
+    shutil.copy2(root / 'scripts' / helper, resources / helper)
 info = app / 'Contents/Info.plist'
 metadata = plistlib.loads(info.read_bytes())
 metadata.pop('CosMOSSProjectRoot', None)
@@ -44,9 +47,13 @@ info.write_bytes(plistlib.dumps(metadata))
 PY
 "$UV_BOOTSTRAP" export --frozen --no-dev --no-emit-project --no-header \
   --output-file "$RESOURCES/requirements.txt" > /dev/null
+"$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/bundle-desktop-runtime.py" "$APP_DIR" --uv "$UV_BOOTSTRAP"
 
 # Sign embedded code first, then seal the bundle. Notarization is separate.
 "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/sign-mac-app.py" "$APP_DIR" \
   --identity "$RELEASE_IDENTITY" --embedded
 echo "배포용 앱: $APP_DIR"
-"$PROJECT_DIR/scripts/build-mac-dmg.sh" "$APP_DIR"
+# Local installation needs the standalone app, without producing release archives.
+if [[ "${COSMOSS_PACKAGE_ONLY:-0}" != 1 ]]; then
+  "$PROJECT_DIR/scripts/build-mac-dmg.sh" "$APP_DIR"
+fi

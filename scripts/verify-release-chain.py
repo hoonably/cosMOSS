@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='release-chain-') as tmp:
  assert original['CFBundleShortVersionString']==cfg['version'] and original['CFBundleVersion']==str(cfg['build'])
  assert original['CFBundleIdentifier']==cfg['bundle_identifier'],'Bundle identity changed'
  assert original['SUPublicEDKey']==public
- assert original['SUFeedURL']==f"https://raw.githubusercontent.com/{cfg['repository']}/main/appcast.xml"
+ assert original['SUFeedURL']==cfg.get('feed_url',f"https://raw.githubusercontent.com/{cfg['repository']}/main/appcast.xml")
  assert original['SURequireSignedFeed'] and original['SUVerifyUpdateBeforeExtraction']
  framework=current/'Contents/Frameworks/Sparkle.framework'
  assert framework.is_dir(),'The distributed app must include Sparkle'
@@ -64,8 +64,8 @@ with tempfile.TemporaryDirectory(prefix='release-chain-') as tmp:
    previous_build=int(previous_item.findtext(ns+'version'))
    if previous_build<int(cfg['build']):
     enclosure=previous_item.find('enclosure');url=enclosure.get('url')
-    expected=f"https://github.com/{cfg['repository']}/releases/download/"
-    assert url.startswith(expected),'Unexpected previous release download location'
+    expected=[f"https://github.com/{cfg['repository']}/releases/download/",cfg.get('public_mirror_site','https://invalid.example')+'/downloads/']
+    assert any(url.startswith(prefix) for prefix in expected),'Unexpected previous release download location'
     legacy=stage/'legacy';legacy.mkdir();old_feed=legacy/'appcast.xml';old_feed.write_bytes(committed_feed.stdout)
     old_payload=legacy/Path(urlsplit(url).path).name
     run(['curl','--fail','--location','--silent','--show-error','--max-time','120',url,'--output',old_payload])

@@ -79,7 +79,8 @@ class LocalDiarization:
         async with self.lock:
             if action == 'install':
                 self.root.mkdir(parents=True,exist_ok=True,mode=0o700)
-                uv = await asyncio.to_thread(ensure_uv,self.root/'tools')
+                uv = await asyncio.to_thread(ensure_uv,self.root/'tools',
+                    progress=lambda detail: on_event({'phase':'downloading','download':detail}))
                 if not self.python.is_file():
                     on_event({'phase':'installing'})
                     await self.command([uv,'venv','--python',sys.executable,self.root/'runtime'],on_event)

@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='signed-appcast-') as tmp:
  stage=Path(tmp)
  shutil.copy2(archive,stage/archive.name)
  if feed.exists() and os.environ.get('RELEASE_RESET_HISTORY')!='1':shutil.copy2(feed,stage/'appcast.xml')
- prefix=f"https://github.com/{cfg['repository']}/releases/download/v{cfg['version']}/"
+ prefix=cfg.get("download_url_prefix",f"https://github.com/{cfg['repository']}/releases/download/v{cfg['version']}/").format(version=cfg['version'])
  subprocess.run([str(tools),'--ed-key-file',str(key),'--download-url-prefix',prefix,'--full-release-notes-url',f"https://github.com/{cfg['repository']}/releases/tag/v{cfg['version']}",'--link',f"https://github.com/{cfg['repository']}/releases",'--maximum-versions','5','--maximum-deltas','0','-o',str(stage/'appcast.xml'),str(stage)],check=True)
  ns='{http://www.andymatuschak.org/xml-namespaces/sparkle}'
  items=ET.parse(stage/'appcast.xml').getroot().findall('channel/item')

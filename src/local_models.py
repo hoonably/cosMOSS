@@ -237,7 +237,9 @@ class LocalModels:
         python = self.runtime / "bin/python"
         stamp = self.runtime / "cosmoss-runtime-version"
         self.state.update(phase="installing_uv")
-        uv = await asyncio.to_thread(ensure_uv, self.data / "runtime-tools")
+        uv = await asyncio.to_thread(ensure_uv, self.data / "runtime-tools",
+                                     progress=lambda detail: self.state.update(download=detail))
+        self.state.pop("download", None)
         checked = await self.environment()
         if checked["ready"]:
             return python

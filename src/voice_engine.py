@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from src.runtime_environment import find_uv
+from src.runtime_environment import ensure_uv
 
 MODEL_ID = 'campplus-zh-en-advanced-192-v1'
 MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx'
@@ -84,13 +84,13 @@ class VoiceEngine:
                     pass
             self.stamp.unlink(missing_ok=True)
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-            uv = find_uv(self.root / 'tools')
-            if not uv['ready']:
-                raise RuntimeError('앱 실행 환경의 uv를 찾을 수 없습니다. 앱 설정에서 준비해 주세요.')
+            self.state = {'phase': 'installing', 'message': '필요한 설치 도구를 준비하고 있습니다…'}
+            uv = await asyncio.to_thread(ensure_uv, self.root / 'tools',
+                progress=lambda detail: self.state.update(phase='downloading', message='설치 도구를 내려받고 있습니다…', **detail))
             self.state = {'phase': 'installing', 'message': '목소리 비교 도구를 준비하고 있습니다…'}
             if not self.python.is_file():
-                await self.command([uv['path'], 'venv', '--clear', '--python', sys.executable, self.runtime], timeout=120)
-            await self.command([uv['path'], 'pip', 'install', '--reinstall', '--python', self.python,
+                await self.command([uv, 'venv', '--clear', '--python', sys.executable, self.runtime], timeout=120)
+            await self.command([uv, 'pip', 'install', '--reinstall', '--python', self.python,
                                 'sherpa-onnx==1.13.8', 'numpy==2.2.6'], timeout=600)
             await self.command([self.python, '-I', '-B', '-c', 'import sherpa_onnx,numpy'], timeout=30)
             valid = self.model.is_file() and hashlib.sha256(self.model.read_bytes()).hexdigest() == MODEL_SHA256

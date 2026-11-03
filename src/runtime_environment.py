@@ -79,11 +79,42 @@ def inspect_environment(runtime, stamp, expected, tools, backend="cuda"):
     return result
 
 
-def ensure_uv(tools, environment=None, pass_fds=()):
+def ensure_uv(tools, environment=None, pass_fds=(), progress=None):
     current = find_uv(tools)
     if current["ready"]:
         return current["path"]
     tools = Path(tools)
+    bundled = Path(os.environ.get("COSMOSS_BUNDLED_RESOURCES", "/nonexistent"))
+    helper = bundled / "install-optional-tools.sh"
+    if os.uname().sysname == "Darwin" and os.uname().machine == "arm64" and helper.is_file():
+        base = Path(os.environ["MOSS_RUNTIME_DIR"])
+        tools = base / "runtime-tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        child_environment = dict(os.environ, COSMOSS_TOOL_PARENT_PID=str(os.getpid()))
+        with subprocess.Popen(["/bin/bash", str(helper), str(bundled), str(tools), str(base)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                              env=child_environment, pass_fds=pass_fds) as process:
+            errors = []
+            for line in process.stderr:
+                errors.append(line)
+                if len(errors) > 100: errors.pop(0)
+                prefix = 'COSMOSS_RUNTIME_PROGRESS:'
+                if progress and line.startswith(prefix):
+                    parts = line.strip().split(':')
+                    try:
+                        received, total = int(parts[1]), int(parts[2])
+                        if 0 <= received <= total and total > 0:
+                            progress({'downloaded_bytes': received, 'total_bytes': total,
+                                      'percent': received * 100 / total, 'state': parts[3]})
+                    except (ValueError, IndexError): pass
+            process.wait()
+            if process.returncode:
+                if process.returncode == 75:
+                    raise RuntimeError("다른 작업에서 설치 도구를 준비하고 있습니다. 완료 후 다시 시도해 주세요.")
+                raise RuntimeError("설치 도구를 내려받지 못했습니다. 다시 준비하면 완료된 다운로드를 재사용합니다.\n" + ''.join(errors)[-1000:])
+        installed = find_uv(tools)
+        if not installed["ready"]: raise RuntimeError("설치 도구 검증에 실패했습니다. 다시 준비해 주세요.")
+        return installed["path"]
     tools.mkdir(parents=True, exist_ok=True)
     environment = dict(environment or os.environ)
     # The official unmanaged installer leaves shell profiles and global tools alone.

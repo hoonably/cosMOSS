@@ -22,11 +22,6 @@ struct CosMOSSApp: App {
                     }
                 } else if let url = backend.url {
                     WorkspaceView(url: url)
-                } else if backend.needsRuntime {
-                    RuntimeSetupView(installing: backend.installingRuntime, status: backend.runtimeStage.message,
-                                     error: backend.error, logURL: backend.logURL) {
-                        Task { await backend.installRuntime() }
-                    }
                 } else if let error = backend.error {
                     VStack(spacing: 18) {
                         Image(systemName: "waveform.badge.exclamationmark")
@@ -39,8 +34,7 @@ struct CosMOSSApp: App {
                         }
                     }.padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    RuntimeSetupView(installing: true, status: "cosMOSS를 여는 중…",
-                                     error: nil, logURL: nil, install: {})
+                    StartupProgressView(status: "cosMOSS를 여는 중…")
                 }
             }
             .frame(minWidth: 1100, minHeight: 720)
@@ -89,31 +83,6 @@ final class BackendController: ObservableObject {
     static let shared = BackendController()
     @Published var url: URL?
     @Published var error: String?
-    @Published var needsRuntime = false
-    @Published var installingRuntime = false
-    @Published private(set) var runtimeStage = DesktopRuntime.Stage.preparing
-    private var runtimeURL: URL?
-
-    func installRuntime() async {
-        guard !installingRuntime, !starting, let resources = Bundle.main.resourceURL else { return }
-        installingRuntime = true
-        runtimeStage = .preparing
-        error = nil
-        let storage = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("cosMOSS", isDirectory: true)
-        let result = await DesktopRuntime.prepare(resources: resources, storage: storage, install: true) { [weak self] stage in
-            self?.runtimeStage = stage
-        }
-        logURL = result.logURL
-        installingRuntime = false
-        guard result.path != nil else {
-            error = "인터넷 연결을 확인하고 다시 설치해 주세요. 계속 실패하면 로그 보기를 눌러 확인해 주세요."
-            return
-        }
-        needsRuntime = false
-        await start()
-    }
-
     private(set) var logURL: URL?
     private var process: Process?
     private var log: FileHandle?
@@ -135,7 +104,7 @@ final class BackendController: ObservableObject {
     }
 
     func prepareForUpdate() async -> Bool {
-        guard let url else { return !starting && !installingRuntime }
+        guard let url else { return !starting }
         var request = URLRequest(url: url.appendingPathComponent("api/update-status"))
         request.timeoutInterval = 3
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -175,7 +144,7 @@ final class BackendController: ObservableObject {
     }
 
     func start() async {
-        guard !starting, !installingRuntime, url == nil else { return }
+        guard !starting, url == nil else { return }
         starting = true
         error = nil
         defer { starting = false }
@@ -201,16 +170,12 @@ final class BackendController: ObservableObject {
             projectURL = resources.appendingPathComponent("app", isDirectory: true)
             workingURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("cosMOSS", isDirectory: true)
-            let runtime = await DesktopRuntime.prepare(resources: resources, storage: workingURL, install: false)
-            logURL = runtime.logURL
-            guard let installed = runtime.path else {
-                needsRuntime = true
+            executable = resources.appendingPathComponent("python/bin/python3.12")
+            guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+                error = "앱 실행 파일이 누락됐습니다. 최신 DMG에서 앱 전체를 다시 복사해 주세요."
                 return
             }
-            runtimeURL = installed
-            needsRuntime = false
-            executable = installed.appendingPathComponent("venv/bin/python")
-            arguments = ["-m", "uvicorn", "src.main:app", "--host", "127.0.0.1", "--port"]
+            arguments = ["-m", "uvicorn", "src.main:app", "--loop", "asyncio", "--http", "h11", "--ws", "none", "--host", "127.0.0.1", "--port"]
             bundled = true
         } else {
             error = "앱 파일을 확인해 주세요."
@@ -266,7 +231,7 @@ final class BackendController: ObservableObject {
             environment["COSMOSS_DESKTOP_HOST"] = "127.0.0.1"
             environment["COSMOSS_DESKTOP_PORT"] = String(port)
             environment["COSMOSS_DESKTOP_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
-            if bundled, let runtimeURL {
+            if bundled, let resources = Bundle.main.resourceURL {
                 environment.removeValue(forKey: "PYTHONHOME")
                 environment["PYTHONPATH"] = projectURL.path
                 environment["PYTHONNOUSERSITE"] = "1"
@@ -274,7 +239,8 @@ final class BackendController: ObservableObject {
                 environment["MOSS_DATA_DIR"] = workingURL.appendingPathComponent("data").path
                 environment["MOSS_RUNTIME_DIR"] = workingURL.path
                 environment["MLX_VENV"] = workingURL.appendingPathComponent(".venv-mlx").path
-                environment["UV_BIN"] = runtimeURL.appendingPathComponent("tools/bin/uv").path
+                environment["COSMOSS_BUNDLED_RESOURCES"] = resources.path
+                environment["UV_BIN"] = workingURL.appendingPathComponent("runtime-tools/uv").path
                 environment["UV_CACHE_DIR"] = workingURL.appendingPathComponent(".cache/uv").path
                 environment["UV_PYTHON_INSTALL_DIR"] = workingURL.appendingPathComponent(".cache/uv/python").path
             }

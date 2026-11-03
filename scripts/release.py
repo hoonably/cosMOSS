@@ -105,7 +105,7 @@ def stage(client):
  state.update({'release_id':found['id'],'stage_tag':tag,'release_target':target})
  (DIST/'release-run.json').write_text(json.dumps(state,indent=2)+'\n')
  print('Draft staged with authenticated artifacts; existing releases unchanged')
-def public_site():return CFG.get('public_site_url','').rstrip('/')
+def public_site():return (CFG.get('public_site_url') or CFG.get('public_mirror_site','')).rstrip('/')
 def public_download_prefix():return CFG.get('download_url_prefix',f"https://github.com/{REPOSITORY}/releases/download/v{CFG['version']}/").format(version=CFG['version'])
 def wait_for_public_file(url,digest,destination,timeout=240):
  deadline=time.monotonic()+timeout
@@ -132,9 +132,9 @@ def commit_site_files(changes,message):
  subprocess.run(['git','push','origin','main'],cwd=ROOT,check=True)
  return git('rev-parse','HEAD')
 def publish_cloudflare(client,out,report,release,state):
- # The original repository stays private. Only the explicit install payloads,
- # short release description and authenticated update metadata enter the site.
- assert REPOSITORY==SOURCE and client.repo('')['private'],'Cloudflare distribution requires the original private repository'
+ # Keep repository visibility unchanged. Only explicit install payloads, the
+ # product description and authenticated update metadata enter the site.
+ assert REPOSITORY==SOURCE and (client.repo('')['private'] or CFG.get('public_mirror_site')),'Cloudflare distribution requires the original private repository or an explicit public mirror'
  site=public_site();assert site.startswith('https://')
  folder=Path(CFG.get('site_directory','website'));changes={}
  for name in {report['archive'],report['installer']}:
