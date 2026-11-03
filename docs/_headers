@@ -4,3 +4,12 @@
 
 /runtime/*
   Cache-Control: public, max-age=31536000, immutable
+
+# BEGIN APP RELEASE
+/downloads/v*
+  Cache-Control: public, max-age=31536000, immutable
+/downloads/latest.dmg
+  Cache-Control: no-store
+/updates/*
+  Cache-Control: no-store
+# END APP RELEASE
