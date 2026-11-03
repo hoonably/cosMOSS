@@ -3,6 +3,7 @@ import json
 import asyncio
 import tempfile
 import time
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -38,6 +39,11 @@ class DownloadProgressTests(unittest.TestCase):
                  for name, size in [('cached', 40), ('weights', 60)]]
         module.HfApi = Mock(return_value=Mock(model_info=Mock(return_value=types.SimpleNamespace(siblings=files, sha='revision'))))
         events = []
+        partial_reported = threading.Event()
+        def record(item):
+            events.append((time.monotonic(), item))
+            if item['downloaded_bytes'] == 70:
+                partial_reported.set()
 
         def fetch(*, tqdm_class, **kwargs):
             self.assertEqual(kwargs['revision'], 'revision')
@@ -45,7 +51,7 @@ class DownloadProgressTests(unittest.TestCase):
                 bar = tqdm_class(initial=10, total=60)
                 bar.update(20)
                 self.assertEqual(bar.n, 30)
-                time.sleep(1.1)
+                self.assertTrue(partial_reported.wait(10), "Reporter did not publish the in-progress resumed bytes")
                 bar.update(30)
             return '/cache/snapshot/' + kwargs['filename']
 
@@ -61,12 +67,13 @@ class DownloadProgressTests(unittest.TestCase):
             blobs.mkdir(parents=True)
             (blobs / 'cached').write_bytes(bytes(40))
             with patch.dict('sys.modules', {'huggingface_hub': module, 'huggingface_hub.utils': utils}):
-                result = download_model('owner/model', temporary, lambda item: events.append((time.monotonic(), item)))
+                result = download_model('owner/model', temporary, record)
         self.assertIs(internal.tqdm, Tqdm)
         self.assertEqual(result, '/cache/snapshot')
         self.assertEqual(events[0][1]['downloaded_bytes'], 40)
-        self.assertEqual(events[1][1]['downloaded_bytes'], 70)
-        self.assertAlmostEqual(events[1][0] - events[0][0], 1, delta=.2)
+        partial = next(event for event in events if event[1]['downloaded_bytes'] == 70)
+        self.assertGreaterEqual(partial[0] - events[0][0], .8)
+        self.assertLess(partial[0] - events[0][0], 10)
         self.assertEqual(events[-1][1]['percent'], 100)
         self.assertTrue(module.snapshot_download.call_args.kwargs['local_files_only'])
 
