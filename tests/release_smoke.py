@@ -9,6 +9,7 @@ from pathlib import Path
 import plistlib
 import tomllib
 import socket
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,11 @@ def main():
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
     with tempfile.TemporaryDirectory(prefix='cosmoss-release-') as temporary:
         root = Path(temporary)
+        relocated = root / 'Relocated App Folder' / app.name
+        relocated.parent.mkdir()
+        subprocess.run(['ditto', '--norsrc', '--noextattr', str(app), str(relocated)], check=True)
+        resources = relocated / 'Contents/Resources'
+        subprocess.run(['codesign', '--verify', '--deep', '--strict', str(relocated)], check=True)
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -60,6 +66,16 @@ def main():
                            MOSS_DATA_DIR=str(root / 'data'), MOSS_RUNTIME_DIR=str(root),
                            MLX_VENV=str(root / 'mlx'), UV_BIN=str(root / 'runtime-tools/uv'), COSMOSS_BUNDLED_RESOURCES=str(resources),
                            HTTPS_PROXY='http://127.0.0.1:1', HTTP_PROXY='http://127.0.0.1:1', ALL_PROXY='http://127.0.0.1:1')
+        # AI environments must reuse this relocated interpreter, without fetching Python.
+        build_uv = os.getenv('UV_BIN') or shutil.which('uv')
+        if build_uv:
+            model_environment = root / 'isolated-model-environment'
+            subprocess.run([build_uv, 'venv', '--no-config', '--python', str(resources / 'python/bin/python3.12'), str(model_environment)],
+                           env={**environment, 'UV_PYTHON_DOWNLOADS': 'never'}, check=True)
+            base_prefix = subprocess.check_output([str(model_environment / 'bin/python'), '-I', '-B', '-c',
+                                                   'import sys; print(sys.base_prefix)'], text=True).strip()
+            assert Path(base_prefix).resolve() == (resources / 'python').resolve()
+            assert 'include-system-site-packages = false' in (model_environment / 'pyvenv.cfg').read_text()
         base = f'http://127.0.0.1:{port}'
         # Simulate an existing user's edited default before this release starts.
         (root / 'data').mkdir()
