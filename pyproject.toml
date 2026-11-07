@@ -1,6 +1,6 @@
 [project]
 name = "cosmoss"
-version = "1.1.1"
+version = "1.1.2"
 description = "Local-first transcription and speaker diarization for Mac"
 readme = "README.md"
 license = "MIT"

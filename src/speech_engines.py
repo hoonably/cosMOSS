@@ -63,9 +63,10 @@ MODELS = {
 REQUIREMENTS = {
     'sglang': ['sglang-omni==0.1.9', 'sglang==0.5.22', 'torch==2.14.1',
                'transformers==5.19.0', 'nvidia-cutlass-dsl==4.8.0',
-               'nvidia-cuda-nvcc==13.4.92', 'nvidia-nvvm==13.4.92',
-               'nvidia-cuda-runtime==13.4.92', 'nvidia-cuda-crt==13.4.92',
-               'nvidia-cuda-cccl==13.3.4.3.1'],
+               # Match Torch's CUDA 13.0 headers and keep the PTX producer and assembler together.
+               'nvidia-cuda-nvcc==13.0.88', 'nvidia-nvvm==13.0.88',
+               'nvidia-cuda-runtime==13.0.96', 'nvidia-cuda-crt==13.0.88',
+               'nvidia-cuda-cccl==13.0.85', 'ninja==1.13.0'],
     'qwen': ['qwen-asr==0.0.6', 'torch==2.9.1', 'torchaudio==2.9.1',
              'transformers==4.57.6', 'nvidia-cutlass-dsl==4.2.1',
              'https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl'],

@@ -89,9 +89,12 @@ class BalancedMossTests(unittest.TestCase):
             client.get.return_value=SimpleNamespace(status_code=200);client.post.side_effect=post
             child=Mock();child.poll.return_value=None
             with patch('httpx.Client',return_value=client),patch.object(worker.subprocess,'Popen',return_value=child) as launch:
-                worker.moss(dict(duration=6000,audio=str(source),output=str(output),paths={'moss':'fixture'},allow_moss_split=True))
+                worker.moss(dict(duration=6000,audio=str(source),output=str(output),paths={'moss':'fixture'},
+                                 allow_moss_split=True,ipc_path=str(root/'ipc')))
             self.assertEqual(seen,[(6000,b'\x01\0'),(6000,b'\x02\0')])
             self.assertEqual(launch.call_count,1)
+            command = launch.call_args.args[0]
+            self.assertEqual(command[command.index('--endpoints.base_path')+1], str(root/'ipc'))
             self.assertFalse(output.with_suffix('.remaining.wav').exists())
             result=json.loads(output.read_text())
             self.assertEqual(result['items'][-1]['end'],6000)

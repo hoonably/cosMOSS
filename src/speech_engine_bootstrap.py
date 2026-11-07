@@ -1,9 +1,11 @@
 """SSH-owned sequential engine stages, one UUID lock, one private audio upload."""
 from __future__ import annotations
+from contextlib import nullcontext
 import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -12,27 +14,48 @@ import threading
 import time
 import wave
 
-CUDA_COMPILER_VERSION = '13.4.92'
-CUDA_COMPILER_PROBE = 'coherent-cuda-13.4.92-compile-v1'
+CUDA_COMPILER_VERSION = '13.0.88'
+CUDA_COMPILER_PROBE = 'cuda-13.0.88-headers-compile-v1'
+CUDA_COMPILER_PACKAGES = ('nvidia-cuda-nvcc', 'nvidia-nvvm', 'nvidia-cuda-crt')
 
 
 def compiler_ready(folder):
     try:
         return ((folder/'cuda-toolchain-ready').read_text() == CUDA_COMPILER_PROBE
-                and (folder/'cuda-toolkit/bin/nvcc').is_file())
+                and (folder/'cuda-toolkit/bin/nvcc').is_file()
+                and shutil.which('ninja', path=engine_path(folder, os.environ.get('PATH', ''))) is not None)
     except OSError:
+        return False
+
+
+def engine_path(folder, host_path):
+    return os.pathsep.join((str(folder/'cuda-toolkit/bin'), str(folder/'bin'), host_path))
+
+
+def python_has_headers(python):
+    if not python.is_file():
+        return False
+    code = ("import sys, sysconfig; from pathlib import Path; "
+            "sys.exit(not (Path(sysconfig.get_path('include')) / 'Python.h').is_file())")
+    try:
+        return subprocess.run([str(python), '-I', '-B', '-c', code], timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
         return False
 
 
 def check_compiler(python, toolkit, job, environment, run):
     """Exercise NVVM -> PTX -> ptxas without loading a model or using a GPU."""
-    packages = ('nvidia-cuda-nvcc', 'nvidia-nvvm', 'nvidia-cuda-crt', 'nvidia-cuda-runtime')
     code = ("from importlib.metadata import version; "
-            f"assert all(version(p)=={CUDA_COMPILER_VERSION!r} for p in {packages!r}), "
+            f"assert all(version(p)=={CUDA_COMPILER_VERSION!r} for p in {CUDA_COMPILER_PACKAGES!r}), "
             "'CUDA compiler packages differ; prepare the model again'")
     run([str(python), '-I', '-B', '-c', code])
     source = job/'compiler-check.cu'
-    source.write_text('__global__ void cosmoss_check(float *x) { x[threadIdx.x] += 1.0f; }\n')
+    source.write_text(
+        '#include <cuda_runtime_api.h>\n'
+        'static_assert(CUDART_VERSION / 10 == __CUDACC_VER_MAJOR__ * 100 + __CUDACC_VER_MINOR__, '
+        '"CUDA compiler and runtime header versions differ");\n'
+        '__global__ void cosmoss_check(float *x) { x[threadIdx.x] += 1.0f; }\n'
+    )
     private = dict(environment, CUDA_HOME=str(toolkit), CUDA_PATH=str(toolkit),
                    CUDACXX=str(toolkit/'bin/nvcc'), PATH=str(toolkit/'bin')+':'+environment['PATH'])
     try:
@@ -52,7 +75,7 @@ def main():
     request = json.loads(incoming.readline(1024*1024))
     # Bootstrap/catalog sources come from the local app, never the selected model.
     root = Path.home()/'.local/share/cosmoss/speech/engines-sg019-qwen006-v1'
-    if any(p.is_symlink() for p in (root,root.parent,root/'envs')):
+    if any(p.is_symlink() for p in (root,root.parent,root/'envs',root/'python')):
         raise ValueError('Unsafe runtime path')
     root.mkdir(parents=True,exist_ok=True,mode=0o700)
     with tempfile.TemporaryDirectory(prefix='job-',dir=root) as directory:
@@ -68,16 +91,27 @@ def main():
         if key not in ENGINE_PIPELINES or action not in {'inspect','install','run'}:
             raise ValueError('Invalid engine request')
         manifest = root/(key+'.json')
-        def installed():
+        def cached_model_paths():
             try:
                 saved = json.loads(manifest.read_text())
-                return (saved['version']==ENGINE_VERSION and all(
+                paths = saved['paths']
+                if saved['version'] == ENGINE_VERSION and all(
+                    (Path(paths[model])/'config.json').is_file()
+                    and any(Path(paths[model]).glob('*.safetensors'))
+                    for model in model_keys(key)
+                ):
+                    return paths
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            return None
+
+        def installed():
+            try:
+                return (cached_model_paths() is not None and all(
                     (root/'envs'/env/'bin/python').is_file() and (root/'envs'/env/'ready').read_text()==ENGINE_VERSION
                     for _,env in stages(key)) and (all(env!='sglang' for _,env in stages(key))
-                    or compiler_ready(root/'envs/sglang')) and all(
-                    (Path(saved['paths'][m])/'config.json').is_file() and any(Path(saved['paths'][m]).glob('*.safetensors'))
-                    for m in model_keys(key)))
-            except (OSError,ValueError,KeyError):
+                    or compiler_ready(root/'envs/sglang')))
+            except OSError:
                 return False
         if action=='inspect':
             emit(phase='installed' if installed() else 'idle',model_key=key)
@@ -179,7 +213,8 @@ def main():
                 except BlockingIOError:
                     check()
                     time.sleep(.25)
-            uv=ensure_uv(root/'tools',environment)
+            uv=None
+            environment['UV_PYTHON_INSTALL_DIR'] = str(root/'python')
             for env in dict.fromkeys(env for _,env in stages(key)):
                 folder=root/'envs'/env
                 if folder.is_symlink():
@@ -191,8 +226,12 @@ def main():
                     ready_stamp.unlink(missing_ok=True)
                     if env=='sglang': (folder/'cuda-toolchain-ready').unlink(missing_ok=True)
                     emit(phase='installing',engine=env)
-                    if not python.is_file():
-                        run([uv,'venv','--python','3.12',str(folder)])
+                    if uv is None:
+                        uv=ensure_uv(root/'tools',environment)
+                    if not python_has_headers(python):
+                        # Some dependencies build C extensions even on a clean install.
+                        # Ubuntu's system interpreter can be missing the development headers.
+                        run([uv,'venv','--clear','--managed-python','--python','3.12',str(folder)])
                     args=[uv,'pip','install','--python',str(python),'--prerelease=allow',*REQUIREMENTS[env]]
                     if env=='nemotron':
                         args+=['--extra-index-url','https://download.pytorch.org/whl/cu128','--index-strategy','unsafe-best-match']
@@ -216,12 +255,13 @@ def main():
                         check_compiler(python, toolkit, job, environment, run)
                         (folder/'cuda-toolchain-ready').write_text(CUDA_COMPILER_PROBE)
                     (folder/'ready').write_text(ENGINE_VERSION)
-            python=root/'envs/nemotron/bin/python'
-            config=dict(stage='prepare',models=model_keys(key),output=str(job/'paths.json'))
-            (job/'request.json').write_text(json.dumps(config))
-            run([str(python),'-u',str(job/'worker.py'),str(job/'request.json')])
-            paths=json.loads((job/'paths.json').read_text())
-            manifest.write_text(json.dumps(dict(version=ENGINE_VERSION,paths=paths)))
+            if cached_model_paths() is None:
+                python=root/'envs/nemotron/bin/python'
+                config=dict(stage='prepare',models=model_keys(key),output=str(job/'paths.json'))
+                (job/'request.json').write_text(json.dumps(config))
+                run([str(python),'-u',str(job/'worker.py'),str(job/'request.json')])
+                paths=json.loads((job/'paths.json').read_text())
+                manifest.write_text(json.dumps(dict(version=ENGINE_VERSION,paths=paths)))
             if not installed():
                 raise RuntimeError('모델 설치 파일을 확인하지 못했습니다.')
             emit(phase='installed',model_key=key)
@@ -255,12 +295,21 @@ def main():
             config.update(stage=stage,paths=paths,audio=str(job/'audio.wav'),duration=duration,output=str(job/(stage+'.json')),
                 qwen_result=str(job/'qwen.json'),asr_peak_bytes=stage_peaks.get('qwen',0)*1024**2)
             config.update(overrides)
-            (job/'request.json').write_text(json.dumps(config))
             stage_env=environment.copy()
             if env=='sglang':
-                toolkit=root/'envs/sglang/cuda-toolkit'
-                stage_env.update(CUDA_HOME=str(toolkit),CUDA_PATH=str(toolkit),PATH=str(toolkit/'bin')+':'+environment['PATH'])
-            run([str(root/'envs'/env/'bin/python'),'-u',str(job/'worker.py'),str(job/'request.json')],env=stage_env,stage=stage)
+                folder = root/'envs/sglang'
+                toolkit = folder/'cuda-toolkit'
+                stage_env.update(CUDA_HOME=str(toolkit), CUDA_PATH=str(toolkit), PATH=engine_path(folder, environment['PATH']))
+                stage_env.setdefault('MAX_JOBS', '8')
+            # Keep UNIX socket paths short and give each worker a private directory.
+            ipc = tempfile.TemporaryDirectory(prefix='cm-ipc-', dir='/tmp') if env=='sglang' else nullcontext()
+            with ipc as ipc_path:
+                if ipc_path is not None:
+                    config['ipc_path'] = ipc_path
+                    # SGLang also creates its GPU startup lock under TMPDIR.
+                    stage_env['TMPDIR'] = ipc_path
+                (job/'request.json').write_text(json.dumps(config))
+                run([str(root/'envs'/env/'bin/python'),'-u',str(job/'worker.py'),str(job/'request.json')],env=stage_env,stage=stage)
             return json.loads((job/(stage+'.json')).read_text())
         for stage,env in stages(key):
             results[stage]=execute_stage(stage,env)

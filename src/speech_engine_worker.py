@@ -73,6 +73,7 @@ def moss(request):
         port = sock.getsockname()[1]
     command = [str(Path(sys.executable).parent / 'sgl-omni'), 'serve', '--model-path', request['paths']['moss'],
         '--host', '127.0.0.1', '--port', str(port), '--mem-fraction-static', '.4',
+        '--endpoints.base_path', request['ipc_path'],
         '--asr.engine.max_total_tokens', '131072', '--asr.engine.max_running_requests', '16',
         '--asr.engine.cuda_graph_max_bs', '16']
     log_path = Path(request['output']).with_suffix('.log')
