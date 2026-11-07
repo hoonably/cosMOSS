@@ -262,7 +262,8 @@ Run `python3 scripts/release.py prepare`, `status`, `download`, `stage`, then
 v1.0.0 reissues. CI checks runtime installation, the signed DMG and replacement of
 a disposable prior app using a DMG update. Publish the DMG and verify anonymous
 downloads before publishing the signed feed. The DMG is the sole public asset;
-release notes retain the one-sentence product description.
+only the first release uses the product introduction. Later release notes list
+user-facing additions, improvements, fixes and removals since the prior release.
 
 The cosMOSS signing key is kept outside the checkout at
 `~/Library/Application Support/cosMOSS Development/sparkle-private-key` (0600).
@@ -458,7 +459,8 @@ model weights. FFmpeg is used on the Mac for audio preprocessing when requested;
 this is a current pipeline choice, not a prerequisite for opening the workspace.
 The same signed DMG is used for first installation and Sparkle updates. Public
 DMG/update bytes and the signed feed are mirrored on the existing Pages site;
-GitHub Releases retains the same one-sentence product description and DMG.
+GitHub Releases and the linked website/Sparkle release notes use the same change
+list for subsequent releases; the initial release retains its product introduction.
 Previous installed apps can continue to use the signed root appcast while the
 current app uses the Pages feed. Apple Silicon/macOS 13+ remain the support target.
 
