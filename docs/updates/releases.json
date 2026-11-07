@@ -1,5 +1,18 @@
 [
   {
+    "tag_name": "v1.2.0",
+    "html_url": "https://cosmoss-app.pages.dev/updates/v1.2.0.html",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "cosMOSS-v1.2.0-macos-arm64.dmg",
+        "state": "uploaded",
+        "browser_download_url": "https://cosmoss-app.pages.dev/downloads/v1.2.0/cosMOSS-v1.2.0-macos-arm64.dmg"
+      }
+    ]
+  },
+  {
     "tag_name": "v1.1.2",
     "html_url": "https://cosmoss-app.pages.dev/updates/v1.1.2.html",
     "draft": false,
