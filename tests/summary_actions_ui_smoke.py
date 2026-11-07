@@ -14,7 +14,7 @@ async def main():
     stamp=datetime.now(timezone.utc).isoformat()
     note={'id':'txt_'+'c'*32,'source_type':'text_file','title':'버튼 테스트','text_path':'/qa/source.txt','text_body':'전사 내용은 따로 첨부합니다.',
           'text_hash':'fixture','status':'done','created_at':stamp,'updated_at':stamp,'output_format':'txt','segments':[],'speaker_names':{},'text_readable':True}
-    defaults={'default_prompt':'사용자가 저장한 기본 프롬프트입니다.','recommended_prompt':'추천 프롬프트','customized':True}
+    presets={'basic':{'prompt':'사용자가 저장한 기본 프롬프트입니다.'},'class':{'prompt':'수업 정리'},'meeting':{'prompt':'미팅 정리'}}
     installed=False; ready=False; provider_checks=0; requests=[]; summary={'phase':'idle'}
     async def providers(route):
         nonlocal provider_checks
@@ -39,7 +39,7 @@ async def main():
         await page.route('**/api/text-library**',lambda r:r.fulfill(json=[note]))
         await page.route('**/api/notes/'+note['id'],lambda r:r.fulfill(json=note))
         await page.route('**/api/notes/'+note['id']+'/summary',summarize)
-        await page.route('**/api/summary/default-prompt',lambda r:r.fulfill(json=defaults))
+        await page.route('**/api/summary/presets',lambda r:r.fulfill(json=presets))
         await page.route('**/api/summary/providers',providers)
         await page.route('**/api/summary/models**',lambda r:r.fulfill(json={'provider':'codex','models':[{'id':'current','name':'GPT Current','efforts':['medium'],'default_effort':'medium'}] if ready else [],'selection':{'model':'current','effort':'medium'} if ready else {}}))
         await page.route('**/api/devices',lambda r:r.fulfill(json=[]))
@@ -53,12 +53,13 @@ async def main():
         # Copy exactly the configured request; neither CLI nor note selection is required.
         await page.locator('#summary-prompt').fill('추가로 결정 사항을 확인해 주세요.')
         await page.locator('#copy-summary-prompt').click()
-        assert await page.evaluate('window.__copied')==defaults['default_prompt']+'\n\n추가로 결정 사항을 확인해 주세요.'
-        await page.locator('#use-default-summary-prompt').uncheck()
+        assert await page.evaluate('window.__copied')==presets['basic']['prompt']+'\n\n추가로 결정 사항을 확인해 주세요.'
+        await page.locator('[data-summary-preset="meeting"]').click()
         await page.locator('#copy-summary-prompt').click()
-        assert await page.evaluate('window.__copied')=='추가로 결정 사항을 확인해 주세요.'
+        assert await page.evaluate('window.__copied')==presets['meeting']['prompt']+'\n\n추가로 결정 사항을 확인해 주세요.'
         await page.locator('#summary-prompt').fill('   ')
-        assert await page.locator('#copy-summary-prompt').is_disabled()
+        await page.locator('#copy-summary-prompt').click()
+        assert await page.evaluate('window.__copied')==presets['meeting']['prompt']
         await page.locator('#summary-prompt').fill('내 요청만')
         await page.evaluate('window.__failCopy=true')
         await page.locator('#copy-summary-prompt').click()
@@ -89,15 +90,15 @@ async def main():
         await page.get_by_role('button',name='버튼 테스트 선택',exact=True).click()
         await page.locator('#run-summary:not([disabled])').wait_for(state='attached')
         await page.locator('#summary-prompt').fill('추가 요청')
-        await page.locator('#use-default-summary-prompt').check()
+        await page.locator('[data-summary-preset="basic"]').click()
         await page.locator('#copy-summary-prompt').click()
         assert '전사 내용은 따로' not in await page.evaluate('window.__copied')
-        assert await page.evaluate('window.__copied')==defaults['default_prompt']+'\n\n추가 요청'
+        assert await page.evaluate('window.__copied')==presets['basic']['prompt']+'\n\n추가 요청'
         assert not requests
         await page.locator('.summary-actions').screenshot(path=screenshot)
         await page.locator('#run-summary').click()
         await page.locator('#summary-result-wrap').wait_for(state='visible')
-        assert len(requests)==1 and requests[0]['provider']=='codex' and requests[0]['prompt']=='추가 요청' and requests[0]['use_default_prompt'] is True
+        assert len(requests)==1 and requests[0]['provider']=='codex' and requests[0]['prompt']=='추가 요청' and requests[0]['prompt_preset']=='basic'
         assert 'CLI로 다시 요약하기' in await page.locator('#run-summary').inner_text()
         # Claude gets its own instructions and copies work while it is disconnected.
         await choose_option(page,'#summary-provider','claude')

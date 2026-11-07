@@ -42,7 +42,10 @@ async def main():
             {'id':'codex','name':'Codex','installed':True,'ready':True,'message':'로그인됨'},
             {'id':'claude','name':'Claude','installed':False,'ready':False,'message':'CLI를 설치해 주세요.','install':'npm install -g @anthropic-ai/claude-code','login':'claude auth login','url':'https://code.claude.com/docs/en/quickstart'},
         ]))
-        await page.route('**/api/summary/default-prompt', lambda r:r.fulfill(json={'default_prompt':DEFAULT_QUERY}))
+        presets = {'basic': DEFAULT_QUERY, 'class': '수업 정리', 'meeting': '미팅 정리'}
+        await page.route('**/api/summary/presets', lambda r:r.fulfill(json={
+            key: {'prompt': text, 'recommended_prompt': text} for key, text in presets.items()
+        }))
         await page.route('**/api/summary/models**', lambda r:r.fulfill(json={'provider':'codex','models':[{'id':'current','name':'GPT Current','efforts':['medium'],'default_effort':'medium'}],'selection':{'model':'current','effort':'medium'}}))
         await page.route('**/api/devices', lambda r: r.fulfill(json=[{'id':'local','name':'이 Mac','kind':'local','backend':'mlx','model_key':'mlx-8bit','model':'moss-mtd','remote_port':8001,'setup':{'phase':'ready'}}]))
         await page.route('**/api/local-model', lambda r: r.fulfill(json={'phase':'ready','model_key':'mlx-8bit','cache_dir':'/Users/tester/.cache/huggingface/hub'}))
@@ -71,8 +74,8 @@ async def main():
                 if method == 'POST':
                     body=route.request.post_data_json
                     summary.update(phase='running', provider=body['provider'], additional_prompt=body['prompt'],
-                        use_default_prompt=body['use_default_prompt'],
-                        prompt='\n\n'.join(p for p in (DEFAULT_QUERY if body['use_default_prompt'] else '',body['prompt']) if p))
+                        prompt_preset=body['prompt_preset'],
+                        prompt='\n\n'.join(p for p in (presets[body['prompt_preset']],body['prompt']) if p))
                     note['text_path'] = '/Users/tester/Downloads/cosMOSS-회의-eeeeeeee.txt'
                     polls = 0
                     return await route.fulfill(status=202, json=summary)
@@ -93,9 +96,9 @@ async def main():
             'created_at': note['created_at'], 'updated_at': note['created_at'],
         }]))
         await page.goto(base)
-        assert await page.locator('#use-default-summary-prompt').is_checked()
+        assert await page.locator('[data-summary-preset="basic"]').get_attribute('aria-pressed') == 'true'
         assert await page.locator('#summary-prompt').input_value() == ''
-        await page.locator('#show-default-summary-prompt').click()
+        await page.locator('[data-edit-summary-preset="basic"]').click()
         await page.wait_for_function('document.querySelector("#default-summary-prompt-content").value.includes("Markdown 문서 하나")')
         assert await page.locator('#default-summary-prompt-content').input_value() == DEFAULT_QUERY
         if output:
@@ -165,7 +168,7 @@ async def main():
         await choose_option(page, '#summary-provider', 'codex')
         prompt = page.locator('#summary-prompt')
         assert await prompt.input_value() == ''
-        assert await page.locator('#use-default-summary-prompt').is_checked()
+        assert await page.locator('[data-summary-preset="basic"]').get_attribute('aria-pressed') == 'true'
         async def fits():
             await page.wait_for_function('document.querySelector("#summary-prompt").scrollHeight <= document.querySelector("#summary-prompt").clientHeight + 1')
             assert await prompt.evaluate('(e)=>getComputedStyle(e).overflowY') == 'hidden'
@@ -186,22 +189,22 @@ async def main():
         await page.set_viewport_size({'width':1480,'height':950})
         await fits()
         await prompt.fill('발표자별로 간결하게 정리해 주세요.')
-        await page.locator('#use-default-summary-prompt').uncheck()
+        await page.locator('[data-summary-preset="class"]').click()
         assert await prompt.input_value() == '발표자별로 간결하게 정리해 주세요.'
-        assert await page.locator('#summary-prompt-label').inner_text() == '요청 내용'
+        assert await page.locator('#summary-prompt-label').inner_text() == '추가 요청'
         await page.locator('.summary-scroll').evaluate('(e)=>e.scrollTop=0')
         if output:
             await page.screenshot(path=str(output.with_name(output.stem + '-prompt.png')), animations='disabled')
         assert 'CLI로 요약하기' in await page.locator('#run-summary').inner_text()
         await page.locator('#run-summary').click()
-        assert calls[-1][1]['use_default_prompt'] is False
+        assert calls[-1][1]['prompt_preset'] == 'class'
         assert calls[-1][1]['prompt'] == '발표자별로 간결하게 정리해 주세요.'
         await page.locator('#cancel-summary').wait_for(state='visible')
         await page.locator('#cancel-summary').click()
         await page.locator('#summary-status').filter(has_text='취소했습니다').wait_for()
-        await page.locator('#use-default-summary-prompt').check()
+        await page.locator('[data-summary-preset="meeting"]').click()
         await page.locator('#run-summary').click()
-        assert calls[-1][1]['use_default_prompt'] is True
+        assert calls[-1][1]['prompt_preset'] == 'meeting'
         assert calls[-1][1]['prompt'] == '발표자별로 간결하게 정리해 주세요.'
         await page.locator('#summary-result-wrap').wait_for(state='visible')
         assert await page.locator('#summary-result').count() == 0

@@ -208,7 +208,7 @@
   function enhance(select) {
     if (registered.has(select) || select.multiple || select.size > 1) return;
     const id = `custom-select-${++serial}`;
-    const label = select.closest("label");
+    const label = select.closest("label") || select.labels?.[0];
     const caption = label?.querySelector(":scope > span");
     const captionCopy = caption?.cloneNode(true);
     captionCopy?.querySelectorAll("button, small").forEach(node => node.remove());

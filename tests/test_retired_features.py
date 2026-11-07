@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.retired_features import remove_retired_voice_data
+from src.retired_features import remove_retired_desktop_runtime, remove_retired_voice_data
 from src.store import NoteStore
 
 
@@ -51,3 +51,38 @@ class RetiredFeaturesTests(unittest.TestCase):
             with patch('src.retired_features.subprocess.check_output', return_value=''):
                 remove_retired_voice_data(data, root)
             self.assertEqual((outside / 'audio.wav').read_text(), 'keep')
+
+    def test_bundled_backend_retires_only_unused_legacy_desktop_runtime(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            resources = root / 'cosMOSS.app/Contents/Resources'
+            target = root / 'desktop-runtimes'
+            slot = target / ('a' * 24)
+            slot.mkdir(parents=True)
+            (slot / 'ready').touch()
+            shared_python = root / '.cache/uv/python'
+            shared_python.mkdir(parents=True)
+            (slot / 'shared-python').symlink_to(shared_python, target_is_directory=True)
+            with patch.dict('os.environ', {'COSMOSS_BUNDLED_RESOURCES': str(resources)}), \
+                 patch('src.retired_features.subprocess.check_output') as processes:
+                remove_retired_desktop_runtime(root)
+                processes.assert_not_called()
+                with patch('src.retired_features.sys.executable', str(resources / 'python/bin/python3.12')):
+                    for command in (str(slot / 'venv/bin/python'), f'install-desktop-runtime.sh Resources {root} --install'):
+                        processes.return_value = command
+                        remove_retired_desktop_runtime(root)
+                        self.assertTrue(slot.is_dir())
+                    processes.return_value = ''
+                    extra = target / 'other-file'
+                    extra.touch()
+                    remove_retired_desktop_runtime(root)
+                    self.assertTrue(extra.is_file())
+                    extra.unlink()
+                    remove_retired_desktop_runtime(root)
+                    remove_retired_desktop_runtime(root)
+                    self.assertFalse(target.exists())
+                    self.assertTrue(shared_python.is_dir())
+                    target.symlink_to(shared_python, target_is_directory=True)
+                    remove_retired_desktop_runtime(root)
+                    self.assertTrue(target.is_symlink())
+                    self.assertTrue(shared_python.is_dir())

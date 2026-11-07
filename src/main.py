@@ -45,13 +45,13 @@ from src.speech_engines import ENGINE_PIPELINES
 from src.remote_workers import RemoteWorkers
 from src.ssh_devices import SSHError, SSHTunnels, discover_hosts, probe_host, gpu_warning_token
 from src.store import NoteStore
-from src.summaries import Summaries, provider_status
+from src.summaries import Summaries, SummaryPreset, provider_status
 from src.summary_models import SummaryModels
 from src.summary_preview import preview_document
 from src.text_files import save_text, speaker_changes, write_text, edit_segment_texts
 from src.note_files import read_file, convert_file, rename_file, trash_file
 from src.note_retention import RecoverableNoteCleanup
-from src.retired_features import remove_retired_voice_data
+from src.retired_features import remove_retired_desktop_runtime, remove_retired_voice_data
 from src.job_artifacts import JobArtifacts, PENDING_AUXILIARY
 from src.job_scheduler import run_transcription_queue
 from src.text_library import TextLibrary
@@ -144,6 +144,7 @@ class SummaryRequest(TextFileRequest):
     provider: Literal["codex", "claude"]
     prompt: str = Field(default="", max_length=20000)
     use_default_prompt: bool = True
+    prompt_preset: SummaryPreset | None = None
     model: str | None = Field(default=None, max_length=200)
     effort: str | None = Field(default=None, max_length=100)
 
@@ -1186,9 +1187,10 @@ async def lifespan(_: FastAPI):
             start_upload_preparation(upload["id"])
     for note_id in STORE.pending_ids():
         QUEUE.put_nowait(note_id)
+    await LOCAL_MODELS.restore()
+    await asyncio.to_thread(remove_retired_desktop_runtime, RUNTIME_DIR)
     worker = asyncio.create_task(queue_worker())
     cleanup = asyncio.create_task(clean_missing_note_files())
-    await LOCAL_MODELS.restore()
     try:
         yield
     finally:
@@ -1212,7 +1214,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="cosMOSS",
-    version="1.1.1",
+    version="1.2.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
@@ -1248,7 +1250,7 @@ async def security_middleware(request: Request, call_next):
             return JSONResponse({"detail": "이 작업은 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "외부 웹사이트에서는 이 작업을 실행할 수 없습니다."}, status_code=403)
-        if (request.url.path.startswith(('/api/voice-memos', '/api/trash')) or request.url.path in {'/api/notes','/api/notes/batch','/api/summary/default-prompt'} or request.url.path.endswith(('/rename','/trash'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
+        if (request.url.path.startswith(('/api/voice-memos', '/api/trash', '/api/summary/presets')) or request.url.path in {'/api/notes','/api/notes/batch','/api/summary/default-prompt'} or request.url.path.endswith(('/rename','/trash'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
             return JSONResponse({'detail': '외부 웹사이트에서는 이 작업을 실행할 수 없습니다.'}, status_code=403)
     if request.url.path not in {"/healthz", "/readyz"} and not valid_basic_auth(
         request.headers.get("Authorization")
@@ -2420,6 +2422,22 @@ def save_summary_default_prompt(request: SummaryPromptRequest) -> dict:
         raise HTTPException(409, str(error)) from None
 
 
+@app.get('/api/summary/presets')
+def summary_prompt_presets() -> dict:
+    try:
+        return SUMMARIES.prompt_presets()
+    except OSError as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@app.put('/api/summary/presets/{preset}')
+def save_summary_prompt_preset(preset: SummaryPreset, request: SummaryPromptRequest) -> dict:
+    try:
+        return SUMMARIES.save_prompt_preset(preset, request.prompt)
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
 @app.get("/api/notes/{note_id}/summary")
 async def summary_status(note_id: str) -> dict:
     try:
@@ -2439,7 +2457,8 @@ async def start_summary(note_id: str, request: SummaryRequest) -> dict:
         if note["status"] != "done":
             raise ValueError("전사가 완료된 노트를 선택해 주세요.")
         additional = request.prompt.strip()
-        base_prompt = SUMMARIES.preferences()['default_prompt'] if request.use_default_prompt else ''
+        preset = (request.prompt_preset or 'basic') if request.use_default_prompt else None
+        base_prompt = SUMMARIES.prompt_presets()[preset]['prompt'] if preset is not None else ''
         prompt = "\n\n".join(part for part in (base_prompt, additional) if part)
         if not prompt:
             raise ValueError("기본 프롬프트를 선택하거나 직접 요청을 입력해 주세요.")
@@ -2447,11 +2466,11 @@ async def start_summary(note_id: str, request: SummaryRequest) -> dict:
         if not status["ready"]:
             raise ValueError(f"{status['name']}: {status['message']} {status['login'] if status['installed'] else status['install']}")
         selection = await SUMMARY_MODELS.resolve(request.provider, request.model, request.effort)
-        if not TEXT_LIBRARY.is_document(note_id):
+        if not TEXT_LIBRARY.is_document(note_id) and (preset is None or not note.get('text_path')):
             note = save_text(STORE, note_id, request.directory)
         return SUMMARIES.start(note, request.provider, prompt, request.directory,
                                use_default_prompt=request.use_default_prompt, additional_prompt=additional,
-                               base_prompt=base_prompt, **selection)
+                               base_prompt=base_prompt, prompt_preset=preset, **selection)
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
     except (ValueError, OSError) as error:

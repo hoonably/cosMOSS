@@ -76,18 +76,42 @@
       <aside class="summary-panel" id="stage-summary" aria-labelledby="summary-title">
         <header class="stage-heading"><div><p class="eyebrow">STEP 03 · SUMMARIZE</p><h2 id="summary-title">AI 요약</h2></div><span class="stage-sparkle" aria-hidden="true">✳</span><p class="stage-path-note" id="summary-path-note">보정 전사문을 포함한 요약 Markdown을 저장합니다.</p></header>
         <div class="summary-scroll">
-          <label class="field"><span>함께 정리할 AI <button class="inline-link" id="refresh-summary-providers" type="button">새로고침</button></span><select id="summary-provider" aria-describedby="summary-provider-status"><option value="codex">Codex</option><option value="claude">Claude</option></select></label>
+          <label class="field"><span>함께 정리할 AI</span><select id="summary-provider" aria-describedby="summary-provider-status"><option value="codex">Codex</option><option value="claude">Claude</option></select></label>
           <p class="summary-provider-status" id="summary-provider-status" role="status">CLI 연결을 확인하고 있습니다…</p>
           <div class="summary-model-controls">
-            <label class="field"><span>모델</span><select id="summary-model" aria-describedby="summary-model-status" disabled><option value="">모델 확인 중…</option></select></label>
+            <div class="field">
+              <span class="summary-model-heading">
+                <label for="summary-model">모델</label>
+                <button class="summary-model-refresh" id="refresh-summary-providers" type="button" aria-label="AI 요약 모델 목록 새로고침" title="모델 목록 새로고침">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8M21 3v5h-5" /></svg>
+                </button>
+              </span>
+              <select id="summary-model" aria-label="AI 요약 모델" aria-describedby="summary-model-status" disabled><option value="">모델 확인 중…</option></select>
+            </div>
             <label class="field"><span>추론 강도</span><select id="summary-effort" disabled><option value="">확인 중…</option></select></label>
           </div>
           <p class="summary-model-status hidden" id="summary-model-status" role="status" aria-live="polite"></p>
-          <div class="summary-default-option"><label><input id="use-default-summary-prompt" type="checkbox" checked /><span>기본 프롬프트</span></label><button class="summary-prompt-help" id="show-default-summary-prompt" type="button" aria-label="기본 프롬프트 보기·수정" aria-haspopup="dialog" aria-controls="default-summary-prompt-dialog">?</button><span class="summary-prompt-badge hidden" id="summary-prompt-badge">추천</span></div>
-          <label class="field summary-prompt-field"><span><span id="summary-prompt-label">추가 요청</span> <small id="summary-prompt-optional">선택</small></span><textarea id="summary-prompt" rows="6" maxlength="20000" placeholder="추가로 요청할 내용을 적어 주세요."></textarea></label>
-          <p class="summary-prompt-note" id="summary-prompt-note">기본 프롬프트 뒤에 이어서 전달됩니다.</p>
+          <div class="field">
+            <span id="summary-presets-label">프롬프트</span>
+            <div class="summary-presets" id="summary-presets" role="group" aria-labelledby="summary-presets-label">
+              <div class="summary-preset">
+                <button class="summary-preset-select" type="button" data-summary-preset="basic" aria-pressed="true">기본</button>
+                <button class="summary-preset-edit" type="button" data-edit-summary-preset="basic" aria-label="기본 프롬프트 수정" title="기본 프롬프트 수정" aria-haspopup="dialog" aria-controls="default-summary-prompt-dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13.5 6.5 4 4M4 20l4.5-1L20 7.5a2.8 2.8 0 0 0-4-4L4.5 15z" /></svg></button>
+              </div>
+              <div class="summary-preset">
+                <button class="summary-preset-select" type="button" data-summary-preset="class" aria-pressed="false">수업</button>
+                <button class="summary-preset-edit" type="button" data-edit-summary-preset="class" aria-label="수업 프롬프트 수정" title="수업 프롬프트 수정" aria-haspopup="dialog" aria-controls="default-summary-prompt-dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13.5 6.5 4 4M4 20l4.5-1L20 7.5a2.8 2.8 0 0 0-4-4L4.5 15z" /></svg></button>
+              </div>
+              <div class="summary-preset">
+                <button class="summary-preset-select" type="button" data-summary-preset="meeting" aria-pressed="false">미팅</button>
+                <button class="summary-preset-edit" type="button" data-edit-summary-preset="meeting" aria-label="미팅 프롬프트 수정" title="미팅 프롬프트 수정" aria-haspopup="dialog" aria-controls="default-summary-prompt-dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13.5 6.5 4 4M4 20l4.5-1L20 7.5a2.8 2.8 0 0 0-4-4L4.5 15z" /></svg></button>
+              </div>
+            </div>
+          </div>
+          <label class="field summary-prompt-field"><span><span id="summary-prompt-label">추가 요청</span> <small id="summary-prompt-optional">선택</small></span><textarea id="summary-prompt" rows="6" maxlength="20000" placeholder="추가로 요청할 내용을 적어 주세요.&#10;예: ○○ 논문의 용어가 자주 나옵니다. S03에는 우영과 성운의 발언이 섞여 있으니, 문맥상 구분할 수 있는 발언은 각각의 이름으로 표시해 주세요."></textarea></label>
+          <p class="summary-prompt-note">선택한 프롬프트 뒤에 이어서 전달됩니다.</p>
           <div class="summary-actions">
-            <button class="ghost-button summary-copy-prompt" id="copy-summary-prompt" type="button" title="기본 프롬프트와 추가 요청을 복사합니다. 전사 파일은 별도로 첨부해 주세요." disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg><span>프롬프트 복사하기</span></button>
+            <button class="ghost-button summary-copy-prompt" id="copy-summary-prompt" type="button" title="선택한 프롬프트와 추가 요청을 복사합니다. 전사 파일은 별도로 첨부해 주세요." disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg><span>프롬프트 복사하기</span></button>
             <button class="primary-action summary-run" id="run-summary" type="button" disabled><span>CLI 확인 중…</span><span aria-hidden="true">→</span></button>
           </div>
           <button class="ghost-button summary-cancel hidden" id="cancel-summary" type="button">보정·요약 취소</button>
@@ -126,18 +150,17 @@
       <article class="summary-preview-content" id="summary-preview-content" aria-label="결과 문서"></article>
     </dialog>
     <dialog class="summary-prompt-dialog" id="default-summary-prompt-dialog" aria-labelledby="default-summary-prompt-title">
-      <div class="dialog-head"><div><p class="eyebrow">요약의 기본 기준</p><h2 id="default-summary-prompt-title" tabindex="-1">기본 프롬프트</h2></div><button class="dialog-close" id="close-default-summary-prompt" type="button" aria-label="기본 프롬프트 닫기">×</button></div>
+      <div class="dialog-head"><h2 id="default-summary-prompt-title" tabindex="-1">프롬프트</h2><button class="dialog-close" id="close-default-summary-prompt" type="button" aria-label="프롬프트 편집 닫기">×</button></div>
       <div class="summary-default-body">
-        <p class="summary-default-description" id="default-summary-prompt-description">원하는 방식으로 다듬어 저장하세요. 이 Mac에서 다음 요약부터 사용하며, 추가 요청은 이 내용 뒤에 이어집니다.</p>
-        <label class="summary-default-editor"><span class="sr-only">기본 프롬프트 내용</span><textarea id="default-summary-prompt-content" rows="12" maxlength="20000" spellcheck="false" aria-describedby="default-summary-prompt-description" disabled></textarea></label>
+        <p class="summary-default-description" id="default-summary-prompt-description">저장하면 이 프리셋을 선택한 다음 요약부터 적용됩니다. 추가 요청은 프롬프트 뒤에 이어집니다.</p>
+        <label class="summary-default-editor"><span class="sr-only">프롬프트 내용</span><textarea id="default-summary-prompt-content" rows="12" maxlength="20000" spellcheck="false" aria-describedby="default-summary-prompt-description" disabled></textarea></label>
       </div>
       <p class="summary-prompt-save-status" id="default-summary-prompt-status" role="status"></p>
       <div class="summary-prompt-actions"><button class="inline-link" id="reset-default-summary-prompt" type="button">추천으로 되돌리기</button><button class="ghost-button" id="cancel-default-summary-prompt" type="button">취소</button><button class="primary-action" id="save-default-summary-prompt" type="button">저장</button></div>
     </dialog>
     <dialog class="trash-dialog" id="trash-dialog" aria-labelledby="trash-title">
       <div class="dialog-head"><div><p class="eyebrow">RECENTLY DELETED</p><h2 id="trash-title" tabindex="-1">최근 삭제</h2></div><button class="dialog-close" id="close-trash" type="button" aria-label="최근 삭제 닫기">×</button></div>
-      <p class="trash-description">삭제한 노트 기록은 7일 동안 복구할 수 있어요. 기간이 지나면 앱에서 영구 삭제됩니다.</p>
-      <p class="trash-description">파일은 macOS 휴지통으로 이동합니다. Finder에서 복원해도 보관 기간 안에는 앱 기록과 다시 연결됩니다.</p>
+      <p class="trash-description">앱 휴지통에서 지금 복구할 수 있는 항목을 표시합니다. 삭제한 항목은 7일간 보관됩니다.</p>
       <p id="trash-status" class="trash-status" role="status"></p>
       <div class="trash-list" id="trash-list"></div>
     </dialog>

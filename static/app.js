@@ -1,4 +1,9 @@
 const $ = (selector) => document.querySelector(selector);
+document.addEventListener("pointerdown", () => document.documentElement.removeAttribute("data-keyboard-focus"), true);
+document.addEventListener("keydown", event => {
+  if (event.key === "Tab") document.documentElement.setAttribute("data-keyboard-focus", "");
+}, true);
+const summaryPresetNames = {basic:"기본", class:"수업", meeting:"미팅"};
 const state = {
   summaryModelCatalogs: {}, summaryModelRequests: {}, summaryModelLoading: new Set(), summaryModelSaving: null, summaryProviderLoading: false, summaryCopying: false,
   appSetup: null, appSetupRequest: 0, appSetupChecking: false, appSetupTimer: null,
@@ -6,7 +11,7 @@ const state = {
   textSaveAttempts: new Set(),
   fileActionId: null, noteMenuId: null, trashRequest: 0, trashRestoring: new Set(),
   environmentDeviceId: null, environments: {}, environmentRequests: new Set(), environmentSubmitting: false,
-  saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryTemplate: {prompt:"", useDefault:true}, summaryDefaultPrompt: "", summaryRecommendedPrompt: "", summaryPromptLoading: false, summaryPromptSaving: false, summaryPromptRequest: 0, summaryPromptEditorRequest: 0, summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false,
+  saveDirectory: "", summaryProviders: [], summaryStates: {}, summaryDrafts: {}, summaryTemplate: {prompt:"", preset:"basic"}, summaryPreset: "basic", summaryPresets: {}, summaryPromptEditing: null, summaryPromptLoading: false, summaryPromptSaving: false, summaryPromptRequest: 0, summaryPromptEditorRequest: 0, summaryNoteId: null, summaryTimer: null, summaryRequest: 0, summarySubmitting: false, speakerDraft: null, speakerSaving: false,
   notes: [], current: null, saveTimer: null, pollTimer: null,
   pendingChanges: null, savePromise: null, noteRequest: 0, editRevision: 0, openingNote: null,
   maxUploadBytes: null, defaultChunkMinutes: 30, uploading: false, deletingId: null,
@@ -1736,14 +1741,15 @@ bindConfirmationDialog("#delete-dialog", closeDeletionDialog);
 
 async function loadTrash() {
   const request = ++state.trashRequest;
-  $('#trash-status').textContent = '최근 삭제한 노트를 불러오고 있어요…';
+  $('#trash-list').replaceChildren();
+  $('#trash-status').textContent = '복구할 수 있는 항목을 확인하고 있어요…';
   try {
-    const entries = await api('/api/trash');
+    const entries = await api('/api/trash', {cache:'no-store'});
     if (request !== state.trashRequest || !$('#trash-dialog').open) return;
-    $('#trash-status').textContent = entries.length ? `${entries.length}개 보관 중` : '최근 삭제한 노트가 없습니다.';
+    $('#trash-status').textContent = entries.length ? `${entries.length}개 복구 가능` : '복구할 수 있는 항목이 없습니다.';
     $('#trash-list').innerHTML = entries.map(entry => {
       const days = Math.max(0,Math.ceil((new Date(entry.expires_at).getTime() - Date.now()) / 86400000));
-      return `<article class="trash-item" data-id="${escapeHtml(entry.id)}"><div><strong>${escapeHtml(entry.title)}</strong><small>${formatDate(entry.deleted_at)} 삭제 · ${days ? `${days}일 후` : '곧'} 앱 기록 정리</small>${entry.can_restore === false ? '<p class="trash-reconnect-note">파일을 원래 폴더로 돌려놓으면 다시 연결됩니다.</p>' : ''}</div><button class="ghost-button" type="button" data-restore-trash ${entry.can_restore === false || state.trashRestoring.has(entry.id) ? 'disabled' : ''}>${state.trashRestoring.has(entry.id) ? '복구 중…' : '복구'}</button></article>`;
+      return `<article class="trash-item" data-id="${escapeHtml(entry.id)}"><div><strong>${escapeHtml(entry.title)}</strong><small>${formatDate(entry.deleted_at)} 삭제 · ${days ? `${days}일 후` : '곧'} 앱 기록 정리</small></div><button class="ghost-button" type="button" data-restore-trash ${state.trashRestoring.has(entry.id) ? 'disabled' : ''}>${state.trashRestoring.has(entry.id) ? '복구 중…' : '복구'}</button></article>`;
     }).join('');
   } catch (error) { if (request === state.trashRequest) $('#trash-status').textContent = error.message; }
 }
@@ -2592,7 +2598,7 @@ loadModelCatalog().catch(error => toast(error.message, true));
 loadNotes();
 setInterval(() => { if (!document.hidden && !state.libraryLoading) loadNotes(); }, 5000);
 loadSummaryProviders();
-loadSummaryDefaultPrompt().catch(() => {});
+loadSummaryPresets().catch(() => {});
 renderSummary();
 refreshDevicePanel();
 setInterval(() => refreshDevicePanel(), 10000);
@@ -2766,6 +2772,8 @@ function finishSpeakerName(input, revert = false) {
   input.closest('.speaker-choice').querySelector('button').setAttribute('aria-label',`${input.value.trim() || speaker} 화자 선택`);
 }
 
+const speakerNavigationHelp = "↑·↓ 발화 이동 · 내용 더블클릭으로 수정 · Space로 재생";
+
 function renderSpeakerDialog(preserveChoices = false) {
   const draft = state.speakerDraft;
   if (!draft) return;
@@ -2773,7 +2781,7 @@ function renderSpeakerDialog(preserveChoices = false) {
   if (preserveChoices) syncSpeakerChoices(); else renderSpeakerChoices();
   draft.utterances = draft.segments.flatMap((segment, index) => segment.speaker === draft.selected ? [index] : []);
   draft.utterancePosition = 0;
-  $("#speaker-navigation-help").textContent = "↑·↓ 발화 이동 · 내용 더블클릭으로 수정";
+  $("#speaker-navigation-help").textContent = speakerNavigationHelp;
   $("#speaker-preview").innerHTML = draft.segments.map((segment, index) => {
     const playable = draft.hasAudio && Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.start >= 0 && segment.end > segment.start;
     return `<article class="speaker-preview-row ${segment.speaker === draft.selected ? "highlighted" : ""}" data-preview-index="${index}" data-preview-speaker="${escapeHtml(segment.speaker)}"><div><span>${clock(segment.start)}</span><button type="button" class="speaker-preview-name" data-preview-name aria-label="${clock(segment.start)} 화자 이름 수정">${escapeHtml(draft.names[segment.speaker] || segment.speaker)}</button><button class="speaker-preview-play" type="button" data-speaker-play="${index}" data-playback-time="${clock(segment.start)}" title="${playable ? '이 발화만 재생' : draft.hasAudio ? '재생할 발화 시간이 없습니다.' : '임시 녹음이 없어 재생할 수 없습니다.'}" ${playable ? '' : 'disabled'}></button></div><textarea class="speaker-preview-text" rows="1" readonly tabindex="-1" aria-label="${clock(segment.start)} 전사 내용 편집" title="더블클릭으로 내용 수정" spellcheck="false">${escapeHtml(segment.text)}</textarea></article>`;
@@ -2854,7 +2862,7 @@ function goToSpeakerUtterance(position, focus = false, scroll = true) {
   if (focus) preview.focus({ preventScroll: true });
   const top = preview.scrollTop + row.getBoundingClientRect().top - preview.getBoundingClientRect().top - 6;
   if (scroll) preview.scrollTo({ top, behavior: 'instant' });
-  $("#speaker-navigation-help").textContent = `↑·↓ 발화 이동 · 내용 더블클릭으로 수정${draft.hasAudio ? ' · Space 재생·정지' : ''} · ${draft.utterancePosition + 1}/${draft.utterances.length}`;
+  $("#speaker-navigation-help").textContent = `${speakerNavigationHelp} · ${draft.utterancePosition + 1}/${draft.utterances.length}`;
 }
 
 async function openSpeakerDialog(selected) {
@@ -3020,19 +3028,15 @@ $("#save-speakers").addEventListener("click", async () => {
   finally { state.speakerSaving = false; controls.forEach(control => control.disabled = disabledBeforeSave.get(control)); $("#save-speakers").textContent = "저장"; }
 });
 
-async function loadSummaryDefaultPrompt() {
+async function loadSummaryPresets() {
   const request = ++state.summaryPromptRequest;
-  const result = await api("/api/summary/default-prompt");
+  const result = await api("/api/summary/presets");
   if (request !== state.summaryPromptRequest) return null;
   applySummaryPreferences(result);
   return result;
 }
 function applySummaryPreferences(result) {
-  state.summaryDefaultPrompt = result.default_prompt;
-  state.summaryRecommendedPrompt = result.recommended_prompt || result.default_prompt;
-  const badge = $('#summary-prompt-badge');
-  badge.textContent = result.customized ? '사용자 설정' : '추천';
-  badge.classList.remove('hidden');
+  state.summaryPresets = result;
   renderSummary();
 }
 function fitDefaultSummaryPrompt() {
@@ -3046,7 +3050,7 @@ function fitDefaultSummaryPrompt() {
 function renderDefaultSummaryPrompt() {
   const busy = state.summaryPromptLoading || state.summaryPromptSaving;
   $('#default-summary-prompt-content').disabled = busy;
-  $('#reset-default-summary-prompt').disabled = busy || !state.summaryRecommendedPrompt;
+  $('#reset-default-summary-prompt').disabled = busy || !state.summaryPresets[state.summaryPromptEditing]?.recommended_prompt;
   $('#save-default-summary-prompt').disabled = busy || !$('#default-summary-prompt-content').value.trim();
   $('#save-default-summary-prompt').textContent = state.summaryPromptSaving ? '저장 중…' : '저장';
   for (const id of ['#close-default-summary-prompt', '#cancel-default-summary-prompt']) $(id).disabled = state.summaryPromptSaving;
@@ -3061,12 +3065,16 @@ function closeSummaryPromptDialog() {
   if (!dialog.open) return;
   ++state.summaryPromptEditorRequest;
   state.summaryPromptLoading = false;
+  const preset = state.summaryPromptEditing;
+  state.summaryPromptEditing = null;
   dialog.close();
-  $("#show-default-summary-prompt").focus({preventScroll:true});
+  $(`[data-edit-summary-preset="${preset}"]`)?.focus({preventScroll:true});
 }
-$("#show-default-summary-prompt").addEventListener("click", async () => {
+async function openSummaryPrompt(preset) {
   const dialog = $("#default-summary-prompt-dialog");
   if (dialog.open) return;
+  state.summaryPromptEditing = preset;
+  $("#default-summary-prompt-title").textContent = `${summaryPresetNames[preset]} 프롬프트`;
   dialog.showModal();
   $("#default-summary-prompt-title").focus({preventScroll:true});
   const request = ++state.summaryPromptEditorRequest;
@@ -3075,9 +3083,9 @@ $("#show-default-summary-prompt").addEventListener("click", async () => {
   summaryPromptStatus('불러오는 중…');
   renderDefaultSummaryPrompt();
   try {
-    const result = await loadSummaryDefaultPrompt();
+    const result = await loadSummaryPresets();
     if (request !== state.summaryPromptEditorRequest || !result) return;
-    $('#default-summary-prompt-content').value = result.default_prompt;
+    $('#default-summary-prompt-content').value = result[preset].prompt;
     summaryPromptStatus('수정한 내용은 저장 후 다음 요약부터 적용됩니다.');
     fitDefaultSummaryPrompt();
     $('.summary-default-body').scrollTop = 0;
@@ -3086,7 +3094,7 @@ $("#show-default-summary-prompt").addEventListener("click", async () => {
   } finally {
     if (request === state.summaryPromptEditorRequest) {state.summaryPromptLoading = false;renderDefaultSummaryPrompt();}
   }
-});
+}
 $("#close-default-summary-prompt").addEventListener("click", closeSummaryPromptDialog);
 $('#cancel-default-summary-prompt').addEventListener('click', closeSummaryPromptDialog);
 $('#default-summary-prompt-content').addEventListener('input', () => {
@@ -3094,7 +3102,7 @@ $('#default-summary-prompt-content').addEventListener('input', () => {
   summaryPromptStatus('저장하면 다음 요약부터 이 문구를 사용합니다.');
 });
 $('#reset-default-summary-prompt').addEventListener('click', () => {
-  $('#default-summary-prompt-content').value = state.summaryRecommendedPrompt;
+  $('#default-summary-prompt-content').value = state.summaryPresets[state.summaryPromptEditing].recommended_prompt;
   fitDefaultSummaryPrompt();renderDefaultSummaryPrompt();
   $('.summary-default-body').scrollTop = 0;
   summaryPromptStatus('추천 문구로 되돌렸습니다. 저장을 눌러 적용하세요.');
@@ -3102,16 +3110,17 @@ $('#reset-default-summary-prompt').addEventListener('click', () => {
 $('#save-default-summary-prompt').addEventListener('click', async () => {
   if (state.summaryPromptLoading || state.summaryPromptSaving) return;
   const prompt = $('#default-summary-prompt-content').value.trim();
-  if (!prompt) return;
+  const preset = state.summaryPromptEditing;
+  if (!prompt || !preset) return;
   state.summaryPromptSaving = true;renderDefaultSummaryPrompt();
   ++state.summaryPromptRequest;
   try {
-    const result = await api('/api/summary/default-prompt', {method:'PUT',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({prompt:prompt === state.summaryRecommendedPrompt ? null : prompt})});
+    const result = await api(`/api/summary/presets/${preset}`, {method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({prompt})});
     applySummaryPreferences(result);
     state.summaryPromptSaving = false;
     closeSummaryPromptDialog();
-    toast(result.customized ? '기본 프롬프트를 저장했습니다.' : '추천 프롬프트로 되돌렸습니다.');
+    toast(result[preset].customized ? `${summaryPresetNames[preset]} 프롬프트를 저장했습니다.` : '추천 프롬프트로 되돌렸습니다.');
   } catch (error) {summaryPromptStatus('저장하지 못했습니다. ' + error.message, true);}
   finally {state.summaryPromptSaving = false;renderDefaultSummaryPrompt();}
 });
@@ -3140,7 +3149,7 @@ function summaryModelControls() {
   modelSelect.disabled = busy || !models.length;
   effortSelect.disabled = busy || !model?.efforts?.length;
   const status = $('#summary-model-status');
-  status.textContent = state.summaryModelLoading.has(provider) ? 'CLI에서 모델 목록을 확인하고 있어요…' : catalog?.notice || catalog?.error || (state.summaryModelSaving === provider ? '선택 저장 중…' : '');
+  status.textContent = state.summaryModelLoading.has(provider) ? '' : catalog?.notice || catalog?.error || (state.summaryModelSaving === provider ? '선택 저장 중…' : '');
   status.classList.toggle('is-warning', Boolean(catalog?.error || catalog?.notice));
   status.classList.toggle('hidden', !status.textContent);
   return {catalog, model, busy};
@@ -3214,25 +3223,35 @@ new ResizeObserver(([entry]) => {
   }
 }).observe($("#summary-prompt"));
 function saveSummaryDraft() {
-  const draft = {prompt:$("#summary-prompt").value, useDefault:$("#use-default-summary-prompt").checked};
+  const draft = {prompt:$("#summary-prompt").value, preset:state.summaryPreset};
   if (state.current) state.summaryDrafts[state.current.id] = draft;
   else state.summaryTemplate = draft;
   renderSummary();
   fitSummaryPrompt();
 }
 $("#summary-prompt").addEventListener("input", saveSummaryDraft);
-$("#use-default-summary-prompt").addEventListener("change", saveSummaryDraft);
+$("#summary-presets").addEventListener("click", event => {
+  const button = event.target.closest("button");
+  if (!button || button.disabled) return;
+  if (button.dataset.editSummaryPreset) {
+    openSummaryPrompt(button.dataset.editSummaryPreset);
+    return;
+  }
+  state.summaryPreset = button.dataset.summaryPreset;
+  saveSummaryDraft();
+});
 
 function summaryPromptOptions(result) {
   if (!result?.prompt && !result?.result?.prompt) return {...state.summaryTemplate};
   const prompt = result.prompt ?? result.result?.prompt;
   const useDefault = result.use_default_prompt ?? (prompt === result.default_prompt);
-  return {useDefault, prompt:result.additional_prompt ?? (useDefault ? "" : prompt)};
+  const preset = Object.hasOwn(summaryPresetNames, result.prompt_preset) ? result.prompt_preset : "basic";
+  return {preset, prompt:result.additional_prompt ?? (useDefault ? "" : prompt)};
 }
 
 function showSummaryDraft(draft) {
   $("#summary-prompt").value = draft.prompt || "";
-  $("#use-default-summary-prompt").checked = draft.useDefault;
+  state.summaryPreset = draft.preset;
 }
 
 function selectSummaryNote(note) {
@@ -3274,7 +3293,7 @@ function renderSummary() {
   const info = state.summaryProviders.find(item => item.id === $("#summary-provider").value);
   const summary = note ? state.summaryStates[note.id] : null;
   const running = summary?.phase === "running";
-  const useDefault = $("#use-default-summary-prompt").checked;
+  const preset = state.summaryPreset;
   const modelControls = summaryModelControls();
   $('#refresh-summary-providers').disabled = state.summaryProviderLoading || Boolean(state.summaryModelSaving) || state.summaryModelLoading.size > 0;
   if (note) $("#delete-note").disabled = running || state.summarySubmitting || Boolean(state.cancellingId || state.restartingId || state.deletingId) || ["queued", "processing"].includes(note.status);
@@ -3287,7 +3306,7 @@ function renderSummary() {
     $("#cli-docs").href = info.url;
   }
   const connecting = Boolean(info && !info.ready);
-  $("#run-summary").disabled = connecting ? state.summaryProviderLoading : !info?.ready || !modelControls.model || modelControls.busy || note?.status !== "done" || running || state.summarySubmitting || Boolean(state.openingNote) || (!useDefault && !$("#summary-prompt").value.trim());
+  $("#run-summary").disabled = connecting ? state.summaryProviderLoading : !info?.ready || !modelControls.model || modelControls.busy || note?.status !== "done" || running || state.summarySubmitting || Boolean(state.openingNote) || !state.summaryPresets[preset]?.prompt;
   $("#run-summary span").textContent = !info ? "CLI 확인 중…" : connecting ? "CLI 연결하기" : state.openingNote ? "노트 불러오는 중…" : state.summarySubmitting ? "요약 준비 중…" : running ? "요약 중…" : summary?.result ? "CLI로 다시 요약하기" : "CLI로 요약하기";
   $("#run-summary").setAttribute("aria-haspopup", connecting ? "dialog" : "false");
   if (connecting) $("#run-summary").setAttribute("aria-controls", "summary-cli-dialog");
@@ -3300,11 +3319,10 @@ function renderSummary() {
   $("#check-summary-cli").textContent = state.summaryProviderLoading ? "확인 중…" : "연결 확인";
   $("#summary-provider").disabled = running || state.summarySubmitting || Boolean(state.summaryModelSaving);
   $("#summary-prompt").disabled = running || state.summarySubmitting;
-  $("#use-default-summary-prompt").disabled = running || state.summarySubmitting;
-  $("#summary-prompt-label").textContent = useDefault ? "추가 요청" : "요청 내용";
-  $("#summary-prompt-optional").classList.toggle("hidden", !useDefault);
-  $("#summary-prompt").placeholder = useDefault ? "추가로 요청할 내용을 적어 주세요." : "직접 요청할 내용을 적어 주세요.";
-  $('#summary-prompt-note').textContent = useDefault ? '기본 프롬프트 뒤에 이어서 전달됩니다.' : '기본 프롬프트 없이 이 요청 내용만 전달됩니다.';
+  for (const button of $("#summary-presets").querySelectorAll("button")) {
+    if (button.dataset.summaryPreset) button.setAttribute("aria-pressed", String(button.dataset.summaryPreset === preset));
+    button.disabled = running || state.summarySubmitting;
+  }
   $("#cancel-summary").classList.toggle("hidden", !running);
   const message = summary?.phase === "error" ? summary.error : summary?.phase === "cancelled" ? "보정·요약을 취소했습니다. 다시 실행할 수 있습니다." : running ? `${summary.provider === "claude" ? "Claude" : "Codex"}가 전사문을 보정하고 요약하고 있습니다. 다른 노트를 확인해도 작업은 계속됩니다.` : "";
   $("#summary-status").textContent = message || "";
@@ -3329,9 +3347,8 @@ function renderSummary() {
 }
 
 function summaryPromptForCopy() {
-  const useDefault = $("#use-default-summary-prompt").checked;
-  if (useDefault && !state.summaryDefaultPrompt) return "";
-  return [useDefault ? state.summaryDefaultPrompt : "", $("#summary-prompt").value.trim()].filter(Boolean).join("\n\n");
+  const base = state.summaryPresets[state.summaryPreset]?.prompt;
+  return base ? [base, $("#summary-prompt").value.trim()].filter(Boolean).join("\n\n") : "";
 }
 $("#copy-summary-prompt").addEventListener("click", async () => {
   const prompt = summaryPromptForCopy();
@@ -3380,13 +3397,13 @@ $("#run-summary").addEventListener("click", async () => {
   state.summarySubmitting = true;
   const provider = $("#summary-provider").value;
   const prompt = $("#summary-prompt").value.trim();
-  const useDefault = $("#use-default-summary-prompt").checked;
+  const promptPreset = state.summaryPreset;
   const selection = state.summaryModelCatalogs[provider]?.selection;
   renderSummary();
   try {
     await flushSave();
     await saveLocationReady;
-    const result = await api(`/api/notes/${encodeURIComponent(id)}/summary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, prompt, use_default_prompt:useDefault, directory: state.saveDirectory, ...selection }) });
+    const result = await api(`/api/notes/${encodeURIComponent(id)}/summary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, prompt, prompt_preset:promptPreset, directory: state.saveDirectory, ...selection }) });
     state.summaryStates[id] = result;
     updateNoteSummaryStatus(id, result);
     if (state.current?.id === id) {

@@ -12,8 +12,9 @@ import httpx
 
 from src.store import NoteStore
 from src.text_files import save_text, speaker_changes, TextConflict
-from src.summaries import (Summaries, command, provider_status, DEFAULT_QUERY,
-                           PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY, TOPIC_DEFAULT_QUERY,
+from src.summaries import (Summaries, command, provider_status, DEFAULT_QUERY, MEETING_QUERY, CLASS_QUERY,
+                           PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY,
+                           TOPIC_DEFAULT_QUERY, PREVIOUS_MEETING_QUERY, PREVIOUS_BASIC_QUERY,
                            OUTPUT_SCHEMA, markdown_document, save_document)
 
 
@@ -306,7 +307,8 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
         self.assertEqual(restored.save_preferences(None), original)
 
     def test_default_migration_preserves_custom_prompts_and_history(self):
-        for old in (PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY, TOPIC_DEFAULT_QUERY):
+        for old in (PREVIOUS_DEFAULT_QUERY, LEGACY_DEFAULT_QUERY, TWO_FILE_DEFAULT_QUERY, FRONT_TRANSCRIPT_DEFAULT_QUERY,
+                    TOPIC_DEFAULT_QUERY, PREVIOUS_MEETING_QUERY, PREVIOUS_BASIC_QUERY):
             self.manager._save(self.note['id'], {'phase':'done', 'prompt':old,
                 'result':{'prompt':old, 'source_hash':self.note['text_hash'], 'text':'이전 요약'}})
             state = self.manager.status(self.note)
@@ -321,9 +323,11 @@ pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(jso
     def test_release_migration_replaces_saved_default_once_and_preserves_later_edits(self):
         for old in (TOPIC_DEFAULT_QUERY, '이전 버전에서 직접 저장한 기본 프롬프트'):
             self.manager.preferences_path.parent.mkdir(parents=True, exist_ok=True)
-            self.manager.preferences_path.write_text(json.dumps({'default_prompt': old}))
+            self.manager.preferences_path.write_text(json.dumps({'prompt_revision': 1, 'default_prompt': old}))
             self.assertEqual(self.manager.preferences()['default_prompt'], DEFAULT_QUERY)
             self.assertFalse(self.manager.preferences()['customized'])
+            self.assertEqual(self.manager.prompt_presets()['meeting']['prompt'], MEETING_QUERY)
+            self.assertNotIn('default_prompt', json.loads(self.manager.preferences_path.read_text()))
             self.assertEqual(Summaries(self.manager.directory).preferences()['default_prompt'], DEFAULT_QUERY)
             self.manager.save_preferences('업데이트 후 새로 지정한 기준')
             restored = Summaries(self.manager.directory)
@@ -488,7 +492,63 @@ class WorkflowAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()['default_prompt'], DEFAULT_QUERY)
         self.assertFalse(response.json()['customized'])
 
-    async def test_summary_default_checkbox_controls_only_the_user_request(self):
+        presets = '/api/summary/presets'
+        response = await self.client.put(presets + '/class', json={'prompt': custom})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['class']['prompt'], custom)
+        self.assertEqual(response.json()['meeting']['prompt'], MEETING_QUERY)
+        self.assertEqual(response.json()['basic']['prompt'], DEFAULT_QUERY)
+        self.assertEqual(Summaries(self.manager.directory).prompt_presets()['class']['prompt'], custom)
+        with patch.object(self.main, 'provider_status', new=AsyncMock(return_value={'ready': True})), \
+             patch.object(self.manager, 'start', return_value={'phase':'running'}) as start:
+            response = await self.client.post(base, json={'provider':'codex', 'prompt_preset':'class',
+                'prompt':'복습 질문을 마지막에', 'directory':str(self.root/'txt')})
+            self.assertEqual(response.status_code, 202, response.text)
+            self.assertEqual(start.call_args.args[2], custom + '\n\n복습 질문을 마지막에')
+            self.assertEqual(start.call_args.kwargs['prompt_preset'], 'class')
+        response = await self.client.put(presets + '/class', json={'prompt':None})
+        self.assertEqual(response.json()['class']['prompt'], CLASS_QUERY)
+        self.assertFalse(response.json()['class']['customized'])
+
+    async def test_preset_summaries_are_saved_beside_the_untouched_original(self):
+        note_id = self.note['id']
+        note = save_text(self.store, note_id, str(self.root / 'transcripts'))
+        source = Path(note['text_path']).rename(self.root / 'transcripts' / '회의 (1).txt')
+        self.store.update(note_id, text_path=str(source))
+        before = source.read_bytes()
+        info = source.stat()
+        other_folder = self.root / 'other'
+        other_folder.mkdir()
+        cli = self.root / 'fake-cli'
+        cli.write_text(f'#!{sys.executable}\n'
+                       'import json, sys\n'
+                       'prompt = sys.stdin.read()\n'
+                       'assert "추가 자료 조사는 생략하고, 검색 출처나 외부 근거는 결과에 덧붙이지 마세요." in prompt\n'
+                       'assert "한국어 Markdown" not in prompt\n'
+                       'assert "If it does not specify a citation policy" in prompt\n'
+                       'print(json.dumps({"structured_output": {"corrected_transcript": "보정", "summary_markdown": "# 회의"}}))\n')
+        cli.chmod(0o755)
+        with patch.object(self.main, 'provider_status', new=AsyncMock(return_value={'ready': True})), \
+             patch('src.summaries.executable', return_value=str(cli)):
+            for preset, filename in (('basic', '회의 (1)_요약.md'), ('class', '회의 (1)_요약-1.md'),
+                                     ('meeting', '회의 (1)_요약-2.md')):
+                with self.subTest(preset=preset):
+                    response = await self.client.post(f'/api/notes/{note_id}/summary', json={
+                        'provider': 'claude', 'prompt_preset': preset, 'directory': str(other_folder),
+                    })
+                    self.assertEqual(response.status_code, 202, response.text)
+                    await asyncio.wait_for(self.manager.tasks[note_id], 5)
+                    status = self.manager.status(self.store.get(note_id))
+                    self.assertEqual(status['phase'], 'done', status.get('error'))
+                    summary = Path(status['result']['markdown_path'])
+                    self.assertEqual(summary, source.with_name(filename))
+                    self.assertEqual(summary.read_text(), markdown_document('보정', '# 회의'))
+        self.assertEqual(source.read_bytes(), before)
+        self.assertEqual(source.stat().st_ino, info.st_ino)
+        self.assertEqual(source.stat().st_mtime_ns, info.st_mtime_ns)
+        self.assertEqual(list(other_folder.iterdir()), [])
+
+    async def test_legacy_summary_prompt_flag_controls_only_the_user_request(self):
         response = await self.client.get('/api/summary/default-prompt')
         self.assertEqual(response.json()['default_prompt'], DEFAULT_QUERY)
         base = '/api/notes/' + self.note['id'] + '/summary'
@@ -501,7 +561,8 @@ class WorkflowAPITests(unittest.IsolatedAsyncioTestCase):
                 expected = DEFAULT_QUERY+'\n\n짧게 정리해 주세요.' if use_default else '짧게 정리해 주세요.'
                 self.assertEqual(start.call_args.args[2], expected)
                 self.assertEqual(start.call_args.kwargs, {'use_default_prompt':use_default,'additional_prompt':'짧게 정리해 주세요.',
-                                                         'base_prompt':DEFAULT_QUERY if use_default else ''})
+                                                         'base_prompt':DEFAULT_QUERY if use_default else '',
+                                                         'prompt_preset':'basic' if use_default else None})
             response = await self.client.post(base,json={'provider':'codex','use_default_prompt':True,'prompt':'','directory':str(self.root/'txt')})
             self.assertEqual(response.status_code, 202, response.text)
             self.assertEqual(start.call_args.args[2], DEFAULT_QUERY)

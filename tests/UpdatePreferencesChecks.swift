@@ -12,16 +12,44 @@ struct UpdatePreferencesChecks {
     @MainActor
     static func main() {
         let app = NSApplication.shared
-        app.setActivationPolicy(.prohibited)
+        let mode = CommandLine.arguments[1]
+        let startupAlert = mode == "startup-alert"
+        let relaunch = CommandLine.arguments.contains("--relaunch")
+        app.setActivationPolicy(startupAlert ? .regular : .prohibited)
         Task { @MainActor in
-            let mode = CommandLine.arguments[1]
             if mode == "legacy-on" {
                 UserDefaults.standard.set(true, forKey: "SUEnableAutomaticChecks")
                 UserDefaults.standard.set(true, forKey: "SUAutomaticallyUpdate")
                 UserDefaults.standard.synchronize()
             }
+            if mode == "startup-off" || (startupAlert && !relaunch) {
+                UserDefaults.standard.set(startupAlert, forKey: "SUEnableAutomaticChecks")
+                UserDefaults.standard.set(false, forKey: "SUAutomaticallyUpdate")
+                UserDefaults.standard.set(Date(), forKey: "SULastCheckTime")
+                UserDefaults.standard.synchronize()
+            }
             let updates = UpdateController.shared
             updates.start()
+            if startupAlert {
+                NSApp.activate(ignoringOtherApps: true)
+                for _ in 0..<120 {
+                    if let window = NSApp.windows.first(where: { $0.isVisible && $0.title != "업데이트 확인" }) {
+                        window.orderOut(nil)
+                        print("PASS \(relaunch ? "relaunch" : "startup"): Sparkle presented an update despite a recent check")
+                        NSApp.terminate(nil)
+                        return
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                fatalError("Sparkle did not show the startup update alert")
+            }
+            if mode == "startup-off" {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !updates.automaticallyChecksForUpdates else { fatalError("Startup changed notification preference") }
+                print("PASS startup-off: automatic checks remain disabled")
+                NSApp.terminate(nil)
+                return
+            }
             if mode == "development" {
                 guard updates.isDevelopmentBuild && !updates.canCheckForUpdates else { fatalError("Development updater must stay stopped") }
                 updates.checkForUpdates()

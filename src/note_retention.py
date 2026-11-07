@@ -80,15 +80,36 @@ class RecoverableNoteCleanup(NoteCleanup):
 
     def entries(self):
         result = []
-        for entry in sorted(self._all(), key=lambda row: row['deleted_at'], reverse=True):
-            archived = self._archived(entry)
-            result.append({
-                'id': entry['id'], 'title': entry['title'], 'kind': entry['kind'],
-                'deleted_at': datetime.fromtimestamp(entry['deleted_at'], UTC).isoformat(),
-                'expires_at': datetime.fromtimestamp(entry['deleted_at'] + RETENTION_SECONDS, UTC).isoformat(),
-                'can_restore': entry['kind'] == 'job' or (archived.is_file() and not archived.is_symlink()),
-            })
+        with self.store.lock:
+            for entry in sorted(self._all(), key=lambda row: row['deleted_at'], reverse=True):
+                if not self._can_restore(entry):
+                    continue
+                result.append({
+                    'id': entry['id'], 'title': entry['title'], 'kind': entry['kind'],
+                    'deleted_at': datetime.fromtimestamp(entry['deleted_at'], UTC).isoformat(),
+                    'expires_at': datetime.fromtimestamp(entry['deleted_at'] + RETENTION_SECONDS, UTC).isoformat(),
+                    'can_restore': True,
+                })
         return result
+
+    def _can_restore(self, entry):
+        try:
+            if entry['kind'] == 'job':
+                return bool(self._owners(entry))
+            if entry['kind'] != 'app':
+                return False
+            archived = self._archived(entry)
+            target = Path(entry['path'])
+            parent = target.parent
+            if (not stat.S_ISREG(archived.lstat().st_mode) or not os.access(archived, os.R_OK)
+                    or not parent.is_dir() or parent.resolve() != parent
+                    or not os.access(parent, os.R_OK | os.W_OK | os.X_OK)
+                    or target.exists() or target.is_symlink()):
+                return False
+            self._owners(entry)
+            return True
+        except (OSError, ValueError):
+            return False
 
     def _owners(self, entry):
         notes = []
@@ -278,6 +299,8 @@ class RecoverableNoteCleanup(NoteCleanup):
                     raise ValueError('같은 이름의 다른 파일이 있습니다. 파일을 옮기거나 이름을 바꾼 뒤 복원해 주세요.')
             else:
                 if not archived.is_file() or archived.is_symlink():
+                    if entry['kind'] == 'app':
+                        raise ValueError('앱 휴지통에서 복구할 파일을 찾을 수 없습니다.')
                     raise ValueError('외부에서 이동한 파일을 원래 폴더로 돌려놓으면 자동으로 다시 연결합니다.')
                 # Exclusive creation never overwrites a user's newer file.
                 try:

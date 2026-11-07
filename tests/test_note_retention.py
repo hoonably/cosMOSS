@@ -89,8 +89,9 @@ class NoteRetentionTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.cleaner.restore(deleted['id'])
         self.assertEqual(self.transcript.read_text(), 'different new file')
         self.assertEqual(self.cleaner.reconcile_directory(self.exports), [])
-        self.assertTrue(self.cleaner.entries()[0]['can_restore'])
+        self.assertEqual(self.cleaner.entries(), [])
         self.transcript.rename(self.exports / 'new.txt')
+        self.assertEqual(self.cleaner.entries()[0]['id'], deleted['id'])
         self.cleaner.restore(deleted['id'])
         self.assertEqual(self.library.get(doc['id'])['text_path'], str(self.transcript))
         self.assertTrue(folder.exists())
@@ -135,8 +136,9 @@ class NoteRetentionTests(unittest.TestCase):
         self.cleaner.sweep(now=10)
         self.assertEqual(self.cleaner.entries(), [])
         self.cleaner.sweep(now=70)
-        entry = self.cleaner.entries()[0]
-        self.assertEqual(entry['kind'], 'missing'); self.assertFalse(entry['can_restore'])
+        self.assertEqual(self.cleaner.entries(), [])
+        entry = self.cleaner._all()[0]
+        self.assertEqual(entry['kind'], 'missing')
         with self.assertRaises(ValueError): self.cleaner.restore(entry['id'])
         returned = self.exports / '돌아온 회의.txt'; moved.rename(returned)
         returned.write_text('사용자가 편집한 전사문')
@@ -182,7 +184,7 @@ class NoteRetentionTests(unittest.TestCase):
             entry['identities'] = []; self.cleaner._save(entry)
         returned = self.exports / 'returned.txt'; returned.write_bytes(content)
         self.assertEqual(self.cleaner.reconcile_directory(self.exports), [])
-        self.assertEqual(len(self.cleaner.entries()), 2)
+        self.assertEqual(self.cleaner.entries(), [])
         self.assertIn(first, self.cleaner.hidden_note_ids())
         self.assertIn(second, self.cleaner.hidden_note_ids())
 

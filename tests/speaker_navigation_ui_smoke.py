@@ -59,7 +59,9 @@ async def main():
                 assert not await page.locator('#note-dialog').is_visible()
                 await position(0)
                 assert await page.evaluate('document.activeElement.id') == 'speaker-preview'
-                assert '↑·↓' in await page.locator('#speaker-navigation-help').inner_text()
+                assert (await page.locator('#speaker-navigation-help').inner_text()).startswith(
+                    '↑·↓ 발화 이동 · 내용 더블클릭으로 수정 · Space로 재생 · 1/'
+                )
                 text = page.locator('[data-preview-index="2"] .speaker-preview-text')
                 await text.click()
                 assert await text.get_attribute('readonly') is not None

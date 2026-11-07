@@ -4,7 +4,7 @@ import Sparkle
 import SwiftUI
 
 @MainActor
-final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
+final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SPUStandardUserDriverDelegate {
     static let shared = UpdateController()
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var automaticallyChecksForUpdates = true
@@ -17,10 +17,11 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     private var manualCheck = false
     private var installationTask: Task<Void, Never>?
     private var started = false
+    private var checkingOnLaunch = false
     private var pendingCheck = false
     var isDevelopmentBuild: Bool { Bundle.main.object(forInfoDictionaryKey: "CosMOSSProjectRoot") != nil }
     private lazy var controller = SPUStandardUpdaterController(
-        startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil
+        startingUpdater: false, updaterDelegate: self, userDriverDelegate: self
     )
 
     func start() {
@@ -51,6 +52,11 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
             return
         }
         controller.startUpdater()
+        if controller.updater.automaticallyChecksForUpdates {
+            // Check on a fresh launch even if the scheduled interval has not elapsed.
+            checkingOnLaunch = true
+            controller.updater.checkForUpdatesInBackground()
+        }
     }
 
     func checkForUpdates() {
@@ -101,6 +107,17 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
         controller.checkForUpdates(nil)
     }
 
+    nonisolated func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool) -> Bool {
+        MainActor.assumeIsolated { !checkingOnLaunch || immediateFocus }
+    }
+
+    nonisolated func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
+        // Focus the existing Sparkle alert when it would otherwise wait for another activation.
+        if !handleShowingUpdate {
+            MainActor.assumeIsolated { controller.checkForUpdates(nil) }
+        }
+    }
+
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         guard manualCheck else { return }
         updateAvailable = true
@@ -108,6 +125,7 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        checkingOnLaunch = false
         guard manualCheck else {
             if pendingCheck {
                 DispatchQueue.main.async { [weak self] in self?.refreshUpdateInformation() }
@@ -177,7 +195,7 @@ private struct UpdateCheckView: View {
                 .accessibilityIdentifier("automatic-updates")
                 Text(updates.isDevelopmentBuild
                      ? "설정은 저장되며, 자동 확인은 배포용 앱에서 적용됩니다."
-                     : "앱 실행 중 새 버전을 확인하고 알려줍니다.")
+                     : "앱을 열 때 바로 확인하고, 실행 중에도 새 버전을 알려줍니다.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

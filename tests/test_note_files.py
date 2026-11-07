@@ -244,14 +244,27 @@ class FileAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.post('/api/trash/'+retained['id']+'/restore')).status_code,200)
         self.assertEqual((await self.client.get('/api/notes/'+note_id)).json()['status'],'error')
 
+    async def test_trash_listing_rechecks_archive_on_each_request(self):
+        await self.files()
+        cleanup = self.main.note_cleanup()
+        deleted = cleanup.remove(self.source, trash_transcript=True)
+        entries = (await self.client.get('/api/trash')).json()
+        self.assertEqual([entry['id'] for entry in entries], [deleted['id']])
+
+        archived = cleanup._archived(cleanup._get(deleted['id']))
+        archived.unlink()
+        self.assertEqual((await self.client.get('/api/trash')).json(), [])
+        response = await self.client.post(f"/api/trash/{deleted['id']}/restore")
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(self.source.exists())
+
     async def test_moved_file_returns_with_same_record_via_library_scan(self):
         document=(await self.files())[0]
         away=self.root/'away';away.mkdir()
         moved=away/self.source.name;self.source.rename(moved)
         self.main.note_cleanup().sweep(force=True)
         self.assertEqual((await self.files()),[])
-        retained=(await self.client.get('/api/trash')).json()[0]
-        self.assertEqual(retained['kind'],'missing');self.assertFalse(retained['can_restore'])
+        self.assertEqual((await self.client.get('/api/trash')).json(), [])
         moved.rename(self.folder/'이름 바꿔 돌아온 파일.srt')
         self.assertEqual((await self.files())[0]['id'],document['id'])
         self.assertEqual((await self.client.get('/api/trash')).json(),[])

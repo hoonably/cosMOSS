@@ -39,11 +39,12 @@ async def main():
             async def summarize(route):
                 if route.request.method == 'POST':
                     body = route.request.post_data_json; requests.append(body)
-                    preferences = await (await page.request.get(base+'/api/summary/default-prompt')).json()
+                    preferences = await (await page.request.get(base+'/api/summary/presets')).json()
+                    preset = body['prompt_preset']
                     corrected, text = '[00:00:01] S01: 다음 주에 기능을 확인하겠습니다.', '# 제품 개발 회의\n\n## 기능 점검\n\n- 다음 주 기능 확인'
-                    summary.update(phase='done',provider='codex',use_default_prompt=body['use_default_prompt'],additional_prompt=body['prompt'],
-                        prompt=(preferences['default_prompt']+'\n\n' if body['use_default_prompt'] else '')+body['prompt'],
-                        default_prompt=preferences['default_prompt'],result={'provider':'codex','text':text,'corrected_text':corrected,
+                    summary.update(phase='done',provider='codex',prompt_preset=preset,additional_prompt=body['prompt'],
+                        prompt=preferences[preset]['prompt']+'\n\n'+body['prompt'],
+                        result={'provider':'codex','text':text,'corrected_text':corrected,
                             'document_markdown':markdown_document(corrected,text),'source_hash':hashlib.sha256(before).hexdigest(),
                             'completed_at':'2026-10-23T06:00:00Z','markdown_path':str(folder/'제품 개발 회의_요약.md')})
                 await route.fulfill(status=202 if route.request.method == 'POST' else 200,json=summary)
@@ -67,8 +68,16 @@ async def main():
             assert await page.locator('#note-dialog').is_hidden()
             assert await page.evaluate('state.current') is None
 
+            await page.locator('[data-edit-summary-preset="class"]').click()
+            await page.locator('#default-summary-prompt-content').filter(visible=True).wait_for()
+            await page.wait_for_function('!state.summaryPromptLoading')
+            assert await page.locator('#default-summary-prompt-title').inner_text() == '수업 프롬프트'
+            assert '복습 질문' in await page.locator('#default-summary-prompt-content').input_value()
+            await page.locator('#cancel-default-summary-prompt').click()
+            assert await page.locator('[data-summary-preset="basic"]').get_attribute('aria-pressed') == 'true'
+
             async def open_prompt():
-                await page.locator('#show-default-summary-prompt').click()
+                await page.locator('[data-edit-summary-preset="basic"]').click()
                 await page.locator('#default-summary-prompt-content').wait_for(state='visible')
                 await page.wait_for_function('!state.summaryPromptLoading')
                 return page.locator('#default-summary-prompt-content')
@@ -87,7 +96,6 @@ async def main():
             await page.locator('#default-summary-prompt-dialog').wait_for(state='hidden')
             assert (await (await page.request.get(base+'/api/summary/default-prompt')).json())['default_prompt'] == custom
             await page.reload()
-            await page.locator('#summary-prompt-badge').filter(has_text='사용자 설정').wait_for()
             editor = await open_prompt()
             assert await editor.input_value() == custom
             await editor.fill('저장하지 않은 초안')
@@ -99,7 +107,7 @@ async def main():
             await page.locator('#summary-prompt').fill('할 일을 마지막에 모아 주세요.')
             await page.locator('#run-summary').click()
             await page.locator('#summary-result-wrap').wait_for(state='visible')
-            assert requests[-1]['use_default_prompt'] is True
+            assert requests[-1]['prompt_preset'] == 'basic'
             assert requests[-1]['prompt'] == '할 일을 마지막에 모아 주세요.'
             assert summary['prompt'] == custom+'\n\n할 일을 마지막에 모아 주세요.'
             assert await page.locator('#reveal-corrected').is_hidden()
@@ -124,13 +132,13 @@ async def main():
             async def fail_save(route):
                 if route.request.method == 'PUT': return await route.fulfill(status=503,json={'detail':'테스트 저장 실패'})
                 await route.continue_()
-            await page.route('**/api/summary/default-prompt', fail_save)
+            await page.route('**/api/summary/presets/basic', fail_save)
             await editor.fill('저장 실패 테스트')
             await page.locator('#save-default-summary-prompt').click()
             await page.locator('#default-summary-prompt-status').filter(has_text='테스트 저장 실패').wait_for()
             assert await page.locator('#default-summary-prompt-dialog').is_visible()
             assert (await (await page.request.get(base+'/api/summary/default-prompt')).json())['default_prompt'] == custom
-            await page.unroute('**/api/summary/default-prompt', fail_save)
+            await page.unroute('**/api/summary/presets/basic', fail_save)
             await page.locator('#reset-default-summary-prompt').click()
             await page.locator('#save-default-summary-prompt').click()
             await page.locator('#default-summary-prompt-dialog').wait_for(state='hidden')

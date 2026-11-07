@@ -164,7 +164,7 @@ class ModelAPITests(unittest.IsolatedAsyncioTestCase):
     async def test_selection_and_summary_snapshot_reach_actual_cli_arguments(self):
         from src import main
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory)
+            root=Path(directory).resolve()
             source=root/'source.txt';source.write_text('[00:00] 민수: 검증용 가상 대화입니다.')
             note={'id':'txt_'+'a'*32,'title':'fixture','text_path':str(source),'status':'done',
                   'source_type':'text_file','text_body':source.read_text(),'text_hash':'fixture'}

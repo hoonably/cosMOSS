@@ -49,6 +49,7 @@ async def main():
         await page.route('**/api/summary/providers', lambda r:r.fulfill(json=[{
             'id':'codex','name':'Codex','ready':True,'installed':True,'message':'로그인됨'
         }]))
+        await page.route('**/api/summary/presets', lambda r:r.fulfill(json={'basic':{'prompt':'일반 요약'},'class':{'prompt':'수업 정리'},'meeting':{'prompt':'미팅 정리'}}))
         await page.route('**/api/notes/*', note_route)
         await page.route('**/api/notes/*/**', note_route)
         await page.goto(base)
@@ -73,17 +74,17 @@ async def main():
         assert await page.locator('#run-summary').is_enabled()
         assert summaries[notes[0]['id']]['phase'] == 'running'
         await page.locator('#summary-prompt').fill('발표용으로 정리해 주세요.')
-        await page.locator('#use-default-summary-prompt').uncheck()
+        await page.locator('[data-summary-preset="class"]').click()
         await a.locator('.note-select').focus()
         await page.keyboard.press('Enter')
         await page.wait_for_function('!state.openingNote && state.current?.title === "제품 개발 회의"')
         assert await page.locator('#summary-prompt').input_value() == '결정 사항을 먼저 정리해 주세요.'
-        assert await page.locator('#use-default-summary-prompt').is_checked()
+        assert await page.locator('[data-summary-preset="basic"]').get_attribute('aria-pressed') == 'true'
         assert await page.locator('#cancel-summary').is_visible()
         await b.locator('.note-select').click()
         await page.wait_for_function('!state.openingNote && state.current?.title === "다음 주 발표 준비"')
         assert await page.locator('#summary-prompt').input_value() == '발표용으로 정리해 주세요.'
-        assert not await page.locator('#use-default-summary-prompt').is_checked()
+        assert await page.locator('[data-summary-preset="class"]').get_attribute('aria-pressed') == 'true'
 
         # Editing another row also selects it, but only this explicit action opens the dialog.
         await a.locator('.note-edit').click()
