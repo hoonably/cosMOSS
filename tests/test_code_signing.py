@@ -1,5 +1,6 @@
 """Pinned identity guards must fail before importing or signing a different key."""
 import importlib.util
+import base64
 import json
 import os
 from pathlib import Path
@@ -50,3 +51,28 @@ class PersistentSigningTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 with signing.identity(self.root):pass
             self.assertFalse(any(str(call.args[0][0])=='security' for call in run.call_args_list))
+
+    def test_search_list_is_restored_after_import_or_signing_failure(self):
+        saved=signing.metadata(self.root)
+        for import_fails in (True,False):
+            calls=[]
+            def command(arguments,**options):
+                args=list(map(str,arguments));calls.append(args)
+                if args[0]=='swift':
+                    Path(args[-1]).write_text(json.dumps(dict(certificate_sha256=saved['certificate_sha256'],
+                        pkcs12=base64.b64encode(b'test identity').decode(),password='test-only')))
+                elif args[1:]==['list-keychains','-d','user']:
+                    return b'"/existing/login.keychain-db"\n'
+                elif args[1]=='import' and import_fails:
+                    raise RuntimeError('import failed')
+                elif args[1]=='find-identity':
+                    return saved['certificate_sha1'].encode()
+                return b''
+            with self.subTest(import_fails=import_fails),patch.object(signing,'run',side_effect=command),patch.object(signing.subprocess,'run') as cleanup:
+                with self.assertRaises(RuntimeError):
+                    with signing.identity(self.root):
+                        raise RuntimeError('signing failed')
+                lists=[args for args in calls if args[:5]==['security','list-keychains','-d','user','-s']]
+                self.assertEqual(lists[-1],['security','list-keychains','-d','user','-s','/existing/login.keychain-db'])
+                self.assertIn('identity.keychain-db',lists[0][5])
+                self.assertEqual(cleanup.call_args.args[0][:2],['security','delete-keychain'])

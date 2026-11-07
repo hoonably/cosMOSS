@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 import secrets
 import re
+import shlex
+import shutil
 import subprocess
 import tempfile
 
@@ -74,9 +76,13 @@ def identity(root=ROOT):
             stream.write(base64.b64decode(envelope['pkcs12'],validate=True))
         chain = stage/'identity.keychain-db'
         password = secrets.token_urlsafe(40)
+        previous = shlex.split(run(['security','list-keychains','-d','user']).decode())
         try:
             run(['security','create-keychain','-p',password,chain])
             run(['security','unlock-keychain','-p',password,chain])
+            # --keychain alone does not add the certificate to codesign's chain
+            # search path. Hosted macOS runners need this explicit registration.
+            run(['security','list-keychains','-d','user','-s',chain,*previous])
             run(['security','import',pkcs12,'-k',chain,'-P',envelope['password'],'-T','/usr/bin/codesign'])
             pkcs12.unlink()
             certificate = run(['security','find-certificate','-a','-p',chain])
@@ -85,9 +91,20 @@ def identity(root=ROOT):
                 raise ValueError('Imported signing certificate differs; refusing to sign.')
             yield saved['certificate_sha1'], chain
         finally:
-            # This removes only our isolated keychain, including its search-list
-            # entry. It never changes the login keychain or trust settings.
-            subprocess.run(['security','delete-keychain',str(chain)],capture_output=True)
+            try:
+                run(['security','list-keychains','-d','user','-s',*previous])
+            finally:
+                # Remove only our isolated keychain. Trust settings are untouched.
+                subprocess.run(['security','delete-keychain',str(chain)],capture_output=True)
+
+
+def probe_identity(root=ROOT):
+    """Verify actual noninteractive signing, rather than certificate listing."""
+    with identity(root) as (certificate, chain):
+        probe = chain.parent/'signing-probe'
+        shutil.copyfile('/usr/bin/true',probe)
+        run(['codesign','--force','--sign',certificate,'--keychain',chain,'--timestamp=none',probe])
+        verify_app(probe,root)
 
 
 def initialize(root=ROOT):

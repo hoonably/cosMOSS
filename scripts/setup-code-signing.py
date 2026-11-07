@@ -2,7 +2,7 @@
 """Explicitly create once, or verify, the pinned free code-signing identity."""
 import argparse
 from pathlib import Path
-from persistent_signing import identity, initialize, verify_app
+from persistent_signing import initialize, probe_identity, verify_app
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--initialize',action='store_true',help='Create only when no identity has ever been pinned')
@@ -14,6 +14,5 @@ if args.verify_app:
 elif args.initialize:
     initialize()
 else:
-    with identity():
-        pass
-    print('Verified pinned persistent signing identity.')
+    probe_identity()
+    print('Verified actual signing with the pinned persistent identity.')

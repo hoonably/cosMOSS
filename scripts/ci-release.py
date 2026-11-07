@@ -27,11 +27,11 @@ try:
  run(['python3','scripts/test-release-distribution.py'])
  name=cfg['app_name']
  if name=='cosMOSS':
+  run(['python3','scripts/setup-code-signing.py'])
   run(['uv','sync','--frozen'])
   run(['.venv/bin/python','-m','unittest','discover','-s','tests'])
   run(['node','--check','static/app.js'])
   os.environ['COSMOSS_RELEASE_CODESIGN_IDENTITY']='auto'
-  run(['python3','scripts/setup-code-signing.py'])
   run(['./scripts/build-mac-release.sh'])
   run(['.venv/bin/python','tests/signing_smoke.py','dist/release/cosMOSS.app'])
   run(['.venv/bin/python','tests/persistent_update_smoke.py','dist/release/cosMOSS.app','--legacy-adhoc-current'])
