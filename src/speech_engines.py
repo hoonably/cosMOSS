@@ -63,7 +63,8 @@ MODELS = {
 REQUIREMENTS = {
     'sglang': ['sglang-omni==0.1.9', 'sglang==0.5.22', 'torch==2.14.1',
                'transformers==5.19.0', 'nvidia-cutlass-dsl==4.8.0',
-               'nvidia-cuda-nvcc==13.4.92', 'nvidia-cuda-crt==13.4.92',
+               'nvidia-cuda-nvcc==13.4.92', 'nvidia-nvvm==13.4.92',
+               'nvidia-cuda-runtime==13.4.92', 'nvidia-cuda-crt==13.4.92',
                'nvidia-cuda-cccl==13.3.4.3.1'],
     'qwen': ['qwen-asr==0.0.6', 'torch==2.9.1', 'torchaudio==2.9.1',
              'transformers==4.57.6', 'nvidia-cutlass-dsl==4.2.1',

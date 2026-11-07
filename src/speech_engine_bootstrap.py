@@ -12,6 +12,35 @@ import threading
 import time
 import wave
 
+CUDA_COMPILER_VERSION = '13.4.92'
+CUDA_COMPILER_PROBE = 'coherent-cuda-13.4.92-compile-v1'
+
+
+def compiler_ready(folder):
+    try:
+        return ((folder/'cuda-toolchain-ready').read_text() == CUDA_COMPILER_PROBE
+                and (folder/'cuda-toolkit/bin/nvcc').is_file())
+    except OSError:
+        return False
+
+
+def check_compiler(python, toolkit, job, environment, run):
+    """Exercise NVVM -> PTX -> ptxas without loading a model or using a GPU."""
+    packages = ('nvidia-cuda-nvcc', 'nvidia-nvvm', 'nvidia-cuda-crt', 'nvidia-cuda-runtime')
+    code = ("from importlib.metadata import version; "
+            f"assert all(version(p)=={CUDA_COMPILER_VERSION!r} for p in {packages!r}), "
+            "'CUDA compiler packages differ; prepare the model again'")
+    run([str(python), '-I', '-B', '-c', code])
+    source = job/'compiler-check.cu'
+    source.write_text('__global__ void cosmoss_check(float *x) { x[threadIdx.x] += 1.0f; }\n')
+    private = dict(environment, CUDA_HOME=str(toolkit), CUDA_PATH=str(toolkit),
+                   CUDACXX=str(toolkit/'bin/nvcc'), PATH=str(toolkit/'bin')+':'+environment['PATH'])
+    try:
+        run([str(toolkit/'bin/nvcc'), '-arch=sm_90a', '-std=c++20', '-c', str(source),
+             '-o', str(job/'compiler-check.o')], env=private)
+    except RuntimeError as error:
+        raise RuntimeError('CUDA 컴파일 도구 호환성 검사에 실패했습니다. 선택한 모델을 다시 준비해 주세요.') from error
+
 
 def emit(**event):
     print('COSMOSS_SPEECH:'+json.dumps(event,ensure_ascii=False),flush=True)
@@ -44,7 +73,8 @@ def main():
                 saved = json.loads(manifest.read_text())
                 return (saved['version']==ENGINE_VERSION and all(
                     (root/'envs'/env/'bin/python').is_file() and (root/'envs'/env/'ready').read_text()==ENGINE_VERSION
-                    for _,env in stages(key)) and all(
+                    for _,env in stages(key)) and (all(env!='sglang' for _,env in stages(key))
+                    or compiler_ready(root/'envs/sglang')) and all(
                     (Path(saved['paths'][m])/'config.json').is_file() and any(Path(saved['paths'][m]).glob('*.safetensors'))
                     for m in model_keys(key)))
             except (OSError,ValueError,KeyError):
@@ -156,7 +186,10 @@ def main():
                     raise ValueError('Unsafe engine environment')
                 python=folder/'bin/python'
                 ready_stamp = folder/'ready'
-                if not ready_stamp.is_file() or ready_stamp.read_text()!=ENGINE_VERSION or not python.is_file():
+                if (not ready_stamp.is_file() or ready_stamp.read_text()!=ENGINE_VERSION or not python.is_file()
+                        or env=='sglang' and not compiler_ready(folder)):
+                    ready_stamp.unlink(missing_ok=True)
+                    if env=='sglang': (folder/'cuda-toolchain-ready').unlink(missing_ok=True)
                     emit(phase='installing',engine=env)
                     if not python.is_file():
                         run([uv,'venv','--python','3.12',str(folder)])
@@ -180,6 +213,8 @@ def main():
                         for name,source in [('libcudart.so','libcudart.so.13'),('libnvrtc.so','libnvrtc.so.13'),('libnvJitLink.so','libnvJitLink.so.13')]:
                             target=toolkit/'lib64'/name
                             if not target.exists(): target.symlink_to(cu/'lib'/source)
+                        check_compiler(python, toolkit, job, environment, run)
+                        (folder/'cuda-toolchain-ready').write_text(CUDA_COMPILER_PROBE)
                     (folder/'ready').write_text(ENGINE_VERSION)
             python=root/'envs/nemotron/bin/python'
             config=dict(stage='prepare',models=model_keys(key),output=str(job/'paths.json'))
@@ -193,6 +228,8 @@ def main():
             return
         if not installed():
             raise RuntimeError('왼쪽 처리 장치에서 선택한 모델을 먼저 다운로드해 주세요.')
+        if any(env=='sglang' for _,env in stages(key)):
+            check_compiler(root/'envs/sglang/bin/python', root/'envs/sglang/cuda-toolkit', job, environment, run)
         gpu=str(request.get('gpu_uuid',''))
         if not gpu.startswith('GPU-') or any(c not in 'GPU-0123456789abcdefABCDEF' for c in gpu):
             raise ValueError('GPU 번호를 다시 선택해 주세요.')

@@ -1212,7 +1212,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="cosMOSS",
-    version="1.1.0",
+    version="1.1.1",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,

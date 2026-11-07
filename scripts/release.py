@@ -143,7 +143,7 @@ def publish_cloudflare(client,out,report,release,state):
   changes[str(folder/'downloads'/('v'+CFG['version'])/name)]=payload
  notes=(out/'RELEASE_NOTES.md').read_text().strip()
  notes_url=CFG['release_notes_url'].format(version=CFG['version'])
- page='<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(CFG['app_name'])+'</title><style>body{font:17px/1.7 system-ui,sans-serif;color:#243c32;background:#f7f9f6;max-width:680px;margin:12vh auto;padding:24px}</style><p>'+html.escape(notes)+'</p></html>'
+ page='<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(CFG['app_name'])+'</title><style>body{font:17px/1.7 system-ui,sans-serif;color:#243c32;background:#f7f9f6;max-width:680px;margin:12vh auto;padding:24px}</style><p>'+html.escape(notes).replace('\n','<br>')+'</p></html>'
  changes[str(folder/'updates'/('v'+CFG['version']+'.html'))]=page.encode()
  redirect='/downloads/latest.dmg /downloads/v'+CFG['version']+'/'+quote(report['installer'])+' 302'
  path=ROOT/folder/'_redirects'
