@@ -1,24 +1,10 @@
 .voice-demo {
   --demo-ink: #30223b;
   --demo-muted: #57485e;
-  position: relative;
-  isolation: isolate;
   width: 100%;
   padding: 21px 0 19px;
   color: var(--demo-ink);
   text-align: start;
-}
-
-.voice-demo::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: url("../images/conversation-field.webp") center 52% / cover no-repeat;
-  opacity: .85;
-  -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 55%, #0004 80%, transparent);
-  mask-image: linear-gradient(transparent, #000 18%, #000 55%, #0004 80%, transparent);
 }
 
 .voice-demo__inner {
@@ -232,30 +218,10 @@
 
 @media (min-width: 721px) {
   .voice-demo__inner { width: min(1000px, 66%); }
-  .voice-demo::before,
-  .voice-demo::after {
-    content: "";
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: min(28%, 360px);
-    z-index: -1;
-    pointer-events: none;
-    background: url("../images/conversation-field.webp") left center / auto 100% no-repeat;
-    opacity: .85;
-    -webkit-mask-image: linear-gradient(to right, #000 65%, transparent);
-    mask-image: linear-gradient(to right, #000 65%, transparent);
-  }
-  .voice-demo::after {
-    inset: 0 0 0 auto;
-    background-position: right center;
-    -webkit-mask-image: linear-gradient(to left, #000 65%, transparent);
-    mask-image: linear-gradient(to left, #000 65%, transparent);
-  }
 }
 
 @media (max-width: 720px) {
   .voice-demo__inner { width: calc(100% - 40px); }
-  .voice-demo::before { background-size: max(145%, 850px) auto; }
   .voice-demo__heading { margin-bottom: 8px; }
   .voice-demo__segment { height: 69px; }
   .voice-demo__segment svg { height: 57px; }
