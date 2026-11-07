@@ -31,11 +31,11 @@ def main():
     assert metadata['SURequireSignedFeed'] and metadata['SUVerifyUpdateBeforeExtraction']
     assert metadata['SUEnableAutomaticChecks']
     assert not metadata['SUAutomaticallyUpdate']
-    assert metadata['NSMicrophoneUsageDescription']
     assert 'UTExportedTypeDeclarations' not in metadata
     assert 'NSMicrophoneUsageDescription' not in metadata
-    assert (resources / 'app/static/voices.js').is_file()
-    assert (resources / 'app/src/voice_embedding_worker.py').is_file()
+    for retired in ('static/voices.js', 'static/voice-review.js', 'src/voice_embedding_worker.py',
+                    'src/voice_engine.py', 'src/voice_profiles.py'):
+        assert not (resources / 'app' / retired).exists(), retired
     assert metadata['CFBundleIconFile'] == 'AppIcon.icns'
     assert (resources / 'AppIcon.icns').read_bytes().startswith(b'icns')
     assert (app / 'Contents/Frameworks/Sparkle.framework').is_dir()
