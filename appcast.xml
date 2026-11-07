@@ -1,8 +1,21 @@
-<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+<?xml version="1.0" standalone="yes"?>
+<!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>cosMOSS</title>
+        <item>
+            <title>1.1.0</title>
+            <pubDate>Sat, 07 Nov 2026 04:32:01 +0000</pubDate>
+            <link>https://cosmoss-app.pages.dev</link>
+            <sparkle:fullReleaseNotesLink>https://cosmoss-app.pages.dev/updates/v1.1.0.html</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1100000</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://cosmoss-app.pages.dev/downloads/v1.1.0/cosMOSS-v1.1.0-macos-arm64.dmg" length="17093896" type="application/octet-stream" sparkle:edSignature="nM1iCNxEI8Kk43hB+BW+d3R7L2fkmm7qkt4irNvPqOcJATFv8ncHiQbpJIaWOmjEYfCEMZ+n3FQ9gAGYi1RQAg=="/>
+        </item>
         <item>
             <title>1.0.0</title>
             <pubDate>Tue, 03 Nov 2026 07:52:40 +0000</pubDate>
@@ -12,10 +25,11 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
             <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://cosmoss-app.pages.dev/downloads/v1.0.0/cosMOSS-v1.0.0-macos-arm64.dmg" length="17091642" type="application/octet-stream" sparkle:edSignature="N0FXrc6U3U0pPsA+T4KPt2tcWcfxHY72rKGQ6BJNxttmCBSAqhkalbeK6MwOWFH5NsT1iF71QaMiRGckpQKEBw=="></enclosure>
+            <enclosure url="https://cosmoss-app.pages.dev/downloads/v1.0.0/cosMOSS-v1.0.0-macos-arm64.dmg" length="17091642" type="application/octet-stream" sparkle:edSignature="N0FXrc6U3U0pPsA+T4KPt2tcWcfxHY72rKGQ6BJNxttmCBSAqhkalbeK6MwOWFH5NsT1iF71QaMiRGckpQKEBw=="/>
         </item>
     </channel>
-</rss><!-- sparkle-signatures:
-edSignature: eDwAOneWl5+iGjAgJzE93AbAHpBi5hkQogwJOjADnn7kLlrQ5qECzVXFlK4CvTUaICYVcPsdQ5DSzADU/xzFDQ==
-length: 1301
+</rss>
+<!-- sparkle-signatures:
+edSignature: WkCIOKsp2ZrqkuS2dLVxL0kh+lEzmHiP3FAuFC8akc43K8WonN0rXB6haYIb/gw/n5QZDVXhniRq2dS/eRlOBw==
+length: 2155
 -->
