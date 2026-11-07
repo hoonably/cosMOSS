@@ -28,7 +28,8 @@ class SpeechJobs:
     def record(self, result):
         # Only numeric/runtime identity metadata; never persist recordings,
         # transcripts, filenames, SSH hosts, note IDs or GPU UUIDs here.
-        if result.get('runtime') != runtime_for(result.get('pipeline')) or not result.get('segments') or not result.get('peak_process_mib'):
+        if (result.get('moss_partition_count', 1) > 1 or result.get('runtime') != runtime_for(result.get('pipeline'))
+                or not result.get('segments') or not result.get('peak_process_mib')):
             return
         positive = ('audio_seconds', 'inference_seconds', 'capacity_gib', 'peak_process_mib')
         if (result.get('pipeline') not in FAST_PIPELINES or not isinstance(result.get('batch'), int)

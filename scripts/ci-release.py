@@ -30,8 +30,11 @@ try:
   run(['uv','sync','--frozen'])
   run(['.venv/bin/python','-m','unittest','discover','-s','tests'])
   run(['node','--check','static/app.js'])
-  os.environ['COSMOSS_RELEASE_CODESIGN_IDENTITY']='-'
+  os.environ['COSMOSS_RELEASE_CODESIGN_IDENTITY']='auto'
+  run(['python3','scripts/setup-code-signing.py'])
   run(['./scripts/build-mac-release.sh'])
+  run(['.venv/bin/python','tests/signing_smoke.py','dist/release/cosMOSS.app'])
+  run(['.venv/bin/python','tests/persistent_update_smoke.py','dist/release/cosMOSS.app','--legacy-adhoc-current'])
   run(['.venv/bin/python','tests/release_smoke.py','dist/release/cosMOSS.app'])
  elif name=='Pickly':
   run(['./scripts/test.sh'])

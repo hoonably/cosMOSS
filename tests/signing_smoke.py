@@ -46,6 +46,11 @@ def main():
         subprocess.run(['codesign', '--verify', '--strict', '-R', str(previous_requirement), str(second)], check=True)
         subprocess.run(['codesign', '--verify', '--strict', '-R', str(updated_requirement), str(first)], check=True)
         assert original == updated
+        forged = root / 'forged/cosMOSS.app'
+        subprocess.run(['ditto',str(first),str(forged)],check=True)
+        subprocess.run(['codesign','--force','--sign','-',str(forged)],check=True,capture_output=True)
+        rejected = subprocess.run(['codesign','--verify','--strict','-R',str(previous_requirement),str(forged)],capture_output=True)
+        assert rejected.returncode != 0, 'Same bundle ID without our private key must not retain the identity'
     print('PASS: changed, relocated builds retain a mutually compatible certificate-backed requirement; no permissions granted/reset')
 
 

@@ -23,6 +23,7 @@ class LocalPipelineTests(unittest.IsolatedAsyncioTestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        self.enterContext(patch('src.job_artifacts.DEFAULT_DOWNLOADS', self.root / 'Downloads'))
         self.store = NoteStore(self.root / 'notes.sqlite3')
         self.devices = DeviceStore(self.root / 'devices.sqlite3')
         self.device = self.devices.configure('local', model_key='mlx-8bit', model_id=MLX_8BIT,
@@ -60,7 +61,6 @@ class LocalPipelineTests(unittest.IsolatedAsyncioTestCase):
         values = {'STORE':self.store, 'DEVICES':self.devices, 'LOCAL_MODELS':self.models,
             'LOCAL_DIARIZATION':self.diarization, 'QUEUE':asyncio.Queue(), 'CANCEL_REQUESTED':set(),
             'SUMMARIES':Summaries(self.root / 'summaries'),
-            'VOICE_PROFILES':SimpleNamespace(settings=lambda:{'enabled':False}),
             'MEDIA_TOOLS':SimpleNamespace(require_ready=AsyncMock()),
             'split_audio':Mock(return_value=self.chunks), 'make_bridge_chunks':Mock(return_value=[]),
             'transcribe_chunk':self.asr, 'estimate_note_inference':Mock(return_value=30)}
@@ -92,13 +92,11 @@ class LocalPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(note['pipeline_result']['pipeline'], 'moss-mlx')
         self.assertIsNone(note['pipeline_result']['peak_process_gib'])
         self.assertNotIn('asr_segments', note['pipeline_result'])
-        diagnostic = json.loads((self.audio.parent / 'speech-result.json').read_text())
-        self.assertEqual(diagnostic['asr_chunks'][0]['text'], 'first raw')
-        self.assertEqual(diagnostic['asr_segments'][0]['speaker'], diagnostic['asr_segments'][1]['speaker'])
-        self.assertEqual(diagnostic['diarization_metrics']['peak_host_rss_gib'], .8)
+        self.assertFalse(self.audio.parent.exists())
+        self.assertEqual(note['pipeline_result']['diarization_metrics']['peak_host_rss_gib'], .8)
         self.assertIsNotNone(note['inference_finished_at'])
 
-    async def test_diarizer_failure_keeps_asr_diagnostic_and_does_not_publish_success(self):
+    async def test_diarizer_failure_discards_temporary_audio_and_does_not_publish_success(self):
         self.diarization.execute.side_effect = RuntimeError('Nemotron failed')
         await self.main.transcribe(self.identity)
         note = self.store.get(self.identity)
@@ -106,7 +104,7 @@ class LocalPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Nemotron failed', note['error'])
         self.assertFalse(note['text_path'])
         self.assertEqual(self.events[-1], ('release','mlx-8bit'))
-        self.assertEqual(len(json.loads((self.audio.parent / 'speech-result.json').read_text())['asr_chunks']), 2)
+        self.assertFalse(self.audio.parent.exists())
 
     async def test_legacy_mac_job_still_launches_and_releases_asr_without_diarization(self):
         device = {**self.device, 'options': DEFAULT_OPTIONS}

@@ -94,11 +94,12 @@ class NoteStore:
                 "output_format": "TEXT NOT NULL DEFAULT 'txt'",
                 "output_directory": "TEXT",
                 "text_save_error": "TEXT",
-                "voice_matches_json": "TEXT NOT NULL DEFAULT '[]'",
-                "voice_merge_candidates_json": "TEXT NOT NULL DEFAULT '[]'",
-                "voice_match_error": "TEXT",
                 "pipeline_result_json": "TEXT NOT NULL DEFAULT '{}'",
             }
+            # Retired suggestions contain voice-derived metadata, not edited names.
+            for name in ("voice_matches_json", "voice_merge_candidates_json", "voice_match_error"):
+                if name in columns:
+                    connection.execute(f"ALTER TABLE notes DROP COLUMN {name}")
             for name, definition in migrations.items():
                 if name not in columns:
                     connection.execute(
@@ -320,6 +321,20 @@ class NoteStore:
             connection.execute("DELETE FROM prepared_uploads WHERE id = ?", (upload_id,))
         return self.get(upload_id)
 
+    def consume_joined_uploads(self, uploads: list[dict], joined: dict, settings: dict) -> dict:
+        # All inputs are promoted together. A concurrent cancellation/submission
+        # invalidates the join instead of creating a second job from those files.
+        with self.lock, self._connect() as connection:
+            for upload in uploads:
+                row = connection.execute('SELECT * FROM prepared_uploads WHERE id=?', (upload['id'],)).fetchone()
+                if row is None:
+                    raise KeyError(upload['id'])
+                if row['status'] != 'ready' or row['normalized_path'] != upload['normalized_path']:
+                    raise ValueError('녹음 준비 상태가 바뀌었습니다. 파일을 다시 확인해 주세요.')
+            self._insert_note(connection, {**joined, **settings, 'status': 'queued'})
+            connection.executemany('DELETE FROM prepared_uploads WHERE id=?', [(u['id'],) for u in uploads])
+        return self.get(joined['id'])
+
     def get(self, note_id: str) -> dict[str, Any]:
         with self.lock, self._connect() as connection:
             row = connection.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -367,8 +382,6 @@ class NoteStore:
             "speaker_names": "speaker_names_json",
             "speaker_merges": "speaker_merges_json",
             "model_progress": "model_progress_json",
-            "voice_matches": "voice_matches_json",
-            "voice_merge_candidates": "voice_merge_candidates_json",
             "pipeline_result": "pipeline_result_json",
         }
         normalized: dict[str, Any] = {}
@@ -410,7 +423,5 @@ class NoteStore:
         result["speaker_names"] = json.loads(result.pop("speaker_names_json") or "{}")
         result["speaker_merges"] = json.loads(result.pop("speaker_merges_json", "{}") or "{}")
         result["model_progress"] = json.loads(result.pop("model_progress_json", "{}") or "{}")
-        result["voice_matches"] = json.loads(result.pop("voice_matches_json", "[]") or "[]")
-        result["voice_merge_candidates"] = json.loads(result.pop("voice_merge_candidates_json", "[]") or "[]")
         result["pipeline_result"] = json.loads(result.pop("pipeline_result_json", "{}") or "{}")
         return result

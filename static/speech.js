@@ -5,7 +5,7 @@
   let deviceId = null, consentKey = null, localOptionsKey = null;
   let setupKey = null, setupState = null, setupRevision = 0, setupTimer = null, setupController = null;
   const descriptions = {
-    'moss-sglang': '전체 녹음의 문맥을 유지해 전사합니다. 최대 90분 · 화자 구분은 Nemotron 0.1B.',
+    'moss-sglang': '전체 녹음의 문맥을 유지해 전사합니다. 90분을 넘으면 확인 후 최소 개수로 균등 분할합니다. 화자 구분은 Nemotron 0.1B.',
     'qwen-transformers': '약 3분씩 빠르게 전사한 뒤 단어 시간을 정렬합니다. 화자 구분은 Nemotron 0.1B.',
     'moss-qwen-sequential': 'MOSS 전체 전사 후 Qwen3-ASR 1.7B를 순차 실행합니다. MOSS 본문과 비교용 Qwen 대본을 각각 보관합니다.',
   };
@@ -115,10 +115,12 @@
     $('#speech-description').textContent = local
       ? 'MOSS MLX로 전사한 뒤 Nemotron 0.1B로 전체 녹음의 화자를 구분합니다. 두 모델은 순서대로 실행하고 메모리를 해제합니다.'
       : descriptions[pipeline.value] || '';
+    $('#speech-length-notice').classList.toggle('hidden',
+      !server || pipeline.value === 'qwen-transformers' || !(uploadDuration() >= 45 * 60));
     const caution = $('#local-model-caution');
     caution.classList.toggle('hidden', !local || localModel.value !== 'mlx-4bit');
     caution.textContent = local && localModel.value === 'mlx-4bit' ? '4bit는 실측에서 시간표시 오류와 긴 녹음의 출력 중단이 확인됐습니다. 8bit를 권장합니다.' : '';
-    if (fast && (!state.selectedGpu || !state.uploadPreparation?.duration)) {
+    if (fast && (!state.selectedGpu || !uploadDuration())) {
       $('#speech-batch-plan').textContent = '파일을 올리고 GPU 번호를 선택하면 예상 시간과 메모리를 확인할 수 있습니다.';
       $('#speech-batch-plan').classList.add('needs-input');
     }
@@ -132,7 +134,7 @@
     renderSetup();
   }
   function estimate() {
-    const device = executionDevice(), gpu = state.selectedGpu, duration = state.uploadPreparation?.duration, chosen = pipeline.value;
+    const device = executionDevice(), gpu = state.selectedGpu, duration = uploadDuration(), chosen = pipeline.value;
     if (!device || !gpu || !duration) return;
     const key = JSON.stringify(['speech',device.id,chosen,batch.value,gpu.uuid,gpu.name,gpu.memory_total_mib,gpu.memory_free_mib,duration]);
     if (state.estimateKey === key) return;

@@ -55,7 +55,7 @@ class NoteCleanupTests(unittest.TestCase):
         self.records(other_key)
         summary = self.folder / '회의_요약.md'; summary.write_text('keep exported summary')
         original = self.root / '회의.m4a'; original.write_bytes(b'user original outside app')
-        profile = self.data / 'voice-profiles' / 'profile.json'; profile.parent.mkdir(); profile.write_text('keep profile')
+        profile = self.data / 'unrelated-settings' / 'settings.json'; profile.parent.mkdir(); profile.write_text('keep profile')
         result = self.cleaner.remove(self.export, trash_transcript=True)
         self.assertEqual(result['notes'], 2)
         self.assertGreater(result['audio_bytes'], 0)

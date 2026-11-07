@@ -28,13 +28,68 @@ The server menu exposes MOSS SGLang full context (default), Qwen Transformers SD
 3m + forced alignment, and MOSS full → unload → Qwen SDK20m auxiliary → unload →
 Nemotron. Alignment runs after Qwen exit, with a PyTorch allocator budget below
 its observed process peak and adaptive batches. Raw Qwen token IDs and natural
-EOS are checked before accepting outputs. Auxiliary text is private in
-`speech-result.json` and fetched only through the per-note auxiliary endpoint;
-it never overwrites the MOSS body. Mac MLX uses its native ASR runtime, followed
+EOS are checked before accepting outputs.
+MOSS requests set an explicit output-token budget. If a response ends inside
+markup or reports a length limit, completed segments are retained and only the
+audio after their last complete timestamp is retried with global offsets.
+Whole-recording Nemotron turns independently check for a spoken tail after a
+well-formed early EOS; that tail is retried before marking the note complete.
+MOSS uses one context up to 90 minutes. Longer inputs require explicit per-job
+confirmation (`allow_moss_split`) and use `ceil(duration / 90 minutes)` equal
+contexts, processed sequentially by the same loaded MOSS instance: 100 minutes
+becomes 50+50, 210 becomes 70+70+70. The upload dialog shows the exact plan before
+submitting; Cancel leaves all uploads unconsumed. The API and remote worker also
+enforce confirmation. Joined recordings use their combined duration.
+Each request contains only its interval (PCM frame copy), and timestamps are
+shifted to the original timeline. Nemotron still runs once over the entire
+recording to assign consistent speakers. Tail coverage is checked separately in
+every MOSS interval, including middle intervals; any recovery is bounded to that
+interval and cannot repeat later contexts. Silence after the last utterance does
+not require artificial transcript coverage. Long-job estimates sum the interval
+times and use peak memory rather than summing memory. These jobs do not enter
+the existing single-context calibration history.
+For MOSS recordings of 45 minutes or longer, the upload dialog explains the
+automatic continuation and possible extra processing time without blocking
+submission. Background jobs explicitly label continuation while it runs.
+Qwen chunks that reach the output cap or repeat excessively are split near a
+quiet midpoint and retried, preserving successful chunks and original time
+offsets. Only complete outputs are merged; retries stop before either child
+would be shorter than five seconds. This applies to both Qwen presets without
+reinstalling the model environment. Retry diagnostics exist only during the job.
+
+The main transcript is saved in Downloads in the selected TXT/SRT/VTT format.
+Optional Qwen auxiliary text is a separate ` - Qwen 보조 대본.txt` alongside it;
+it never overwrites the MOSS body. The auxiliary endpoint reads this visible file.
+App-managed original copies, normalized WAV and chunks are temporary: completion,
+failure and explicit cancellation remove them, while queued/active jobs and
+shutdown recovery retain what they need. A new attempt after failure/cancellation
+requires selecting the original again. External originals remain untouched.
+Full per-note diagnostic JSON is no longer saved. Startup/periodic cleanup exports
+existing completed transcripts and auxiliary text before removing legacy working
+folders, preserving external edits and not recreating user-deleted outputs.
+Failed exports retain the transcript and pending auxiliary text in the note record
+for retry; successful auxiliary exports retain only a path/hash in that record.
+Manual speaker names and text edits continue to work without audio; playback and
+fresh voice comparisons require audio and are unavailable after cleanup.
+Mac MLX uses its native ASR runtime, followed
 by the same whole-recording Nemotron attribution policy. The old
 `speech_bootstrap.py` / `speech_worker.py` are retained for saved legacy jobs.
 
 ## Mac transcription bundle
+
+Multiple uploads or Voice Memos can be reordered with a six-dot drag handle
+(Up/Down keys also work) and optionally submitted as one joined note. Estimates,
+chunk sizing and long-recording notices use the summed duration in join mode.
+`audio_join.py` copies the already-prepared 16 kHz mono PCM frames in that order;
+there is no additional lossy encoding, silence padding or crossfade, and the
+joined WAV size is the sum of the inputs minus redundant WAV headers. Only the
+temporary model input is joined; external originals are untouched.
+The selected device/model/GPU is validated before joining. All input upload
+manifests are consumed in the same transaction that publishes the single note,
+so cancellation, failed validation or a competing submission cannot lose the
+unconsumed inputs or submit them twice. Source working folders are removed after
+promotion; the joined input follows normal job cleanup. Update/relaunch waits
+while the join is in progress.
 
 New local jobs snapshot `options.local_diarization="nemotron-3"`. They transcribe
 all MLX chunks, unload the ASR model, run Nemotron once on the full recording,
@@ -53,13 +108,18 @@ one Mac resource through ASR, unload, diarization and cleanup, so multiple
 recordings run sequentially and cancellation cannot release it while a child
 still owns the device.
 
+Server model selection changes the default for future notes even while jobs or
+model preparation are running. Existing notes retain their model/GPU snapshots
+and worker leases. Jobs on the same GPU UUID queue in order across presets;
+independent GPUs can run concurrently.
+
 The app takes a per-note snapshot of the preset and requested batch. Automatic
 batch plans budget for quiet-boundary cuts up to five seconds early, avoiding an
 unexpected final GPU wave. H200 reference latency is not used for other GPUs;
 successful jobs calibrate the same GPU name, VRAM class, runtime, preset and
 effective batch. The history contains no audio, transcript, filename or host.
-Per-note `speech-result.json` is private and preserves original ASR chunks,
-aligned words, speaker turns and metrics. The normal API exposes concise metrics.
+The normal API and note record retain concise metrics, without private diagnostic
+files containing original ASR chunks, aligned words or speaker turns.
 
 Zero-duration Qwen words are assigned only to a unique active speaker at that
 point. Overlapping or missing evidence stays `미확인`; this label is neither a
@@ -135,23 +195,38 @@ Build the downloadable app and shared installer/update DMG with
 `./scripts/build-mac-release.sh`. The public output is
 `dist/cosMOSS-v<version>-macos-arm64.dmg`.
 Normal development builds (`build-mac-app.sh`) do not generate installers.
-Local signing uses `scripts/sign-mac-app.py`: it automatically uses the one
-available Apple Development certificate (or Developer ID Application certificate).
-Set `COSMOSS_CODESIGN_IDENTITY` to a certificate name or SHA-1 if several exist.
-An explicitly selected certificate that cannot sign fails the build; it never
-silently falls back to another identity. Without a certificate, the script warns
-and uses ad-hoc signing. Keep the same certificate and bundle ID across rebuilds
-so macOS can recognize the app's designated requirement and retain permissions.
+Local and public signing use the same pinned, self-signed RSA certificate through
+`scripts/sign-mac-app.py`. `macos/signing/identity.json` pins its SHA-256 and SHA-1;
+`certificate.der` is public. Its private identity is stored only as an AES-256-GCM
+authenticated archive (`identity.p12.aesgcm`). A domain-separated HKDF-SHA256 key
+derived from the existing pinned Sparkle secret encrypts this separate RSA key;
+the Sparkle key itself is never replaced or used as an RSA signing key.
+CI already has that secret and local Macs use their existing update-key backup,
+so no extra paid account or additional Actions secret is needed.
+
+`scripts/setup-code-signing.py --initialize` is an explicit one-time operation;
+subsequent invocations only verify the existing identity, never rotate it. Normal
+builds decrypt into a private temporary directory/keychain, give only `codesign`
+access to its private key, sign, then remove that keychain and plaintext files.
+They never add a trusted root or change macOS privacy settings. Missing/wrong
+keys, changed public pins or corrupted archives fail the build rather than
+falling back to ad-hoc signing or another available developer certificate.
+The default designated requirement contains the bundle ID and pinned certificate
+root hash, so different builds and build machines identify as the same app.
 After switching from an old ad-hoc build, quit the app, remove its old Full Disk
 Access entry and add the current app once, then relaunch. Signing does not grant
 or reset permissions. See [Apple TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
 
-Release builds deliberately default to ad-hoc signing rather than distributing
-an Apple Development build. `COSMOSS_RELEASE_CODESIGN_IDENTITY` explicitly selects
-a distribution identity; Developer ID signing and notarization require separate
-release setup. Sparkle's update signature is independent of Apple code signing.
+This is not Apple Developer ID signing or notarization; the first-download
+Gatekeeper warning remains. End users do not install or trust our certificate.
+Sparkle's archive/feed signature remains independent and unchanged. Release
+packaging also verifies the pinned certificate before making a DMG.
 `tests/signing_smoke.py` changes a temporary bundle and verifies that both signed
-versions satisfy each other's designated requirements without touching TCC.
+versions satisfy each other's designated requirements and rejects a same-ID
+ad-hoc impersonation without touching TCC. `tests/persistent_update_smoke.py`
+uses real Sparkle DMG discovery/download/validation/extraction/replacement with
+isolated no-op apps, then verifies that the new app retains the original strong
+requirement. No user app or privacy database is modified by these tests.
 To package an existing standalone app without rebuilding it, run
 `./scripts/build-mac-dmg.sh /path/to/cosMOSS.app`. Packaging uses pinned dmgbuild
 tools in uv's cache, creates the branded Finder layout without UI automation,
@@ -391,7 +466,7 @@ The release launcher uses `~/Library/Application Support/cosMOSS/` for writable
 data, the MLX venv, caches and logs. `MOSS_RUNTIME_DIR` separates these writable
 runtime paths from the read-only bundled source. Finder launches add Homebrew's
 executable directories to PATH so FFmpeg and optional AI CLIs can be found.
-Release bundles use ad-hoc signatures, not Developer ID signing or notarization.
+Release bundles use the pinned self-signed certificate, without Developer ID or notarization.
 The bundled runtime retains Python/library notices and installed package metadata.
 Optional uv installations retain their license files. The signed bundle is never modified by setup.
 
@@ -509,9 +584,16 @@ local/same-origin guard. Text saves finish before renaming so hashes remain curr
 edit synchronization, denied writes, recovery without inference and route origins.
 The speaker dialog scrolls its preview to the selected speaker's first utterance;
 Up/Down skips other speakers, clamps at the ends and preserves text-field keys.
-Clicking a speaker card focuses its inline name input, with Enter returning to
-preview navigation. Clicking an already focused input preserves the caret and
-preview position. Cards and utterance highlights use the green accent; drag
+The note list's Edit button opens this dialog directly for parsed transcripts;
+plain files without utterances retain the full-text editor. A single utterance
+click anchors keyboard navigation without editing; double-clicking its text
+starts editing. Blur or Cmd/Ctrl+Enter finishes the draft, and Escape reverts that
+utterance's active edit. Names, text and merges commit together on Save; Cancel
+discards them. Timing and raw ASR stay unchanged, imported formats retain their
+encoding, line endings and cue metadata, and stale file hashes reject overwrites.
+Clicking a speaker card selects it and focuses preview navigation. Speaker
+names stay read-only until double-clicked, either in the card or transcript.
+Enter or blur finishes a name draft; Escape restores its previous value. Cards and utterance highlights use the green accent; drag
 merging uses the card header so dragging name text does not merge speakers.
 `tests/speaker_navigation_ui_smoke.py` exercises long TXT/SRT previews, focus,
 scrolling, reduced motion, merge resets and source preservation.

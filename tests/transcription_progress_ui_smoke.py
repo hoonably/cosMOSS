@@ -74,7 +74,7 @@ async def main():
         await put(status='processing', progress_phase='transcribing', inference_elapsed_seconds=0,
                   inference_started_at='2026-10-21T00:15:00+00:00', estimated_inference_seconds=100)
         assert await page.locator('.job-percent').inner_text() == '0%'
-        await put(progress_phase='identifying_speakers', inference_elapsed_seconds=70,
+        await put(progress_phase='finalizing', inference_elapsed_seconds=70,
                   inference_finished_at='2026-10-21T00:16:10+00:00')
         assert await page.locator('.job-percent').inner_text() == '100%'
         assert '노트 마무리 중' in await page.locator('.background-job').inner_text()

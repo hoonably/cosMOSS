@@ -83,11 +83,9 @@ class AttributionTests(unittest.TestCase):
         self.assertEqual([r['text'] for r in rows],['오늘 결정했습니다.','확인','다음'])
         self.assertEqual(rows[0]['end'],2)
 
-    def test_unknown_group_is_not_a_voice_profile_or_diarization_identity(self):
-        from src.voice_profiles import VoiceProfiles
+    def test_unknown_group_is_not_a_diarization_identity(self):
         from src.transcript import parse_transcript
         segments=[{'id':0,'start':0,'end':4,'text':'불분명한 말','speaker':'미확인','speaker_uncertain':True}]
-        self.assertEqual(VoiceProfiles.ranges(segments),{})
         raw='[0.00][미확인]불분명한 말[4.00]\n[4.00][S01]다음 발화[5.00]'
         self.assertEqual([s['speaker'] for s in parse_transcript(raw)],['미확인','S01'])
 
@@ -209,11 +207,11 @@ class FastJobTests(unittest.IsolatedAsyncioTestCase):
                 event({'phase':'transcribing','chunk_count':1})
                 return {'phase':'done','result':result}
             with patch.object(main,'STORE',store),patch.object(main.DEVICES,'get',return_value=device), \
+                 patch('src.job_artifacts.DEFAULT_DOWNLOADS',root/'Downloads'), \
                  patch.object(main.MEDIA_TOOLS,'require_ready',new=AsyncMock()), \
                  patch.object(main.SPEECH,'execute',side_effect=execute), \
                  patch.object(main.SPEECH,'record'),patch.object(main.SPEECH,'observations',return_value=[]), \
-                 patch.object(main.REMOTE_WORKERS,'perform',new=AsyncMock()) as old, \
-                 patch.object(main.VOICE_PROFILES,'settings',return_value={'enabled':False}):
+                 patch.object(main.REMOTE_WORKERS,'perform',new=AsyncMock()) as old:
                 await main.transcribe(identity)
             saved=store.get(identity)
             self.assertEqual(saved['status'],'done',saved.get('error'))

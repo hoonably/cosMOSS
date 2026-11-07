@@ -67,7 +67,7 @@ class NoteRetentionTests(unittest.TestCase):
         self.library.scan(str(self.exports))[0]
         original = self.root / 'original.m4a'; original.write_bytes(b'keep')
         exported_summary = self.exports / '회의_요약.md'; exported_summary.write_text('keep')
-        profile = self.data / 'voice-profiles' / 'profile.json'; profile.parent.mkdir(); profile.write_text('keep')
+        profile = self.data / 'unrelated-settings' / 'settings.json'; profile.parent.mkdir(); profile.write_text('keep')
         deleted = self.cleaner.remove(self.transcript, trash_transcript=True, now=100)
         cleaner = self.make_cleaner()
         self.assertEqual(cleaner.sweep(now=100 + RETENTION_SECONDS - 1)['purged'], [])

@@ -28,6 +28,23 @@ class TextConflict(ValueError):
     pass
 
 
+def edit_segment_texts(note: dict, submitted: list[dict]) -> list[dict]:
+    base = note['segments']
+    if len(base) != len(submitted):
+        raise ValueError('발화 구간의 개수는 변경할 수 없습니다.')
+    by_id = {row.get('id'): row for row in submitted}
+    if len(by_id) != len(base) or set(by_id) != {row['id'] for row in base}:
+        raise ValueError('발화 ID는 변경할 수 없습니다.')
+    result = []
+    for row in base:
+        text = by_id[row['id']].get('text')
+        if not isinstance(text, str) or '\0' in text or len(text) > 32 * 1024**2:
+            raise ValueError('발언 내용을 확인해 주세요.')
+        # Timings, identities and raw ASR are never accepted from the editor.
+        result.append({**row, 'text':text.strip()})
+    return result
+
+
 def digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
@@ -125,6 +142,6 @@ def save_text(store, note_id: str, directory: str = "", changes: dict | None = N
         note = store.get(note_id)
         changes = dict(changes or {})
         if "speaker_names" in changes or "speaker_merges" in changes:
-            changes.update(speaker_changes(note, changes.get("speaker_names", {}), changes.get("speaker_merges")))
+            changes.update(speaker_changes({**note,'segments':changes.get('segments',note['segments'])}, changes.get("speaker_names", {}), changes.get("speaker_merges")))
         metadata = write_text({**note, **changes}, directory, reuse_existing=reuse_existing)
         return store.update(note_id, **changes, **metadata, text_save_error=None)

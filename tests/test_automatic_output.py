@@ -20,6 +20,8 @@ class AutomaticOutputTests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
+        self.downloads = self.root / 'Downloads'
+        self.enterContext(patch('src.job_artifacts.DEFAULT_DOWNLOADS', self.downloads))
         self.store = NoteStore(self.root / 'data/notes.sqlite3')
         for key, value in {'STORE': self.store, 'DEVICES': DeviceStore(self.root / 'devices.sqlite3'),
                            'UPLOAD_DIR': self.root / 'data/uploads', 'QUEUE': asyncio.Queue()}.items():
@@ -53,14 +55,14 @@ class AutomaticOutputTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(inference.await_count, 1, self.store.get(note_id).get('error'))
         return self.store.get(note_id)
 
-    async def test_selected_format_and_directory_are_saved_on_completion_and_edits_use_same_file(self):
+    async def test_selected_format_is_saved_in_downloads_and_edits_use_same_file(self):
         for format_name in ('txt', 'srt', 'vtt'):
             with self.subTest(format=format_name):
-                folder = self.root / format_name
-                folder.mkdir()
+                folder = self.downloads
+                folder.mkdir(exist_ok=True)
                 original = folder / f'회의.{format_name}'
                 original.write_text('이전 파일은 보존합니다.')
-                response = await self.create(format_name, folder)
+                response = await self.create(format_name, self.root / 'old-preference')
                 self.assertEqual(response.status_code, 202, response.text)
                 note = await self.run_inference(response.json()['id'])
                 self.assertEqual(note['status'], 'done', note.get('error'))
@@ -76,12 +78,12 @@ class AutomaticOutputTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual(response.json()['text_path'], str(result))
                 self.assertIn('민수', result.read_text())
-                self.assertEqual(len(list(folder.iterdir())), 2)
+                self.assertEqual(len(list(folder.glob(f'*.{format_name}'))), 2)
 
     async def test_failed_save_keeps_completed_transcript_and_retry_does_not_repeat_inference(self):
         response = await self.create('srt')
         note_id = response.json()['id']
-        with patch.object(self.main, 'write_text', side_effect=PermissionError('쓰기 권한 없음')):
+        with patch('src.job_artifacts.write_text', side_effect=PermissionError('쓰기 권한 없음')):
             note = await self.run_inference(note_id)
         self.assertEqual(note['status'], 'done')
         self.assertEqual(len(note['segments']), 1)

@@ -4,7 +4,6 @@ from __future__ import annotations
 import dataclasses
 import gc
 import json
-import math
 import os
 from pathlib import Path
 import signal
@@ -14,7 +13,7 @@ import sys
 import time
 import wave
 
-from speech_engines import MODELS, moss_segments
+from speech_engines import MODELS, balanced_moss_ranges, transcribe_moss_balanced, transcribe_qwen_adaptively
 
 
 def emit(**event):
@@ -67,8 +66,8 @@ def prepare(request):
 def moss(request):
     import httpx
     duration = request['duration']
-    if duration > 90 * 60:
-        raise ValueError('MOSS 전체 입력은 90분 이하 녹음을 지원합니다. 녹음을 나누어 주세요.')
+    if duration > 90 * 60 and not request.get('allow_moss_split'):
+        raise ValueError('90분을 넘는 MOSS 녹음은 균등 분할 확인이 필요합니다.')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -92,22 +91,42 @@ def moss(request):
                         pass
                     time.sleep(1)
             ready = time.monotonic()
-            emit(phase='transcribing', engine='moss-sglang', chunk_count=1)
-            data = dict(model=request['paths']['moss'], response_format='verbose_json', temperature='0', repetition_penalty='1')
-            if request.get('prompt'):
-                data['prompt'] = request['prompt']
-            with httpx.Client(timeout=3600) as client, open(request['audio'], 'rb') as audio:
-                response = client.post(f'http://127.0.0.1:{port}/v1/audio/transcriptions', data=data,
-                    files={'file': ('audio.wav', audio, 'audio/wav')})
-                response.raise_for_status()
-                value = response.json()
-            usage = value.get('usage') or {}
-            maximum = max(512, math.ceil(duration * 10))
-            if usage.get('completion_tokens', 0) >= maximum:
-                raise RuntimeError('MOSS 출력 한도에 도달했습니다. 잘린 전사를 완료로 저장하지 않았습니다.')
-            text = value.get('text', '')
-            result = dict(items=moss_segments(text, duration), chunks=[dict(offset=0, text=text)],
-                text=text, response=value, load_seconds=ready-started, inference_seconds=time.monotonic()-ready)
+            def infer(offset, end, maximum):
+                data = dict(model=request['paths']['moss'], response_format='verbose_json', temperature='0',
+                            repetition_penalty='1', max_new_tokens=str(maximum))
+                if request.get('prompt'):
+                    data['prompt'] = request['prompt']
+                audio_path = Path(request['audio'])
+                cropped = offset > 0 or end < duration
+                if cropped:
+                    audio_path = Path(request['output']).with_suffix('.remaining.wav')
+                    with wave.open(request['audio'], 'rb') as source, wave.open(str(audio_path), 'wb') as tail:
+                        tail.setparams(source.getparams())
+                        first = min(source.getnframes(), round(offset*source.getframerate()))
+                        remaining = min(source.getnframes(), round(end*source.getframerate())) - first
+                        source.setpos(first)
+                        while remaining:
+                            block = source.readframes(min(remaining, 16000*30))
+                            if not block:
+                                raise ValueError('MOSS 입력 음성 구간이 불완전합니다.')
+                            tail.writeframes(block)
+                            remaining -= len(block) // (source.getnchannels()*source.getsampwidth())
+                try:
+                    with httpx.Client(timeout=3600) as client, audio_path.open('rb') as audio:
+                        response = client.post(f'http://127.0.0.1:{port}/v1/audio/transcriptions', data=data,
+                            files={'file': ('audio.wav', audio, 'audio/wav')})
+                        response.raise_for_status()
+                        return response.json()
+                finally:
+                    if cropped:
+                        audio_path.unlink(missing_ok=True)
+            items, chunks = transcribe_moss_balanced(duration, infer,
+                lambda **event: emit(phase='transcribing', engine='moss-sglang', **event),
+                allow_split=request.get('allow_moss_split', False),
+                start_offset=request.get('start_offset', 0), end_offset=request.get('end_offset'))
+            result = dict(items=items, chunks=chunks, text='\n'.join(c['text'] for c in chunks),
+                partition_count=len(balanced_moss_ranges(duration)),
+                load_seconds=ready-started, inference_seconds=time.monotonic()-ready)
             save(request['output'], result)
         finally:
             child.terminate()
@@ -146,8 +165,12 @@ def qwen(request):
     def capture(*args, **kwargs):
         kwargs.update(do_sample=False, repetition_penalty=1.)
         value = original(*args, **kwargs)
-        eos = wrapper.model.generation_config.eos_token_id
+        eos = kwargs.get('eos_token_id', wrapper.model.generation_config.eos_token_id)
+        if eos is None:
+            eos = wrapper.processor.tokenizer.eos_token_id
         eos = [eos] if isinstance(eos, int) else eos
+        if not eos:
+            raise RuntimeError('Qwen 출력 종료 토큰을 확인하지 못했습니다.')
         for row in value.sequences[:, kwargs['input_ids'].shape[1]:]:
             ids = row.cpu().tolist()
             stop = next((i+1 for i, token in enumerate(ids) if token in eos), len(ids))
@@ -158,27 +181,21 @@ def qwen(request):
     wrapper.model.generate = capture
     torch.cuda.synchronize()
     ready = time.monotonic()
-    chunks = []
-    for begin in range(0, len(parts), request['batch']):
-        selected = parts[begin:begin+request['batch']]
-        emit(phase='transcribing', engine='qwen', chunk_count=len(parts), completed=begin)
+    def infer(selected):
+        raw_chunks.clear()
         hint = request.get('hotwords') or ''
         with torch.inference_mode():
             raw = wrapper._infer_asr([hint]*len(selected), [a for a, _ in selected],
                                      [language]*len(selected))
-        for (array, offset), text, audit in zip(selected, raw, raw_chunks[begin:]):
-            if audit['finish_reason'] != 'stop':
-                raise RuntimeError('Qwen 출력 한도에 도달했습니다. 잘린 전사를 완료로 저장하지 않았습니다.')
-            from collections import Counter
-            ids = audit['token_ids']
-            if len(ids) > 320 and max(Counter(tuple(ids[i:i+64]) for i in range(len(ids)-63)).values(), default=0) >= 5:
-                raise RuntimeError('Qwen의 긴 반복 생성을 감지했습니다. 다른 전사 방식으로 다시 시도해 주세요.')
-            detected_language, text = parse_asr_output(text, user_language=language)
-            chunks.append(dict(offset=float(offset), end=float(offset+len(array)/16000),
-                               text=text, language=detected_language, **audit))
+        if len(raw) != len(selected) or len(raw_chunks) != len(selected):
+            raise RuntimeError('Qwen 구간별 출력 검증 정보가 일치하지 않습니다.')
+        return list(zip(raw, raw_chunks))
+    chunks, retries = transcribe_qwen_adaptively(parts, infer,
+        lambda text: parse_asr_output(text, user_language=language),
+        lambda **event: emit(phase='transcribing', engine='qwen', **event), batch=request['batch'])
     torch.cuda.synchronize()
     save(request['output'], dict(chunks=chunks, text='\n'.join(c['text'] for c in chunks),
-        load_seconds=ready-started, inference_seconds=time.monotonic()-ready))
+        adaptive_retries=retries, load_seconds=ready-started, inference_seconds=time.monotonic()-ready))
 
 
 def align(request):

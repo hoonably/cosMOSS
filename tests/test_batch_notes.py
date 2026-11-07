@@ -24,6 +24,7 @@ class BatchNotesTests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='cosmoss-batch-notes-')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
+        self.enterContext(patch('src.job_artifacts.DEFAULT_DOWNLOADS', self.root / 'Downloads'))
         with patch.dict(os.environ, {'MOSS_DATA_DIR': str(self.root / 'data')}):
             from src import main
         self.main = main
@@ -113,7 +114,7 @@ class BatchNotesTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(note['status'], 'queued')
             self.assertEqual(note['output_format'], 'vtt')
             self.assertEqual(note['hotwords'], 'AI, Nemotron')
-            self.assertEqual(note['output_directory'], str(self.root / 'exports'))
+            self.assertEqual(note['output_directory'], str(self.root / 'Downloads'))
             with self.assertRaises(KeyError):
                 self.store.get_upload(identity)
         self.assertIsNone(self.main.BATCH_SUBMISSION.get())

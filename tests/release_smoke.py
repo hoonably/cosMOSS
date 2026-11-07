@@ -32,7 +32,8 @@ def main():
     assert metadata['SUEnableAutomaticChecks']
     assert not metadata['SUAutomaticallyUpdate']
     assert metadata['NSMicrophoneUsageDescription']
-    assert metadata['UTExportedTypeDeclarations'][0]['UTTypeTagSpecification']['public.filename-extension'] == ['mossvoice']
+    assert 'UTExportedTypeDeclarations' not in metadata
+    assert 'NSMicrophoneUsageDescription' not in metadata
     assert (resources / 'app/static/voices.js').is_file()
     assert (resources / 'app/src/voice_embedding_worker.py').is_file()
     assert metadata['CFBundleIconFile'] == 'AppIcon.icns'

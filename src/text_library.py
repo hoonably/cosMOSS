@@ -13,8 +13,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from src.text_files import TextConflict, digest, speaker_changes
-from src.subtitles import subtitle_fields, rename_subtitle_speakers
+from src.text_files import TextConflict, digest, speaker_changes, edit_segment_texts
+from src.subtitles import subtitle_fields, rename_subtitle_speakers, edit_subtitle_text
 
 SUPPORTED_FORMATS = {"txt", "srt", "vtt"}
 
@@ -164,7 +164,7 @@ class TextLibrary:
     def update(self, note_id, changes, expected_hash):
         if not expected_hash:
             raise TextConflict("파일을 다시 열어 최신 내용을 확인한 뒤 저장해 주세요.")
-        if set(changes) - {"text_body", "speaker_names", "speaker_merges"}:
+        if set(changes) - {"text_body", "speaker_names", "speaker_merges", "segments"}:
             raise ValueError("전사 파일 이름은 Finder에서 변경해 주세요.")
         with self.lock:
             note = self.get(note_id)
@@ -173,6 +173,23 @@ class TextLibrary:
             if digest(current) != expected_hash:
                 raise TextConflict("파일이 다른 앱에서 수정되었습니다. 원문을 덮어쓰지 않았습니다. 변경 내용을 확인해 주세요.")
             text, encoding, prefix = decode_text(current)
+            if 'segments' in changes:
+                if 'text_body' in changes:
+                    raise ValueError('본문 전체와 개별 발언은 동시에 수정할 수 없습니다.')
+                segments = edit_segment_texts(note,changes['segments'])
+                if note['output_format'] == 'txt':
+                    headers = list(HEADER.finditer(text))
+                    for index in reversed(range(len(segments))):
+                        if segments[index]['text'] == note['segments'][index]['text']:
+                            continue
+                        start = headers[index].end()
+                        end = headers[index+1].start() if index+1 < len(headers) else len(text)
+                        body = text[start:end]
+                        leading = body[:len(body)-len(body.lstrip())]
+                        trailing = body[len(body.rstrip()):]
+                        text = text[:start]+leading+segments[index]['text']+trailing+text[end:]
+                else:
+                    text = edit_subtitle_text(text,note['output_format'],segments)
             if "text_body" in changes:
                 text = changes["text_body"]
             if "speaker_names" in changes or "speaker_merges" in changes:

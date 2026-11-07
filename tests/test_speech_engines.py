@@ -35,14 +35,16 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(stages('moss-qwen-sequential'), [('moss','sglang'),('qwen','qwen'),('nemotron','nemotron')])
         self.assertEqual(stages('qwen-transformers'), [('qwen','qwen'),('aligner','qwen'),('nemotron','nemotron')])
 
-    def test_full_context_never_becomes_independent_chunks_and_memory_is_not_summed(self):
+    def test_full_context_up_to_90_minutes_and_balanced_long_plans(self):
         moss=estimate_pipeline('moss-sglang',3937.13,GPU,24)
         dual=estimate_pipeline('moss-qwen-sequential',3937.13,GPU)
         self.assertEqual((moss['chunk_count'],moss['batch']),(1,1))
         self.assertEqual(dual['chunk_count'],1)
         self.assertEqual(dual['batch'],4)
         self.assertLess(dual['memory_expected_gib'],45)
-        with self.assertRaises(ValueError): estimate_pipeline('moss-sglang',5401,GPU)
+        long = estimate_pipeline('moss-sglang',6000,GPU)
+        self.assertEqual((long['chunk_count'],long['chunk_seconds']),(2,3000))
+        self.assertTrue(long['calibration_extrapolated'])
         self.assertGreater(estimate_pipeline('qwen-transformers',5401,GPU)['chunk_count'],1)
         self.assertTrue(estimate_pipeline('moss-sglang',100,{**GPU,'memory_total_mib':24576})['exceeds_capacity'])
 
@@ -62,6 +64,11 @@ class PlanningTests(unittest.TestCase):
 
 
 class EngineAPITests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.enterContext(patch('src.job_artifacts.DEFAULT_DOWNLOADS', Path(temporary.name) / 'Downloads'))
+
     async def test_download_endpoint_starts_real_background_task_on_event_loop(self):
         from src import main
         with tempfile.TemporaryDirectory() as folder:
@@ -164,12 +171,16 @@ class EngineAPITests(unittest.IsolatedAsyncioTestCase):
             async def execute(host,key,action,on_event,**kwargs):
                 if action=='inspect': return {'phase':'installed'}
                 on_event({'phase':'loading','engine':'moss'})
-                on_event({'phase':'transcribing'})
+                self.assertFalse(store.get(identity)['model_progress']['continuing'])
+                on_event({'phase':'loading','engine':'moss','resume_offset':30})
+                self.assertTrue(store.get(identity)['model_progress']['continuing'])
+                on_event({'phase':'transcribing','resume_offset':30})
+                self.assertTrue(store.get(identity)['model_progress']['continuing'])
                 on_event({'phase':'loading','engine':'qwen'})
+                self.assertFalse(store.get(identity)['model_progress']['continuing'])
                 return dict(phase='done',result=result)
             with patch.object(main,'STORE',store),patch.object(main.SPEECH,'execute',side_effect=execute), \
-                 patch.object(main.SPEECH,'observations',return_value=[]),patch.object(main.SPEECH,'record'), \
-                 patch.object(main.VOICE_PROFILES,'settings',return_value={'enabled':False}):
+                 patch.object(main.SPEECH,'observations',return_value=[]),patch.object(main.SPEECH,'record'):
                 await main.transcribe_fast(note,device,0)
                 self.assertEqual(store.get(identity)['segments'],segments)
                 self.assertNotIn('Qwen 별도 대본',json.dumps(store.get(identity)['pipeline_result'],ensure_ascii=False))

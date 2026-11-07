@@ -131,6 +131,7 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="cosmoss-devices-")
         self.addCleanup(self.temporary.cleanup)
         root = Path(self.temporary.name)
+        self.enterContext(patch('src.job_artifacts.DEFAULT_DOWNLOADS', root / 'Downloads'))
         with patch.dict(os.environ, {"MOSS_DATA_DIR": str(root)}):
             from src import main
         self.main = main
@@ -239,6 +240,37 @@ class DeviceAPITests(unittest.IsolatedAsyncioTestCase):
             response=await self.client.post(f"/api/devices/{device['id']}/speech-setup",json={'pipeline':'qwen-batch'})
             self.assertEqual(response.status_code,202,response.text)
             install.assert_called_once_with('gpu-a','qwen-batch')
+
+    async def test_server_model_selection_preserves_running_and_queued_snapshots_and_worker(self):
+        device = await self.add()
+        notes = []
+        for status in ('processing', 'queued'):
+            response = await self.client.post('/api/notes', data={'device_id': device['id'], 'gpu_uuid': GPU_UUID},
+                                              files={'file': ('voice.wav', b'audio', 'audio/wav')})
+            self.assertEqual(response.status_code, 202, response.text)
+            notes.append(self.store.update(response.json()['id'], status=status))
+        snapshots = [note['device_snapshot_json'] for note in notes]
+        worker = {'phase': 'ready', 'action': 'prepare', 'active_gpu_uuid': GPU_UUID, 'worker_cleanup_pending': True}
+        self.workers.states[device['id']] = worker
+        release = asyncio.Event()
+        task = asyncio.create_task(release.wait())
+        self.workers.tasks[device['id']] = task
+        try:
+            with patch.dict(self.main.SPEECH.tasks, {('gpu-a', 'moss-sglang'): task}):
+                response = await self.client.post(f"/api/devices/{device['id']}/model/selection",
+                                                  json={'pipeline': 'qwen-transformers'})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(self.devices.get(device['id'])['options']['speech_pipeline'], 'qwen-transformers')
+            for note, snapshot in zip(notes, snapshots):
+                saved = self.store.get(note['id'])
+                self.assertEqual(saved['device_snapshot_json'], snapshot)
+                self.assertEqual(saved['status'], note['status'])
+            self.assertIs(self.workers.states[device['id']], worker)
+            self.assertFalse(task.done())
+            self.worker_run.assert_not_awaited()
+        finally:
+            release.set()
+            await task
 
     async def test_no_model_selected_rejects_note_without_consuming_upload(self):
         device=await self.add(select_model=False)

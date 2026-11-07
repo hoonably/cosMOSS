@@ -13,9 +13,9 @@ BUILD_DIR="${COSMOSS_RELEASE_BUILD_DIR:-$PROJECT_DIR/dist/release}"
 APP_DIR="$BUILD_DIR/cosMOSS.app"
 RESOURCES="$APP_DIR/Contents/Resources"
 mkdir -p "$BUILD_DIR"
-# Local development identities are not distribution certificates. Public builds
-# retain the existing ad-hoc policy unless an explicit release identity is set.
-RELEASE_IDENTITY="${COSMOSS_RELEASE_CODESIGN_IDENTITY:--}"
+# Local and public builds use the same pinned certificate. Missing decryption
+# credentials stop signing instead of silently reverting to an ad-hoc identity.
+RELEASE_IDENTITY="${COSMOSS_RELEASE_CODESIGN_IDENTITY:-auto}"
 COSMOSS_APP_DIR="$APP_DIR" COSMOSS_CODESIGN_IDENTITY="$RELEASE_IDENTITY" "$PROJECT_DIR/scripts/build-mac-app.sh"
 "$PROJECT_DIR/.venv/bin/python" - "$PROJECT_DIR" "$APP_DIR" <<'PY'
 import plistlib
@@ -52,6 +52,7 @@ PY
 # Sign embedded code first, then seal the bundle. Notarization is separate.
 "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/sign-mac-app.py" "$APP_DIR" \
   --identity "$RELEASE_IDENTITY" --embedded
+"$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/setup-code-signing.py" --verify-app "$APP_DIR"
 echo "배포용 앱: $APP_DIR"
 # Local installation needs the standalone app, without producing release archives.
 if [[ "${COSMOSS_PACKAGE_ONLY:-0}" != 1 ]]; then

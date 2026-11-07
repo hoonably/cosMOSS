@@ -456,7 +456,7 @@ struct WorkspaceView: NSViewRepresentable {
         func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                       suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
             let panel = NSSavePanel()
-            if ["txt", "srt", "vtt", "md", "mossvoice"].contains((suggestedFilename as NSString).pathExtension.lowercased()) {
+            if ["txt", "srt", "vtt", "md"].contains((suggestedFilename as NSString).pathExtension.lowercased()) {
                 panel.directoryURL = textSaveDirectory
             }
             panel.nameFieldStringValue = suggestedFilename
@@ -483,20 +483,14 @@ struct WorkspaceView: NSViewRepresentable {
             panel.canChooseDirectories = false
             panel.canChooseFiles = true
             panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-            panel.allowedContentTypes = [.audio, .movie, UTType(exportedAs: "io.github.hoonably.cosmoss.voiceprofile", conformingTo: .json)]
+            panel.allowedContentTypes = [.audio, .movie]
             panel.begin { result in completionHandler(result == .OK ? panel.urls : nil) }
         }
 
         func webView(_ webView: WKWebView, requestMediaCapturePermissionFor securityOrigin: WKSecurityOrigin,
                      initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                      decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-            guard frame.isMainFrame, securityOrigin.protocol == origin.scheme,
-                  securityOrigin.host == origin.host, securityOrigin.port == origin.port,
-                  type == .microphone else {
-                decisionHandler(.deny)
-                return
-            }
-            decisionHandler(.prompt)
+            decisionHandler(.deny)
         }
     }
 }

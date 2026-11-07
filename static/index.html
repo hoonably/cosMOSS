@@ -136,7 +136,7 @@
     </dialog>
     <dialog class="trash-dialog" id="trash-dialog" aria-labelledby="trash-title">
       <div class="dialog-head"><div><p class="eyebrow">RECENTLY DELETED</p><h2 id="trash-title" tabindex="-1">최근 삭제</h2></div><button class="dialog-close" id="close-trash" type="button" aria-label="최근 삭제 닫기">×</button></div>
-      <p class="trash-description">삭제한 노트의 앱 기록과 보관된 녹음은 7일 동안 복구할 수 있어요. 기간이 지나면 앱에서 영구 삭제됩니다.</p>
+      <p class="trash-description">삭제한 노트 기록은 7일 동안 복구할 수 있어요. 기간이 지나면 앱에서 영구 삭제됩니다.</p>
       <p class="trash-description">파일은 macOS 휴지통으로 이동합니다. Finder에서 복원해도 보관 기간 안에는 앱 기록과 다시 연결됩니다.</p>
       <p id="trash-status" class="trash-status" role="status"></p>
       <div class="trash-list" id="trash-list"></div>
@@ -202,7 +202,7 @@
 
             <div class="chunk-notice hidden" id="chunk-notice"></div>
             <div class="speech-result hidden" id="speech-result" role="status"></div>
-            <details id="auxiliary-transcript" class="speech-comparison hidden"><summary>Qwen 보조 대본 비교</summary><p>약20분씩 별도로 전사한 대본입니다. 본문은 MOSS 결과를 유지하며, 이 대본에는 단어별 시간과 화자 정보가 없습니다.</p><a id="download-auxiliary-transcript" class="inline-link" download>보조 대본 TXT 다운로드</a><pre id="auxiliary-transcript-text" style="white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details>
+            <details id="auxiliary-transcript" class="speech-comparison hidden"><summary>Qwen 보조 대본 비교</summary><p>본문은 MOSS 결과이며, Qwen 비교용 대본도 다운로드 폴더에 TXT로 함께 저장됩니다. 비교용 대본에는 단어별 시간과 화자 정보가 없습니다.</p><a id="download-auxiliary-transcript" class="inline-link" download>Qwen 보조 대본 TXT</a><pre id="auxiliary-transcript-text" style="white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details>
             <div class="speaker-panel" id="speaker-panel"></div>
             <div class="segments" id="segments"></div>
             <p class="transcript-empty hidden" id="transcript-empty" role="status"></p>
@@ -213,22 +213,11 @@
 
     <dialog class="speaker-dialog" id="speaker-dialog" aria-labelledby="speaker-dialog-title">
       <div class="dialog-head"><div><p class="eyebrow">목소리에 이름 붙이기</p><h2 id="speaker-dialog-title">화자 설정</h2></div><button class="dialog-close" id="close-speakers" type="button" aria-label="화자 설정 닫기">×</button></div>
-      <div class="speaker-dialog-tools"><p class="speaker-dialog-help">화자 카드에서 이름을 바로 수정할 수 있습니다. 선택한 화자의 발화는 초록색으로 표시됩니다.</p><button class="ghost-button" id="identify-voice-speakers" type="button">목소리 비교·추천</button><button class="ghost-button" data-open-voice-profiles type="button">목소리 프로필</button></div>
-      <p class="speaker-voice-status hidden" id="speaker-voice-status" role="status"></p>
+      <div class="speaker-dialog-tools"><p class="speaker-dialog-help">한 번 클릭하면 발화를 선택하고, 더블클릭하면 내용을 수정합니다. 화자 이름도 더블클릭하면 수정할 수 있습니다.</p></div>
       <div class="speaker-dialog-body"><aside class="speaker-picker"><div id="speaker-choices" aria-label="화자 선택" aria-describedby="speaker-merge-help"></div><p class="speaker-merge-help" id="speaker-merge-help">드래그로 화자를 병합할 수 있습니다.</p></aside><div class="speaker-preview" id="speaker-preview" tabindex="0" aria-label="화자별 발화 확인" aria-describedby="speaker-navigation-help" aria-keyshortcuts="ArrowUp ArrowDown Space"></div></div>
       <audio id="speaker-preview-player" preload="none" hidden></audio>
       <p class="speaker-save-error hidden" id="speaker-save-error" role="alert"></p>
       <div class="speaker-dialog-footer"><span><span id="speaker-navigation-help" role="status" aria-live="polite">↑·↓로 선택한 화자의 발화 이동</span><br>저장하면 노트와 파일에 반영됩니다.</span><button class="ghost-button" id="cancel-speakers" type="button">취소</button><button class="primary-action" id="save-speakers" type="button">저장</button></div>
-    </dialog>
-
-    <dialog class="voice-review-dialog" id="voice-review-dialog" aria-labelledby="voice-review-title" aria-describedby="voice-review-help">
-      <div class="dialog-head"><div><p class="eyebrow">목소리 비교 결과</p><h2 id="voice-review-title" tabindex="-1">추천 검토</h2></div><button class="dialog-close" id="close-voice-review" type="button" aria-label="목소리 추천 검토 닫기">×</button></div>
-      <p class="voice-review-help" id="voice-review-help">샘플을 듣고 승인할 추천만 선택하세요. 선택하지 않은 이름과 화자 구분은 유지됩니다.</p>
-      <div class="voice-review-summary" aria-live="polite"><div><small>변경 전</small><strong id="voice-review-before-count"></strong><p id="voice-review-before"></p></div><div><small>선택 승인 후</small><strong id="voice-review-after-count"></strong><p id="voice-review-after"></p></div></div>
-      <div id="voice-review-results"></div>
-      <div class="voice-review-audio hidden" id="voice-review-audio"><span id="voice-review-audio-label"></span><audio id="voice-review-player" controls preload="none"></audio></div>
-      <p class="voice-review-help">일치도는 목소리 유사도 점수이며 신원 확인 확률이 아닙니다. 승인한 내용도 화자 설정에서 저장해야 노트와 파일에 반영됩니다.</p>
-      <div class="voice-review-footer"><button class="ghost-button" id="refresh-voice-review" type="button">다시 비교</button><button class="ghost-button" id="cancel-voice-review" type="button">취소</button><button class="primary-action" id="approve-voice-review" type="button" disabled>선택한 추천 승인</button></div>
     </dialog>
 
     <dialog class="confirmation-dialog speaker-merge-dialog" id="speaker-merge-dialog" aria-labelledby="speaker-merge-title" aria-describedby="speaker-merge-question speaker-merge-detail">
@@ -267,11 +256,12 @@
                 <small id="voice-memo-copy">녹음을 골라 가져오기</small>
               </button>
             </div>
-            <p class="upload-limit" id="upload-limit">긴 녹음은 자동 분할</p>
+            <p class="upload-limit" id="upload-limit">결과는 다운로드 폴더에 저장 · 임시 녹음은 작업 후 삭제</p>
             <section class="upload-batch hidden" id="upload-batch" aria-label="선택한 녹음">
-              <div class="upload-batch-heading"><strong id="upload-batch-count"></strong><span>같은 장치에서 하나씩 전사합니다.</span></div>
+              <div class="upload-batch-heading"><strong id="upload-batch-count"></strong><label class="upload-join-option"><input id="join-recordings" type="checkbox">하나로 이어붙여 전사</label></div>
               <div class="upload-batch-list" id="upload-batch-list"></div>
               <p id="upload-batch-help">선택한 파일 중 가장 긴 녹음을 기준으로 예상값을 표시합니다.</p>
+              <p class="sr-only" id="upload-order-status" role="status" aria-live="polite"></p>
             </section>
             <div class="upload-preparation hidden" id="upload-preparation" role="status" aria-live="polite">
               <strong id="upload-duration">음성 길이 확인 중…</strong>
@@ -287,6 +277,7 @@
               <label class="field speech-model-field"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="speech-pipeline" name="speech_pipeline" aria-describedby="speech-description"><option value="moss-sglang" data-badge="추천">MOSS 0.9B · SGLang Omni</option><option value="qwen-transformers" data-badge="빠른 전사">Qwen3-ASR 1.7B · Transformers</option><option value="moss-qwen-sequential" data-badge="보조 대본 비교">MOSS 0.9B + Qwen3-ASR 1.7B</option></select></label>
               <label class="field speech-model-field hidden"><span>전사 모델 <small>이번 전사에만 적용</small></span><select id="upload-local-model" name="local_model_key" aria-describedby="speech-description local-model-caution"></select></label>
               <p id="speech-description" class="speech-description"></p>
+              <p id="speech-length-notice" class="speech-description hidden" role="status">긴 녹음은 출력 한도에 닿을 수 있습니다. 끊기면 남은 음성을 자동으로 전사해 이어붙이며, 추가 처리로 예상보다 오래 걸릴 수 있습니다.</p>
               <p id="local-model-caution" class="speech-description model-risk-copy hidden" role="note"></p>
               <div id="upload-model-setup" class="speech-setup hidden" role="status"><span id="upload-model-status"></span><button type="button" class="inline-link" id="prepare-upload-model">모델 다운로드</button></div>
               <div id="upload-model-auth" class="speech-auth hidden"><p id="upload-model-auth-help"></p><a id="upload-model-auth-link" class="hidden" target="_blank" rel="noopener noreferrer">Hugging Face 모델 페이지 ↗</a></div>
@@ -323,6 +314,15 @@
       <div class="gpu-warning-processes" id="gpu-warning-processes"></div>
       <p id="gpu-warning-risk">기존 작업과 GPU를 함께 사용하므로 메모리 부족이나 처리 지연이 발생할 수 있습니다. 기존 프로세스를 종료하지 않습니다. 그래도 사용하시겠습니까?</p>
       <div class="confirmation-dialog-actions"><button class="ghost-button" id="cancel-gpu-warning" type="button">취소</button><button class="confirm-danger" id="confirm-gpu-warning" type="button">그래도 사용</button></div>
+    </dialog>
+
+    <dialog class="confirmation-dialog moss-split-dialog" id="moss-split-dialog" aria-labelledby="moss-split-title" aria-describedby="moss-split-description">
+      <button class="dialog-close" id="close-moss-split" type="button" aria-label="녹음 분할 확인 닫기">×</button>
+      <h2 id="moss-split-title">녹음을 나누어 전사할까요?</h2>
+      <p id="moss-split-description">MOSS는 한 번에 최대 90분을 처리합니다. 필요한 최소 개수로 같은 길이의 구간을 나누겠습니다.</p>
+      <ul id="moss-split-plans" class="moss-split-plans"></ul>
+      <p>구간을 순서대로 전사한 뒤 시간과 화자를 맞춰 결과 하나로 저장합니다.</p>
+      <div class="confirmation-dialog-actions"><button class="ghost-button" id="cancel-moss-split" type="button">취소</button><button class="primary-action" id="confirm-moss-split" type="button">확인하고 전사</button></div>
     </dialog>
 
     <dialog class="voice-memo-dialog" id="voice-memo-dialog" aria-labelledby="voice-memo-title">
@@ -392,29 +392,6 @@
       <div id="app-settings-progress"></div>
       <p class="field-help">전사 모델은 사용할 장치의 <strong>모델 · 설정</strong>에서 준비하세요. 원격 장치만 사용하면 Mac용 모델은 필요하지 않습니다.</p>
       <div class="environment-actions"><button class="ghost-button" id="check-app-settings" type="button">상태 확인</button><button class="primary-action" id="prepare-app-settings" type="button">준비하기</button></div>
-      <button class="voice-profile-entry" data-open-voice-profiles type="button"><span><strong>목소리 프로필</strong><small>5초 목소리 등록 · 이름·병합 추천 · .mossvoice 공유</small></span><span aria-hidden="true">↗</span></button>
-    </dialog>
-
-    <dialog class="voice-profiles-dialog" id="voice-profiles-dialog" aria-labelledby="voice-profiles-title">
-      <div class="dialog-head"><div><p class="eyebrow">VOICE PROFILES</p><h2 id="voice-profiles-title" tabindex="-1">목소리 프로필</h2></div><button class="dialog-close" id="close-voice-profiles" type="button" aria-label="목소리 프로필 닫기">×</button></div>
-      <div class="voice-profile-options"><label><input id="voice-auto-enabled" type="checkbox" checked>전사 후 목소리 추천 준비</label><label class="voice-threshold">추천 기준 <input id="voice-match-threshold" type="number" min="0" max="1" step="0.01" value="0.75" aria-label="목소리 유사도 기준"></label><button class="ghost-button" id="save-voice-options" type="button">적용</button></div>
-      <div class="voice-engine-status"><span id="voice-engine-status" role="status">비교 도구를 확인하고 있습니다…</span><button class="ghost-button" id="prepare-voice-engine" type="button">비교 도구 준비</button></div>
-      <div class="voice-profiles-body">
-        <form id="voice-enroll-form" class="voice-enroll-form">
-          <h3>새 목소리 등록</h3>
-          <label class="field"><span>이름</span><input id="voice-profile-name" maxlength="60" required placeholder="예: 정훈" autocomplete="off"></label>
-          <button class="voice-record-button" id="record-voice-profile" type="button"><span aria-hidden="true">●</span><span>5초 녹음하기</span></button>
-          <p class="field-help">“안녕하세요, ○○입니다.”처럼 말해 주세요.</p>
-          <label class="ghost-button voice-file-picker">녹음 파일에서 선택<input id="voice-enroll-file" type="file" accept="audio/*,video/*" hidden></label>
-          <p class="voice-source-status" id="voice-source-status" role="status">직접 녹음하거나 기존 녹음의 5초 구간을 선택하세요.</p>
-          <audio id="voice-enroll-preview" class="hidden" controls preload="metadata"></audio>
-          <label class="field hidden" id="voice-sample-start-field"><span>시작 위치 <small>초</small></span><input id="voice-sample-start" type="number" min="0" max="86400" step="0.1" value="0"></label>
-          <button class="primary-action" id="save-voice-profile" type="submit" disabled>목소리 등록</button>
-        </form>
-        <section class="voice-profiles-library" aria-label="등록된 목소리"><div class="voice-library-head"><h3>등록된 목소리 <span id="voice-profile-count">0</span></h3><label class="ghost-button voice-file-picker">.mossvoice 불러오기<input id="import-voice-profile" type="file" accept=".mossvoice" hidden></label></div><div id="voice-profile-list"></div><audio id="voice-profile-player" class="hidden" controls preload="none"></audio></section>
-      </div>
-      <p class="voice-profile-notice">프로필 파일에는 이름과 목소리 샘플이 포함됩니다. 비교는 이 Mac에서 처리하며, 유사도는 신원 확인 확률이 아닙니다.</p>
-      <p class="voice-profile-message hidden" id="voice-profile-message" role="status" aria-live="polite"></p>
     </dialog>
 
     <dialog class="device-dialog environment-dialog" id="environment-dialog" aria-labelledby="environment-title">
@@ -460,7 +437,7 @@
         <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" /><circle cx="12" cy="12" r="9" /></svg>
       </div>
       <h2 id="cancel-dialog-title">정말 취소하시겠습니까?</h2>
-      <p id="cancel-dialog-description">진행 중인 전사 작업을 중단합니다.<br />녹음 파일은 보관되며, 나중에 처음부터 다시 전사할 수 있습니다.</p>
+      <p id="cancel-dialog-description">진행 중인 전사 작업을 중단하고 임시 녹음 사본을 삭제합니다.<br />다시 전사하려면 원본 녹음을 다시 선택해 주세요.</p>
       <div class="confirmation-dialog-note"><span>노트</span><strong id="cancel-dialog-note-title"></strong></div>
       <div class="confirmation-dialog-actions">
         <button class="ghost-button" id="keep-transcribing" type="button" autofocus>계속 전사</button>
@@ -474,7 +451,7 @@
         <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </div>
       <h2 id="delete-dialog-title">최근 삭제로 옮길까요?</h2>
-      <p id="delete-dialog-description">노트와 보관된 녹음을 최근 삭제로 이동합니다.<br />7일 동안 복구할 수 있습니다.</p>
+      <p id="delete-dialog-description">노트를 최근 삭제로 이동합니다.<br />7일 동안 복구할 수 있습니다.</p>
       <div class="confirmation-dialog-note"><span>노트</span><strong id="delete-dialog-note-title"></strong></div>
       <div class="confirmation-dialog-actions">
         <button class="ghost-button" id="keep-note" type="button" autofocus>돌아가기</button>
@@ -514,13 +491,11 @@
       <button type="button" role="menuitem" data-convert-format="srt"><span class="context-format">SRT</span><span>SRT로 변환</span></button>
       <button type="button" role="menuitem" data-convert-format="vtt"><span class="context-format">VTT</span><span>VTT로 변환</span></button>
       <div class="note-context-separator" role="separator"></div>
-      <button class="danger" id="trash-note-file" type="button" role="menuitem" title="최근 삭제로 이동 · 앱 기록과 보관된 녹음을 7일 동안 복구할 수 있습니다."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg><span>휴지통으로 이동</span></button>
+      <button class="danger" id="trash-note-file" type="button" role="menuitem" title="최근 삭제로 이동 · 노트 기록을 7일 동안 복구할 수 있습니다."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg><span>휴지통으로 이동</span></button>
     </div>
     <div class="toast" id="toast" role="status"></div>
     <script src="/selects.js?v=mac-nemotron-20261024" defer></script>
     <script src="/app.js?v=model-settings-20261025" defer></script>
     <script src="/speech.js?v=model-sizes-20261025" defer></script>
-    <script src="/voice-review.js?v=voice-review-2" defer></script>
-    <script src="/voices.js?v=voice-profiles-1" defer></script>
   </body>
 </html>

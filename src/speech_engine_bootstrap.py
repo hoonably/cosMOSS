@@ -32,7 +32,7 @@ def main():
                            ('worker.py','engine_worker_source'),('runtime_environment.py','runtime_source')]:
             (job/name).write_text(request[field])
         sys.path.insert(0,str(job))
-        from speech_engines import ENGINE_PIPELINES,ENGINE_VERSION,REQUIREMENTS,MODELS,stages,model_keys
+        from speech_engines import ENGINE_PIPELINES,ENGINE_VERSION,REQUIREMENTS,MODELS,stages,model_keys,missing_moss_partition_tail
         from speech_pipeline import attribute_speakers,utterances
         from runtime_environment import ensure_uv
         key,action = request['model_key'],request['action']
@@ -211,20 +211,42 @@ def main():
         environment.update(CUDA_VISIBLE_DEVICES=gpu,HF_HUB_OFFLINE='1')
         results={}
         started=time.monotonic()
-        for stage,env in stages(key):
+        def execute_stage(stage, env, **overrides):
             check()
-            emit(phase='loading',engine=stage)
-            config={k:request.get(k) for k in ('batch','model_key','language','hotwords','prompt')}
+            emit(phase='loading',engine=stage,resume_offset=overrides.get('start_offset',0))
+            config={k:request.get(k) for k in ('batch','model_key','language','hotwords','prompt','allow_moss_split')}
             config.update(stage=stage,paths=paths,audio=str(job/'audio.wav'),duration=duration,output=str(job/(stage+'.json')),
                 qwen_result=str(job/'qwen.json'),asr_peak_bytes=stage_peaks.get('qwen',0)*1024**2)
+            config.update(overrides)
             (job/'request.json').write_text(json.dumps(config))
             stage_env=environment.copy()
             if env=='sglang':
                 toolkit=root/'envs/sglang/cuda-toolkit'
                 stage_env.update(CUDA_HOME=str(toolkit),CUDA_PATH=str(toolkit),PATH=str(toolkit/'bin')+':'+environment['PATH'])
             run([str(root/'envs'/env/'bin/python'),'-u',str(job/'worker.py'),str(job/'request.json')],env=stage_env,stage=stage)
-            results[stage]=json.loads((job/(stage+'.json')).read_text())
+            return json.loads((job/(stage+'.json')).read_text())
+        for stage,env in stages(key):
+            results[stage]=execute_stage(stage,env)
         turns=results['nemotron']['turns']
+        if 'moss' in results:
+            # Natural EOS can also stop early with syntactically valid markup.
+            # Whole-recording diarization provides independent evidence of a
+            # spoken tail, so complete that tail before publishing the note.
+            for _ in range(2*results['moss'].get('partition_count',1)):
+                missing=missing_moss_partition_tail(results['moss']['items'],turns,duration)
+                if missing is None:
+                    break
+                offset,end=missing
+                recovered=execute_stage('moss','sglang',start_offset=offset,end_offset=end)
+                if max((row['end'] for row in recovered['items']),default=offset)<=offset+1:
+                    raise RuntimeError('MOSS가 녹음 뒤쪽 발화를 전사하지 못했습니다. 불완전한 결과를 완료로 저장하지 않았습니다.')
+                results['moss']['items'].extend(recovered['items'])
+                results['moss']['chunks'].extend(recovered['chunks'])
+                for metric in ('load_seconds','inference_seconds'):
+                    results['moss'][metric]+=recovered[metric]
+            results['moss']['items'].sort(key=lambda row:row['start'])
+            if missing_moss_partition_tail(results['moss']['items'],turns,duration) is not None:
+                raise RuntimeError('MOSS 전사에 녹음 뒤쪽 발화가 누락되어 있습니다. 불완전한 결과를 완료로 저장하지 않았습니다.')
         items=results['aligner']['items'] if key=='qwen-transformers' else results['moss']['items']
         attributed=attribute_speakers(items,turns)
         for row in attributed:
@@ -237,12 +259,13 @@ def main():
             pipeline=key,runtime=ENGINE_VERSION,batch=request['batch'],chunk_count=len(chunks),audio_seconds=duration,
             load_seconds=max(0,elapsed-inference_seconds),
             inference_seconds=inference_seconds,total_seconds=elapsed,
-            stage_metrics={name:{k:v for k,v in result.items() if k in {'load_seconds','inference_seconds','batch_history'}} for name,result in results.items()},
+            stage_metrics={name:{k:v for k,v in result.items() if k in {'load_seconds','inference_seconds','batch_history','adaptive_retries'}} for name,result in results.items()},
             peak_process_mib=peak_mib,memory_phases=stage_peaks,gpu_name=gpu_name,capacity_gib=capacity_mib/1024,
             uncertain_segments=sum(bool(r.get('speaker_uncertain')) for r in segments),precision='bf16',
             model_revisions={k:MODELS[k][1] for k in model_keys(key)},schedule='sequential-unload',
             auxiliary_transcript=results['qwen'] if key=='moss-qwen-sequential' else None,
-            has_auxiliary_transcript=key=='moss-qwen-sequential')
+            has_auxiliary_transcript=key=='moss-qwen-sequential',
+            moss_partition_count=results.get('moss',{}).get('partition_count',1))
         emit(phase='done',result=result)
 
 

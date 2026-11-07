@@ -77,8 +77,8 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_same_gpu_runs_fifo_while_other_gpu_starts_without_waiting(self):
         self.add('a')
-        self.add('b')
-        self.add('c', gpu='GPU-bbbb2222')
+        self.add('b', pipeline='qwen-transformers')
+        self.add('c', gpu='GPU-bbbb2222', pipeline='moss-qwen-sequential')
         self.start()
         await self.eventually(lambda: len(self.started) == 2)
         self.assertEqual(self.started, ['a', 'c'])

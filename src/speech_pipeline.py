@@ -8,13 +8,13 @@ import math
 from statistics import median
 
 try:
-    from src.speech_engines import ENGINE_PIPELINES, ENGINE_VERSION
+    from src.speech_engines import ENGINE_PIPELINES, ENGINE_VERSION, balanced_moss_ranges
 except ModuleNotFoundError:
-    from speech_engines import ENGINE_PIPELINES, ENGINE_VERSION
+    from speech_engines import ENGINE_PIPELINES, ENGINE_VERSION, balanced_moss_ranges
 
 PIPELINES = [
     {'key': 'moss-sglang', 'name': 'MOSS 0.9B · SGLang Omni', 'badge': '추천',
-     'description': '전체 녹음의 문맥을 유지해 전사한 뒤 Nemotron 0.1B로 화자를 구분합니다. 최대 90분.',
+     'description': '전체 녹음의 문맥을 유지해 전사한 뒤 Nemotron 0.1B로 화자를 구분합니다. 90분 초과 시 확인 후 최소 개수로 균등 분할합니다.',
      'reference': 'H200 · 65분37초 · 모델 준비 포함 3분19초 · Peak 약24.4 GiB'},
     {'key': 'qwen-transformers', 'name': 'Qwen3-ASR 1.7B · Transformers', 'badge': '빠른 전사',
      'description': '공식 SDK로 약 3분씩 전사한 뒤 시간 정렬과 Nemotron 0.1B를 순서대로 실행합니다.',
@@ -115,7 +115,14 @@ def estimate_engine(key, duration, gpu, batch, observations):
     # Prediction runs on the client. Remote stage catalogs use only attribution.
     from src.duration_estimates import server_estimate
     if key != 'qwen-transformers' and duration > 5400:
-        raise ValueError('MOSS 전체 입력은 90분 이하 녹음을 지원합니다. 녹음을 나누어 주세요.')
+        ranges = balanced_moss_ranges(duration)
+        part = estimate_engine(key, duration/len(ranges), gpu, batch,
+                               [r for r in observations if r.get('audio_seconds',0) <= 5400])
+        return {**part, 'chunk_count':len(ranges), 'chunk_seconds':duration/len(ranges),
+                'time_seconds':part['time_seconds']*len(ranges) if part['time_seconds'] is not None else None,
+                'calibration_status':'provisional', 'calibration_extrapolated':True,
+                'calibration_note':f"{len(ranges)}개 균등 구간의 순차 처리 추정 · 전체 길이 실측 전",
+                'moss_partition_count':len(ranges)}
     capacity = (gpu or {}).get('memory_total_mib')
     capacity = capacity / 1024 if capacity else None
     free = (gpu or {}).get('memory_free_mib')

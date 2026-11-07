@@ -15,7 +15,7 @@ archive=root/'dist'/cfg['update_archive'].format(version=cfg['version'])
 key=Path(os.environ.get(cfg['key_env'],str(Path.home()/'Library/Application Support'/cfg['key_directory']/'sparkle-private-key')))
 public=(root/cfg['public_key_file']).read_text().strip()
 def run(args,**kw):return subprocess.run([str(x) for x in args],check=True,**kw)
-def sign(app):run(['codesign','--force','--sign','-',app],capture_output=True)
+def sign(app):run(['python3',root/'scripts/sign-mac-app.py',app,'--identity','auto'],capture_output=True)
 run(['swift',root/'scripts/setup-update-key.swift',root,'--check-only'])
 run(['swift',root/'scripts/verify-update.swift',root/cfg['public_key_file'],root/'appcast.xml',archive])
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -126,6 +126,7 @@ with tempfile.TemporaryDirectory(prefix='release-chain-') as tmp:
    time.sleep(.1)
   assert plistlib.loads(info_path.read_bytes())['CFBundleVersion']==str(cfg['build']+1),'The disposable app was not updated'
   run(['codesign','--verify','--deep','--strict',current],capture_output=True)
+  run(['python3',root/'scripts/setup-code-signing.py','--verify-app',current],capture_output=True)
   print(result.stdout.strip())
   report={'version':cfg['version'],'build':cfg['build'],'public_key':public,'installer':installer.name,'installer_sha256':hashlib.sha256(installer.read_bytes()).hexdigest(),'archive':archive.name,'sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),'verified':['identical DMG and updater app, signature and metadata','production signed feed and archive','signed next-version discovery, download, validation and actual disposable app replacement','feed and archive tampering rejected'],'future_build':cfg['build']+1,'future_version':following,'previous_build':previous_build,'update_format':archive.suffix.lstrip('.')}
   (root/'dist/release-verification.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')

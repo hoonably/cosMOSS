@@ -55,11 +55,23 @@ async def main():
                 source = folder / f'긴 회의 {fmt.upper()}.{fmt}'
                 before = source.read_bytes()
                 await page.get_by_role('button', name=f'긴 회의 {fmt.upper()} 편집', exact=True).click()
-                await page.click('#edit-speakers')
                 await page.locator('#speaker-dialog').wait_for(state='visible')
+                assert not await page.locator('#note-dialog').is_visible()
                 await position(0)
                 assert await page.evaluate('document.activeElement.id') == 'speaker-preview'
                 assert '↑·↓' in await page.locator('#speaker-navigation-help').inner_text()
+                text = page.locator('[data-preview-index="2"] .speaker-preview-text')
+                await text.click()
+                assert await text.get_attribute('readonly') is not None
+                assert await page.locator('#speaker-preview .is-current').get_attribute('data-preview-index') == '2'
+                await page.keyboard.press('ArrowDown')
+                await position(3)
+                await text.dblclick()
+                assert await text.get_attribute('readonly') is None
+                await text.fill('취소할 내용 수정')
+                await page.keyboard.press('Escape')
+                assert await text.input_value() == segments[2]['text']
+                assert await page.locator('#speaker-dialog').is_visible()
                 await page.locator('#speaker-preview').evaluate('el=>el.scrollTop=el.scrollHeight')
                 await page.click('[data-select-speaker="S03"]')
                 expected = [index for index, segment in enumerate(segments) if segment['speaker'] == 'S03']
@@ -67,7 +79,7 @@ async def main():
                 assert await page.locator('.speaker-preview-row.highlighted').count() == len(expected)
                 assert await page.locator('#speaker-preview').evaluate('el=>el.scrollTop>1000')
                 assert await page.locator('#speaker-dialog').evaluate('el=>el.scrollTop') == 0
-                assert await page.evaluate('document.activeElement.id') == 'speaker-name'
+                assert await page.evaluate('document.activeElement.id') == 'speaker-preview'
                 await page.keyboard.press('Enter')
                 assert await page.evaluate('document.activeElement.id') == 'speaker-preview'
                 for index in range(1, 4):
@@ -75,6 +87,8 @@ async def main():
                     await position(expected[index])
                 await page.keyboard.press('ArrowUp')
                 await position(expected[2])
+                await page.locator('#speaker-name').dblclick()
+                assert await page.locator('#speaker-name').get_attribute('readonly') is None
                 await page.fill('#speaker-name', '수정 중인 이름')
                 await page.keyboard.press('ArrowDown')
                 assert await page.locator('#speaker-preview .is-current').get_attribute('data-preview-index') == str(expected[2])
@@ -97,12 +111,11 @@ async def main():
                 await page.locator('[data-select-speaker="S03"] .speaker-choice-select').drag_to(page.locator('[data-select-speaker="S01"]'))
                 await page.click('#confirm-speaker-merge')
                 await position(0)
-                assert await page.evaluate('document.activeElement.id') == 'speaker-name'
+                assert await page.evaluate('document.activeElement.id') == 'speaker-preview'
                 await page.locator('#speaker-preview').focus()
                 await page.keyboard.press('ArrowDown')
                 await position(1)
                 await page.click('#cancel-speakers')
-                await page.click('#close-note')
                 assert source.read_bytes() == before, 'Navigation or cancelled draft changed the source'
             assert not errors, errors
             await browser.close()

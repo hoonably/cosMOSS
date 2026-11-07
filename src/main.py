@@ -13,9 +13,9 @@ import sqlite3
 import shutil
 import subprocess
 import threading
-import tempfile
 import time
 import uuid
+import wave
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -30,6 +30,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import TranscriptionConfig
+from src.audio_join import join_recordings
+from src.speech_engines import balanced_moss_ranges
 from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
 from src.local_models import LocalModels, RUNTIME_VERSION as MLX_RUNTIME_VERSION
 from src.media_tools import MediaTools
@@ -46,15 +48,15 @@ from src.store import NoteStore
 from src.summaries import Summaries, provider_status
 from src.summary_models import SummaryModels
 from src.summary_preview import preview_document
-from src.text_files import save_text, speaker_changes, write_text
+from src.text_files import save_text, speaker_changes, write_text, edit_segment_texts
 from src.note_files import read_file, convert_file, rename_file, trash_file
 from src.note_retention import RecoverableNoteCleanup
+from src.retired_features import remove_retired_voice_data
+from src.job_artifacts import JobArtifacts, PENDING_AUXILIARY
 from src.job_scheduler import run_transcription_queue
 from src.text_library import TextLibrary
 from src.transcript import json_text, parse_transcript, plain_text, srt_text, vtt_text
 from src.voice_memos import VoiceMemos
-from src.voice_engine import VoiceEngine
-from src.voice_profiles import VoiceProfiles, MAX_PROFILE_BYTES
 from src.local_diarization import LocalDiarization
 from src.speaker_records import SpeakerRecords
 
@@ -84,8 +86,6 @@ BRIDGE_AUDIO_SECONDS = max(
 STORE = NoteStore(DATA_DIR / "moss-note.sqlite3")
 TEXT_LIBRARY = TextLibrary(DATA_DIR / "text-library.sqlite3")
 VOICE_MEMOS = VoiceMemos()
-VOICE_ENGINE = VoiceEngine(RUNTIME_DIR)
-VOICE_PROFILES = VoiceProfiles(DATA_DIR, VOICE_ENGINE)
 LOCAL_DIARIZATION = LocalDiarization(RUNTIME_DIR)
 SPEAKER_RECORDS = SpeakerRecords(DATA_DIR)
 SUMMARIES = Summaries(DATA_DIR / "summaries")
@@ -105,6 +105,7 @@ GPU_INVENTORIES: dict[str, tuple[float, dict]] = {}
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
 PREPARATION_TASKS: dict[str, asyncio.Task] = {}
 TRANSCRIPTION_TASKS: dict[str, asyncio.Task] = {}
+AUDIO_JOIN_TASKS: set[asyncio.Task] = set()
 CANCEL_REQUESTED: set[str] = set()
 NOTE_ACTION_LOCKS: dict[str, asyncio.Lock] = {}
 MISSING_NOTE_FILES: dict[str, float] = {}
@@ -136,6 +137,7 @@ class TextFileRequest(BaseModel):
 class SpeakersRequest(TextFileRequest):
     speaker_names: dict[str, str]
     speaker_merges: dict[str, str] = Field(default_factory=dict)
+    segments: list[dict[str, Any]] | None = None
 
 
 class SummaryRequest(TextFileRequest):
@@ -173,22 +175,6 @@ class RenameFileRequest(FileActionRequest):
     title: str = Field(min_length=1, max_length=200)
 
 
-class VoiceProfileName(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=60)
-
-
-class VoiceProfileSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
-    threshold: float = Field(default=.75, ge=0, le=1, allow_inf_nan=False)
-
-
-class VoiceMatchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    speaker_merges: dict[str, str] = Field(default_factory=dict)
-
-
 class SSHHostRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     host: str = Field(min_length=1, max_length=128)
@@ -219,6 +205,7 @@ class BatchNoteRequest(BaseModel):
     local_model_key: Literal['mlx-8bit', 'mlx-4bit', 'mlx-16bit', 'custom'] | None = None
     speech_batch: int = Field(default=0, ge=0, le=24)
     allow_memory_risk: bool = False
+    allow_moss_split: bool = False
 
 
 class SpeechSetupRequest(BaseModel):
@@ -291,6 +278,12 @@ def public_note(note: dict[str, Any]) -> dict[str, Any]:
             "device_snapshot_json",
         }
     }
+    result['has_audio'] = False
+    if note.get('source_type') != 'text_file' and note['status'] in {'queued', 'processing'}:
+        with suppress(ValueError, KeyError, OSError):
+            result['has_audio'] = STORE.resolve_path(note['id'], note['source_path']).is_file()
+    if isinstance(result.get('pipeline_result'), dict):
+        result['pipeline_result'] = {k:v for k,v in result['pipeline_result'].items() if k != PENDING_AUXILIARY}
     result["processing_elapsed_seconds"] = note.get("processing_seconds")
     result['inference_elapsed_seconds'] = None
     if note.get('inference_started_at'):
@@ -1004,8 +997,6 @@ async def transcribe(note_id: str) -> None:
                           asr_segments=segments, asr_seconds=asr_finished - asr_loaded,
                           asr_load_seconds=asr_loaded - asr_started,
                           peak_process_gib=None, memory_metric='combined-unified-memory-unmeasured')
-            # Retain the completed ASR output even if the later diarizer fails.
-            save_speech_diagnostic(normalized, result)
             def on_diarization(event):
                 STORE.update(note_id, progress_phase='transcribing',
                              model_progress={'pipeline_phase': 'diarizing', 'engine': 'nemotron-3'})
@@ -1023,15 +1014,6 @@ async def transcribe(note_id: str) -> None:
             return
         STORE.update(note_id, progress_phase="finalizing", inference_finished_at=datetime.now(UTC).isoformat())
         speakers = sorted({segment["speaker"] for segment in segments})
-        voice_matches, voice_merges, voice_error = [], [], None
-        if VOICE_PROFILES.settings()['enabled'] and (VOICE_PROFILES.documents() or VOICE_ENGINE.ready()):
-            STORE.update(note_id, progress_phase='identifying_speakers')
-            try:
-                identified = await VOICE_PROFILES.identify(normalized, segments, MEDIA_TOOLS.executable('ffmpeg'))
-                voice_matches, voice_merges = identified['matches'], identified['merge_candidates']
-            except Exception as error:
-                # Speaker matching is optional; keep the successful transcription.
-                voice_error = f'목소리 추천을 준비하지 못했습니다: {error}'
         completed = dict(
             status="done",
             progress_phase="done",
@@ -1044,15 +1026,8 @@ async def transcribe(note_id: str) -> None:
             raw_segments=segments,
             segments=segments,
             speaker_names={speaker: speaker for speaker in speakers},
-            voice_matches=voice_matches, voice_merge_candidates=voice_merges, voice_match_error=voice_error,
         )
-        if note.get("output_directory"):
-            try:
-                completed.update(write_text({**STORE.get(note_id), **completed}, note["output_directory"]))
-                completed["text_save_error"] = None
-            except (ValueError, OSError) as error:
-                # Keep the transcript and retry only file saving, never inference.
-                completed["text_save_error"] = f"전사는 완료했지만 파일을 저장하지 못했습니다: {error}"
+        completed.update(JobArtifacts(STORE).publish({**STORE.get(note_id), **completed}))
         STORE.update(note_id, **completed)
     except asyncio.CancelledError:
         current = STORE.get(note_id)
@@ -1086,6 +1061,8 @@ async def transcribe(note_id: str) -> None:
                 await REMOTE_WORKERS.perform(managed_device, "stop")
         if chunk_dir is not None:
             shutil.rmtree(chunk_dir, ignore_errors=True)
+        with suppress(OSError, ValueError, KeyError):
+            JobArtifacts(STORE).discard_working_files(note_id)
 
 
 async def transcribe_fast(note, device, started):
@@ -1111,14 +1088,17 @@ async def transcribe_fast(note, device, started):
         phase = event.get('phase')
         changes = {}
         if phase == 'loading' and key in ENGINE_PIPELINES:
-            changes.update(progress_phase='transcribing', model_progress={'pipeline_phase':'loading', 'engine':event.get('engine')})
+            changes.update(progress_phase='transcribing', model_progress={'pipeline_phase':'loading', 'engine':event.get('engine'),
+                           'continuing':event.get('resume_offset', 0) > 0})
             if not inference_started:
                 changes.update(inference_started_at=datetime.now(UTC).isoformat(), estimated_inference_seconds=plan['time_seconds'])
                 inference_started = True
         elif phase in {'loading', 'transferring'}:
             changes['progress_phase'] = 'preparing_model'
         elif phase in {'transcribing', 'aligning', 'diarizing'}:
-            changes.update(progress_phase='transcribing', model_progress={'pipeline_phase': phase},
+            changes.update(progress_phase='transcribing', model_progress={'pipeline_phase': phase,
+                           'continuing':event.get('resume_offset', 0) > 0,
+                           'partition_index':event.get('partition_index'), 'partition_count':event.get('partition_count')},
                            progress_total_steps=event.get('chunk_count', plan['chunk_count']) + 1)
             if not inference_started:
                 changes.update(inference_started_at=datetime.now(UTC).isoformat(), estimated_inference_seconds=plan['time_seconds'])
@@ -1131,20 +1111,12 @@ async def transcribe_fast(note, device, started):
     response = await SPEECH.execute(device['host'], key, 'run', on_event, audio=normalized,
                                    gpu_uuid=device['gpu_uuid'], batch=plan['batch'], language=note.get('language'),
                                    allow_memory_risk=device['options'].get('allow_memory_risk', False),
+                                   allow_moss_split=device['options'].get('allow_moss_split', False),
                                    hotwords=note.get('hotwords'), prompt=prompt)
     result = response['result']
     STORE.update(note['id'], inference_finished_at=datetime.now(UTC).isoformat(), progress_phase='finalizing')
     SPEECH.record(result)
     await complete_pipeline_transcription(note, result, normalized, started)
-
-
-def save_speech_diagnostic(normalized, result):
-    """Keep original ASR, timing and speaker outputs private and recoverable."""
-    diagnostic = normalized.parent / 'speech-result.json'
-    temporary = diagnostic.with_suffix('.tmp')
-    temporary.write_text(json.dumps(result, ensure_ascii=False))
-    temporary.chmod(0o600)
-    temporary.replace(diagnostic)
 
 
 async def complete_pipeline_transcription(note, result, normalized, started):
@@ -1153,18 +1125,9 @@ async def complete_pipeline_transcription(note, result, normalized, started):
     segments = result['segments']
     if not segments:
         raise RuntimeError('음성에서 발화를 찾지 못했습니다. 원본 음성을 확인해 주세요.')
-    # Keep original ASR strings, aligned words and Nemotron turns for inspection.
-    # The normal note API carries only concise numeric diagnostics.
-    save_speech_diagnostic(normalized, result)
+    # Keep only concise job metadata. Outputs are visible files in Downloads;
+    # audio copies and the full model response are not retained after the job.
     metrics = {key: value for key, value in result.items() if key not in {'segments', 'words', 'turns', 'asr_chunks', 'asr_segments', 'auxiliary_transcript'}}
-    matches, merges, voice_error = [], [], None
-    if VOICE_PROFILES.settings()['enabled'] and (VOICE_PROFILES.documents() or VOICE_ENGINE.ready()):
-        STORE.update(note['id'], progress_phase='identifying_speakers')
-        try:
-            identified = await VOICE_PROFILES.identify(normalized, segments, MEDIA_TOOLS.executable('ffmpeg'))
-            matches, merges = identified['matches'], identified['merge_candidates']
-        except Exception as error:
-            voice_error = f'목소리 추천을 준비하지 못했습니다: {error}'
     completed = dict(status='done', progress_phase='done', chunk_count=result['chunk_count'],
         processed_chunks=result['chunk_count'], progress_completed_steps=result['chunk_count'] + 1,
         progress_total_steps=result['chunk_count'] + 1, processed_audio_seconds=duration, model_progress={},
@@ -1172,14 +1135,13 @@ async def complete_pipeline_transcription(note, result, normalized, started):
         processing_seconds=round((note.get('preprocessing_seconds') or 0) + time.monotonic() - started, 3),
         raw_transcript=canonical_transcript(segments), raw_segments=segments, segments=segments,
         speaker_names={speaker: speaker for speaker in sorted({s['speaker'] for s in segments})},
-        voice_matches=matches, voice_merge_candidates=merges, voice_match_error=voice_error, pipeline_result=metrics)
-    if note.get('output_directory'):
-        try:
-            completed.update(write_text({**STORE.get(note['id']), **completed}, note['output_directory']))
-            completed['text_save_error'] = None
-        except (ValueError, OSError) as error:
-            completed['text_save_error'] = f'전사는 완료했지만 파일을 저장하지 못했습니다: {error}'
+        pipeline_result=metrics)
+    auxiliary = result.get('auxiliary_transcript')
+    completed.update(JobArtifacts(STORE).publish({**STORE.get(note['id']), **completed},
+        auxiliary.get('text') if isinstance(auxiliary, dict) else None))
     STORE.update(note['id'], **completed)
+    with suppress(OSError, ValueError):
+        JobArtifacts(STORE).discard_working_files(note['id'])
 
 
 async def queue_worker() -> None:
@@ -1194,15 +1156,16 @@ async def queue_worker() -> None:
 
 def note_cleanup() -> RecoverableNoteCleanup:
     def active(note_id):
-        return (any(task and not task.done() for task in
-                    (TRANSCRIPTION_TASKS.get(note_id), PREPARATION_TASKS.get(note_id)))
-                or any(not task.done() for task in VOICE_PROFILES.operations))
+        return any(task and not task.done() for task in
+                   (TRANSCRIPTION_TASKS.get(note_id), PREPARATION_TASKS.get(note_id)))
     return RecoverableNoteCleanup(STORE, TEXT_LIBRARY, SUMMARIES, SPEAKER_RECORDS, trash_file,
                                   active=active, missing_since=MISSING_NOTE_FILES)
 
 
 async def clean_missing_note_files():
     while True:
+        with suppress(OSError, ValueError):
+            await asyncio.to_thread(JobArtifacts(STORE).migrate, note_cleanup().hidden_note_ids())
         await asyncio.to_thread(note_cleanup().sweep)
         await asyncio.sleep(30)
 
@@ -1210,11 +1173,13 @@ async def clean_missing_note_files():
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     watch_desktop_parent()
+    remove_retired_voice_data(DATA_DIR, RUNTIME_DIR)
     if bool(AUTH_USERNAME) != bool(AUTH_PASSWORD):
         raise RuntimeError(
             "MOSS_AUTH_USERNAME과 MOSS_AUTH_PASSWORD는 함께 설정해야 합니다."
         )
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    JobArtifacts(STORE).migrate(note_cleanup().hidden_note_ids())
     await clean_expired_uploads()
     for upload in STORE.list_uploads():
         if upload["status"] == "preparing":
@@ -1242,16 +1207,12 @@ async def lifespan(_: FastAPI):
         await LOCAL_MODELS.close()
         await SUMMARIES.close()
         await MEDIA_TOOLS.close()
-        for task in list(VOICE_PROFILES.operations):
-            task.cancel()
-        await asyncio.gather(*VOICE_PROFILES.operations, return_exceptions=True)
-        await VOICE_ENGINE.close()
         await SPEECH.close()
 
 
 app = FastAPI(
     title="cosMOSS",
-    version="1.0.0",
+    version="1.1.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
@@ -1275,8 +1236,8 @@ def valid_basic_auth(header: str | None) -> bool:
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    local_action = (request.method == "POST" and request.url.path in {"/api/notes", "/api/notes/batch"}) or request.url.path.startswith(("/api/voice-profiles", "/api/voice-memos", "/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/", "/api/trash")) or (
-        request.url.path.startswith("/api/notes/") and any(part in {"text-file", "speakers", "identify-speakers", "summary", "trash", "convert", "rename"} for part in request.url.path.split("/")[4:])
+    local_action = (request.method == "POST" and request.url.path in {"/api/notes", "/api/notes/batch"}) or request.url.path.startswith(("/api/voice-memos", "/api/setup", "/api/devices", "/api/ssh", "/api/local-model", "/api/model-catalog", "/api/summary/", "/api/trash")) or (
+        request.url.path.startswith("/api/notes/") and any(part in {"text-file", "speakers", "summary", "trash", "convert", "rename"} for part in request.url.path.split("/")[4:])
     )
     if local_action:
         try:
@@ -1287,7 +1248,7 @@ async def security_middleware(request: Request, call_next):
             return JSONResponse({"detail": "이 작업은 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "외부 웹사이트에서는 이 작업을 실행할 수 없습니다."}, status_code=403)
-        if (request.url.path.startswith(('/api/voice-memos', '/api/voice-profiles', '/api/trash')) or request.url.path in {'/api/notes','/api/notes/batch','/api/summary/default-prompt'} or request.url.path.endswith(('/identify-speakers','/rename','/trash'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
+        if (request.url.path.startswith(('/api/voice-memos', '/api/trash')) or request.url.path in {'/api/notes','/api/notes/batch','/api/summary/default-prompt'} or request.url.path.endswith(('/rename','/trash'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
             return JSONResponse({'detail': '외부 웹사이트에서는 이 작업을 실행할 수 없습니다.'}, status_code=403)
     if request.url.path not in {"/healthz", "/readyz"} and not valid_basic_auth(
         request.headers.get("Authorization")
@@ -1305,7 +1266,7 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self)"
+    response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=()"
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     elif request.url.path == "/" or Path(request.url.path).suffix in {".html", ".js", ".css"}:
@@ -1384,134 +1345,11 @@ async def prepare_app_tools() -> dict[str, Any]:
 @app.get("/api/update-status")
 async def update_status() -> dict[str, bool]:
     """Do not relaunch during owned work; loaded, idle models can be stopped."""
-    tasks = [*PREPARATION_TASKS.values(), *TRANSCRIPTION_TASKS.values(),
-             *SUMMARIES.tasks.values(), *REMOTE_WORKERS.tasks.values(), *VOICE_PROFILES.operations,
-             *SPEECH.tasks.values(), LOCAL_MODELS.task, MEDIA_TOOLS.task, VOICE_ENGINE.task]
+    tasks = [*PREPARATION_TASKS.values(), *TRANSCRIPTION_TASKS.values(), *AUDIO_JOIN_TASKS,
+             *SUMMARIES.tasks.values(), *REMOTE_WORKERS.tasks.values(),
+             *SPEECH.tasks.values(), LOCAL_MODELS.task, MEDIA_TOOLS.task]
     return {"busy": any(task is not None and not task.done() for task in tasks)
             or any(note["status"] in {"queued", "processing"} for note in STORE.list())}
-
-
-@asynccontextmanager
-async def voice_operation():
-    task = asyncio.current_task()
-    VOICE_PROFILES.operations.add(task)
-    try:
-        yield
-    finally:
-        VOICE_PROFILES.operations.discard(task)
-
-
-@app.get('/api/voice-profiles')
-def list_voice_profiles():
-    return VOICE_PROFILES.listing()
-
-
-@app.patch('/api/voice-profiles/settings')
-def configure_voice_profiles(request: VoiceProfileSettings):
-    return VOICE_PROFILES.configure(request.enabled, request.threshold)
-
-
-@app.post('/api/voice-profiles/setup', status_code=202)
-async def prepare_voice_profiles():
-    return VOICE_ENGINE.start()
-
-
-@app.post('/api/voice-profiles/import')
-async def import_voice_profile(file: UploadFile = File(...)):
-    try:
-        content = await file.read(MAX_PROFILE_BYTES + 1)
-        result = VOICE_PROFILES.import_file(content)
-        if not VOICE_ENGINE.ready(): VOICE_ENGINE.start()
-        return result
-    except ValueError as error:
-        raise HTTPException(400, str(error)) from None
-    finally:
-        await file.close()
-
-
-@app.post('/api/voice-profiles/enroll', status_code=201)
-async def enroll_voice_profile(file: UploadFile = File(...), name: str = Form(..., min_length=1, max_length=60),
-                              start: float = Form(0, ge=0, le=86400), seconds: float = Form(5, ge=2, le=20)):
-    try:
-        async with voice_operation():
-            await MEDIA_TOOLS.require_ready()
-            await VOICE_ENGINE.require_ready()
-            if not math.isfinite(start) or not math.isfinite(seconds):
-                raise ValueError('녹음 구간을 확인해 주세요.')
-            with tempfile.TemporaryDirectory(prefix='cosmoss-voice-upload-') as temporary:
-                source = Path(temporary) / 'recording.audio'
-                size = 0
-                with source.open('wb') as destination:
-                    while chunk := await file.read(1024 * 1024):
-                        size += len(chunk)
-                        if size > 128 * 1024 * 1024:
-                            raise ValueError('목소리 등록 파일은 128MB 이하로 선택해 주세요.')
-                        destination.write(chunk)
-                if not size: raise ValueError('녹음 파일이 비어 있습니다.')
-                return await VOICE_PROFILES.enroll(name, source, start, seconds, MEDIA_TOOLS.executable('ffmpeg'))
-    except (ValueError, RuntimeError, OSError, asyncio.TimeoutError) as error:
-        raise HTTPException(409, str(error) or '목소리 처리 시간이 초과되었습니다. 다시 시도해 주세요.') from None
-    finally:
-        await file.close()
-
-
-@app.get('/api/voice-profiles/{profile_id}/export')
-def export_voice_profile(profile_id: str):
-    try:
-        profile = VOICE_PROFILES.get(profile_id)
-        stem = ''.join(c for c in profile['name'] if c.isalnum() or c in '-_ ').strip() or '목소리'
-        return Response(VOICE_PROFILES.export(profile_id), media_type='application/vnd.cosmoss.voice+json',
-                        headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(stem + '.mossvoice'), 'Cache-Control': 'no-store'})
-    except KeyError:
-        raise HTTPException(404, '목소리 프로필을 찾을 수 없습니다.') from None
-
-
-@app.get('/api/voice-profiles/{profile_id}/sample')
-def voice_profile_sample(profile_id: str):
-    try:
-        profile = VOICE_PROFILES.get(profile_id)
-        return Response(base64.b64decode(profile['sample_wav']), media_type='audio/wav', headers={'Cache-Control': 'no-store'})
-    except KeyError:
-        raise HTTPException(404, '목소리 프로필을 찾을 수 없습니다.') from None
-
-
-@app.patch('/api/voice-profiles/{profile_id}')
-def rename_voice_profile(profile_id: str, request: VoiceProfileName):
-    try:
-        return VOICE_PROFILES.rename(profile_id, request.name)
-    except KeyError:
-        raise HTTPException(404, '목소리 프로필을 찾을 수 없습니다.') from None
-    except ValueError as error:
-        raise HTTPException(409, str(error)) from None
-
-
-@app.delete('/api/voice-profiles/{profile_id}', status_code=204)
-def delete_voice_profile(profile_id: str):
-    try:
-        VOICE_PROFILES.delete(profile_id)
-        return Response(status_code=204)
-    except KeyError:
-        raise HTTPException(404, '목소리 프로필을 찾을 수 없습니다.') from None
-
-
-@app.post('/api/notes/{note_id}/identify-speakers')
-async def identify_note_speakers(note_id: str, request: VoiceMatchRequest | None = None):
-    try:
-        if TEXT_LIBRARY.is_document(note_id):
-            raise ValueError('목소리 비교에는 이 앱에서 전사한 원본 녹음이 필요합니다.')
-        note = STORE.get(note_id)
-        if note['status'] != 'done': raise ValueError('전사가 완료된 녹음을 선택해 주세요.')
-        async with voice_operation():
-            await MEDIA_TOOLS.require_ready()
-            source = STORE.resolve_path(note_id, note.get('normalized_path') or note['source_path'])
-            if not source.is_file(): raise ValueError('원본 녹음 파일을 찾을 수 없습니다.')
-            # Preview only: the existing speaker dialog commits names on Save.
-            segments = speaker_changes(note, {}, request.speaker_merges)['segments'] if request and request.speaker_merges else note['segments']
-            return await VOICE_PROFILES.identify(source, segments, MEDIA_TOOLS.executable('ffmpeg'))
-    except KeyError:
-        raise HTTPException(404, '노트를 찾을 수 없습니다.') from None
-    except (ValueError, RuntimeError, OSError, asyncio.TimeoutError) as error:
-        raise HTTPException(409, str(error) or '목소리 처리 시간이 초과되었습니다. 다시 시도해 주세요.') from None
 
 
 @app.get("/readyz", include_in_schema=False)
@@ -1579,12 +1417,9 @@ async def choose_device_model(device_id: str, request: DeviceModelSelection):
         device = DEVICES.get(device_id)
     except KeyError:
         raise HTTPException(404, '등록된 장치를 찾을 수 없습니다.') from None
-    if any(n['device_id'] == device_id and n['status'] in {'queued', 'processing'} for n in STORE.list()):
+    if device_id == 'local' and any(n['device_id'] == device_id and n['status'] in {'queued', 'processing'} for n in STORE.list()):
         raise HTTPException(409, '진행 중인 전사가 끝난 뒤 모델을 변경해 주세요.')
-    task = LOCAL_MODELS.task if device_id == 'local' else REMOTE_WORKERS.tasks.get(device_id)
-    if task and not task.done():
-        raise HTTPException(409, '현재 모델 준비가 끝난 뒤 선택해 주세요.')
-    if device['backend'] == 'cuda' and any(not t.done() for (host, _), t in SPEECH.tasks.items() if host == device['host']):
+    if device_id == 'local' and LOCAL_MODELS.task and not LOCAL_MODELS.task.done():
         raise HTTPException(409, '현재 모델 준비가 끝난 뒤 선택해 주세요.')
     try:
         if device_id == 'local':
@@ -1601,7 +1436,12 @@ async def choose_device_model(device_id: str, request: DeviceModelSelection):
                 model=repo, model_id=repo,
                 model_source='cache', model_path='',
                 options={**device.get('options', {}), 'speech_pipeline': request.pipeline, 'speech_batch': 0})
-            REMOTE_WORKERS.states.pop(device_id, None)
+            # This changes only the default for future notes. Existing notes use
+            # their immutable model/GPU snapshots and retain their worker lease.
+            worker = REMOTE_WORKERS.states.get(device_id, {})
+            task = REMOTE_WORKERS.tasks.get(device_id)
+            if not ((task and not task.done()) or worker.get('active_gpu_uuid') or worker.get('worker_cleanup_pending')):
+                REMOTE_WORKERS.states.pop(device_id, None)
         else:
             raise ValueError('이 장치에서 사용할 모델을 선택해 주세요.')
     except ValueError as error:
@@ -2116,6 +1956,7 @@ async def create_note(
     chunk_minutes: float | None = Form(None, ge=1, le=MAX_SUPPORTED_CHUNK_SECONDS // 60, allow_inf_nan=False),
     chunk_count: int | None = Form(None, ge=1, le=1000),
     upload_id: str | None = Form(None),
+    upload_ids: list[str] | None = Form(None),
     device_id: str = Form("local"),
     gpu_uuid: str | None = Form(None, pattern=r"^GPU-[0-9a-fA-F-]{8,64}$"),
     gpu_confirmation: str = Form("", max_length=64),
@@ -2124,10 +1965,15 @@ async def create_note(
     speech_pipeline: SpeechPipelineKey | None = Form(None),
     speech_batch: int = Form(0, ge=0, le=24),
     allow_memory_risk: bool = Form(False),
+    allow_moss_split: bool = Form(False),
     local_model_key: Literal['mlx-8bit', 'mlx-4bit', 'mlx-16bit', 'custom'] | None = Form(None),
 ) -> dict[str, Any]:
-    if bool(file) == bool(upload_id):
+    upload_ids = upload_ids or []
+    if sum((bool(file), bool(upload_id), bool(upload_ids))) != 1:
         raise HTTPException(400, "전사할 음성 파일을 하나 선택해 주세요.")
+    if upload_ids and (not 2 <= len(upload_ids) <= 100 or len(set(upload_ids)) != len(upload_ids)
+                       or any(len(key) != 32 or any(c not in '0123456789abcdef' for c in key) for key in upload_ids)):
+        raise HTTPException(422, '서로 다른 녹음 2~100개를 순서대로 선택해 주세요.')
     try:
         device = DEVICES.get(device_id)
     except KeyError:
@@ -2204,13 +2050,18 @@ async def create_note(
         "language": language.strip() or None, "hotwords": hotwords.strip() or None,
         "chunk_seconds": chunk_minutes * 60 if chunk_minutes is not None else device.get("options", {}).get("chunk_minutes", default_chunk_minutes) * 60,
         "output_format": output_format,
-        "output_directory": output_directory or None,
+        "output_directory": str(JobArtifacts(STORE).downloads),
     }
     def configure_fast(duration):
         if not fast:
             return
         if not duration or not math.isfinite(duration):
             raise HTTPException(422, '음성 길이를 먼저 확인해 주세요.')
+        if speech_pipeline in {'moss-sglang','moss-qwen-sequential'} and duration > 5400 and not allow_moss_split:
+            ranges = balanced_moss_ranges(duration)
+            raise HTTPException(409, {'code':'moss_split_confirmation_required',
+                'message':'90분을 넘는 녹음은 확인 후 균등 분할해 순서대로 전사합니다.',
+                'duration':duration,'count':len(ranges),'seconds':duration/len(ranges)})
         try:
             plan = estimate_pipeline(speech_pipeline, duration, gpu, speech_batch, SPEECH.observations())
         except ValueError as error:
@@ -2219,12 +2070,45 @@ async def create_note(
             raise HTTPException(422, f"약 {plan['memory_expected_gib']:.1f} GiB가 필요합니다. 더 큰 GPU 또는 다른 전사 방식을 선택해 주세요.")
         if plan['exceeds_budget'] and not allow_memory_risk:
             raise HTTPException(409, f"예상 Peak Memory가 전체 VRAM의 70%를 넘습니다. 경고를 확인하거나 동시 청크 수를 줄여 주세요.")
-        device['options'] = {**device.get('options', {}), 'speech_pipeline': speech_pipeline, 'speech_batch': speech_batch, 'allow_memory_risk': allow_memory_risk}
+        device['options'] = {**device.get('options', {}), 'speech_pipeline': speech_pipeline, 'speech_batch': speech_batch,
+                             'allow_memory_risk': allow_memory_risk, 'allow_moss_split':allow_moss_split}
         if speech_pipeline in ENGINE_PIPELINES:
             repo = 'Qwen/Qwen3-ASR-1.7B' if speech_pipeline == 'qwen-transformers' else 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
             device.update(model=repo, model_id=repo, model_key='cuda-original', model_source='cache', model_path='')
         settings.update(device_snapshot_json=json.dumps(device, ensure_ascii=False), chunk_seconds=plan['chunk_seconds'])
-    if upload_id:
+        if speech_pipeline in {'moss-sglang','moss-qwen-sequential'} and duration > 5400:
+            settings['chunk_count'] = plan['chunk_count']
+    if upload_ids:
+        joined_id = uuid.uuid4().hex
+        join_task = asyncio.current_task()
+        AUDIO_JOIN_TASKS.add(join_task)
+        try:
+            uploads = [STORE.get_upload(key) for key in upload_ids]
+            if any(u['status'] != 'ready' or not u.get('normalized_path') for u in uploads):
+                raise ValueError('선택한 녹음의 준비가 끝난 후 시작해 주세요.')
+            duration = sum(u.get('duration') or 0 for u in uploads)
+            configure_fast(duration)
+            if chunk_count is not None:
+                settings.update(count_chunk_settings(duration, chunk_count))
+            joined = await run_audio_work(join_recordings, STORE, uploads, joined_id)
+            # The joined WAV's sample count is the authoritative duration.
+            configure_fast(joined['duration'])
+            if chunk_count is not None:
+                settings.update(count_chunk_settings(joined['duration'], chunk_count))
+            settings['title'] = (title.strip() or Path(joined['original_filename']).stem)[:200]
+            note = STORE.consume_joined_uploads(uploads, joined, settings)
+        except BaseException as error:
+            shutil.rmtree(STORE.upload_directory(joined_id), ignore_errors=True)
+            if isinstance(error, KeyError):
+                raise HTTPException(404, '준비한 녹음을 찾을 수 없습니다. 파일을 다시 선택해 주세요.') from None
+            if isinstance(error, (ValueError, OSError, EOFError, wave.Error)):
+                raise HTTPException(409, str(error) or '녹음을 이어붙이지 못했습니다. 파일을 다시 확인해 주세요.') from None
+            raise
+        finally:
+            AUDIO_JOIN_TASKS.discard(join_task)
+        for key in upload_ids:
+            shutil.rmtree(STORE.upload_directory(key), ignore_errors=True)
+    elif upload_id:
         try:
             upload = STORE.get_upload(upload_id)
             configure_fast(upload.get('duration'))
@@ -2273,7 +2157,7 @@ async def create_note_batch(request: BatchNoteRequest) -> dict:
     try:
         for item in request.items:
             try:
-                note = await create_note(file=None, chunk_minutes=None, **item.model_dump(), **shared)
+                note = await create_note(file=None, chunk_minutes=None, upload_ids=None, **item.model_dump(), **shared)
                 notes.append({'upload_id': item.upload_id, 'note': note})
             except HTTPException as error:
                 detail = error.detail
@@ -2469,7 +2353,12 @@ def save_note_text(note_id: str, request: TextFileRequest) -> dict:
         if TEXT_LIBRARY.is_document(note_id):
             return public_note(TEXT_LIBRARY.get(note_id))
         note = STORE.get(note_id)
-        return public_note(save_text(STORE, note_id, request.directory, reuse_existing=not note.get("output_directory")))
+        artifacts = JobArtifacts(STORE)
+        note = save_text(STORE, note_id, str(artifacts.downloads), reuse_existing=not note.get("output_directory"))
+        note = STORE.update(note_id, **artifacts.publish(note, preserve_existing=True))
+        if note.get('text_save_error'):
+            raise ValueError(note['text_save_error'])
+        return public_note(note)
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
     except (ValueError, OSError) as error:
@@ -2480,9 +2369,17 @@ def save_note_text(note_id: str, request: TextFileRequest) -> dict:
 def save_note_speakers(note_id: str, request: SpeakersRequest) -> dict:
     try:
         changes = {"speaker_names": request.speaker_names, "speaker_merges": request.speaker_merges}
+        if request.segments is not None:
+            changes['segments'] = request.segments
         if TEXT_LIBRARY.is_document(note_id):
             return public_note(TEXT_LIBRARY.update(note_id, changes, request.text_hash))
-        return public_note(save_text(STORE, note_id, request.directory, changes))
+        with STORE.lock:
+            note = STORE.get(note_id)
+            if request.text_hash is not None and request.text_hash != note.get('text_hash'):
+                raise ValueError('파일이 다른 창에서 수정되었습니다. 다시 열어 최신 내용을 확인해 주세요.')
+            if request.segments is not None:
+                changes['segments'] = edit_segment_texts(note,request.segments)
+            return public_note(save_text(STORE, note_id, str(JobArtifacts(STORE).downloads), changes))
     except KeyError:
         raise HTTPException(404, "노트를 찾을 수 없습니다.") from None
     except (ValueError, OSError) as error:
@@ -2620,7 +2517,9 @@ async def _cancel_note(note_id: str) -> dict[str, Any]:
             note_id, status="cancelled", progress_phase="cancelled", error=None,
             model_progress={}, processing_finished_at=datetime.now(UTC).isoformat(),
         )
-    return public_note(note)
+    with suppress(OSError, ValueError):
+        JobArtifacts(STORE).discard_working_files(note_id)
+    return public_note(STORE.get(note_id))
 
 
 def requeue_note(note_id: str) -> None:
@@ -2659,7 +2558,7 @@ async def restart_note(note_id: str) -> dict[str, Any]:
         except ValueError:
             raise HTTPException(409, "보관된 녹음 파일 경로를 확인해 주세요.") from None
         if not source.is_file():
-            raise HTTPException(409, "보관된 녹음 파일을 찾을 수 없습니다. 파일을 다시 올려 주세요.")
+            raise HTTPException(409, "임시 녹음은 작업 후 삭제됩니다. 원본 녹음을 다시 선택해 주세요.")
         normalized_path = note.get("normalized_path")
         if normalized_path:
             try:
@@ -2675,7 +2574,6 @@ async def restart_note(note_id: str) -> dict[str, Any]:
             processed_audio_seconds=0, model_progress={}, processing_started_at=None,
             processing_finished_at=None, processing_seconds=None, preprocessing_seconds=0,
             raw_transcript=None, raw_segments=[], segments=[], speaker_names={}, speaker_merges={},
-            voice_matches=[], voice_merge_candidates=[], voice_match_error=None,
             inference_started_at=None, inference_finished_at=None, estimated_inference_seconds=None,
         )
         requeue_note(note_id)
@@ -2703,18 +2601,14 @@ async def delete_note(note_id: str) -> Response:
 def auxiliary_transcript(note_id: str, download: bool = Query(default=False)):
     try:
         note = STORE.get(note_id)
-        source = STORE.resolve_path(note_id, note.get('normalized_path') or note['source_path'])
-        diagnostic = STORE.resolve_path(note_id, str(source.parent / 'speech-result.json'))
-        value = json.loads(diagnostic.read_text()).get('auxiliary_transcript')
+        text = JobArtifacts(STORE).auxiliary(note)
     except (KeyError, OSError, ValueError):
         raise HTTPException(404, '이 노트의 Qwen 보조 대본이 없습니다.') from None
-    if not isinstance(value, dict) or not isinstance(value.get('text'), str):
-        raise HTTPException(404, '이 노트의 Qwen 보조 대본이 없습니다.')
     if download:
-        return Response(value['text'], media_type='text/plain; charset=utf-8',
+        return Response(text, media_type='text/plain; charset=utf-8',
             headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(note['title'] + ' - Qwen 보조 대본.txt'),
                      'Cache-Control':'no-store'})
-    return JSONResponse({'text':value['text'],'model':'Qwen3-ASR 1.7B','aligned':False},headers={'Cache-Control':'no-store'})
+    return JSONResponse({'text':text,'model':'Qwen3-ASR 1.7B','aligned':False},headers={'Cache-Control':'no-store'})
 
 
 @app.get("/api/notes/{note_id}/media")

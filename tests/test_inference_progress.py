@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from src import main
 from src.store import NoteStore
@@ -19,8 +19,8 @@ class InferenceProgressTests(unittest.TestCase):
         with patch.object(main.PERFORMANCE, 'profiles', side_effect=OSError('history unavailable')):
             self.assertIsNone(main.estimate_note_inference(note, 3937.1306875, 1))
 
-    def test_model_clock_freezes_before_voice_matching_and_saving(self):
-        note = {'status':'processing', 'progress_phase':'identifying_speakers',
+    def test_model_clock_freezes_before_saving(self):
+        note = {'status':'processing', 'progress_phase':'finalizing',
                 'processing_started_at':'2026-10-21T00:00:00+00:00',
                 'inference_started_at':'2026-10-21T00:01:00+00:00',
                 'inference_finished_at':'2026-10-21T00:09:49+00:00'}
@@ -41,24 +41,22 @@ class InferenceProgressTests(unittest.TestCase):
 
 
 class InferenceBoundaryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_clock_finishes_before_optional_voice_comparison(self):
+    async def test_clock_finishes_before_file_publication(self):
         from tests.test_automatic_output import AutomaticOutputTests
         case = AutomaticOutputTests()
         case.setUp()
         self.addCleanup(case.doCleanups)
         self.addAsyncCleanup(case.client.aclose)
         created = await case.create()
-        async def identify(*args):
+        original_publish = main.JobArtifacts.publish
+        def publish(artifacts, completed, *args):
             note = case.store.get(created.json()['id'])
-            self.assertEqual(note['progress_phase'], 'identifying_speakers')
+            self.assertEqual(note['progress_phase'], 'finalizing')
             self.assertIsNotNone(note['inference_finished_at'])
             self.assertGreater(note['estimated_inference_seconds'], 0)
             self.assertLessEqual(datetime.fromisoformat(note['inference_started_at']), datetime.fromisoformat(note['inference_finished_at']))
-            return {'matches':[], 'merge_candidates':[]}
-        with patch.object(main.VOICE_PROFILES, 'documents', return_value=[{}]), \
-             patch.object(main.VOICE_PROFILES, 'settings', return_value={'enabled':True}), \
-             patch.object(main.VOICE_PROFILES, 'identify', new=AsyncMock(side_effect=identify)):
+            return original_publish(artifacts, completed, *args)
+        with patch.object(main.JobArtifacts, 'publish', new=publish):
             note = await case.run_inference(created.json()['id'])
         self.assertEqual(note['status'], 'done', note.get('error'))
-        self.assertIsNone(note['voice_match_error'])
         self.assertIsNotNone(note['inference_finished_at'])

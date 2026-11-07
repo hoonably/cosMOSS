@@ -1,0 +1,13 @@
+{
+  "certificate_sha256": "c95f8a4c99d2c8450300072a4a60f57fe947e404d68aaf5288d8b8f719510c25",
+  "verified": [
+    "real Sparkle discovery/download/DMG extraction/app replacement",
+    "updated app retains the original certificate-backed requirement",
+    "tampered archive rejected",
+    "updated app has the pinned certificate-backed requirement",
+    "legacy ad-hoc app migrated using unchanged Sparkle key"
+  ],
+  "tcc_database_modified": false,
+  "system_trusted_root_installed": false,
+  "local_application_started_after_one_time_permission_grant": true
+}

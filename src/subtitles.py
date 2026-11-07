@@ -47,26 +47,27 @@ def subtitle_records(text: str, format_name: str):
         if voices:
             prefix = payload[:voices[0].start()]
             if html.unescape(TAGS.sub('', prefix)).strip():
-                fragments.append(('화자 미지정', prefix, position, position, 'plain'))
+                fragments.append(('화자 미지정', prefix, position, position, 'plain', position, position+len(prefix)))
             for index, voice in enumerate(voices):
                 end = voices[index+1].start() if index+1 < len(voices) else len(payload)
                 label = html.unescape(voice['name']).strip()
                 if not label or len(label) > 60:
                     continue
-                fragments.append((label, payload[voice.end():end], position+voice.start('name'), position+voice.end('name'), 'voice'))
+                fragments.append((label, payload[voice.end():end], position+voice.start('name'), position+voice.end('name'), 'voice', position+voice.end(), position+end))
         else:
             match = LABEL.match(payload)
             if match:
                 raw = match['name']
                 start = match.start('name') + len(raw)-len(raw.lstrip())
                 end = match.end('name') - (len(raw)-len(raw.rstrip()))
-                fragments.append((html.unescape(raw.strip()), payload[match.end():], position+start, position+end, 'label'))
+                fragments.append((html.unescape(raw.strip()), payload[match.end():], position+start, position+end, 'label', position+match.end(), position+len(payload)))
             elif payload.strip():
-                fragments.append(('화자 미지정', payload, position, position, 'plain'))
-        for label, body, start, end, kind in fragments:
+                fragments.append(('화자 미지정', payload, position, position, 'plain', position, position+len(payload)))
+        for label, body, start, end, kind, body_start, body_end in fragments:
             records.append({'label':label, 'text':html.unescape(TAGS.sub('', body)).strip(),
                             'start':seconds(timing['start']), 'end':seconds(timing['end']),
-                            'label_start':start, 'label_end':end, 'kind':kind})
+                            'label_start':start, 'label_end':end, 'kind':kind,
+                            'body_start':body_start, 'body_end':body_end})
     return records
 
 
@@ -90,4 +91,20 @@ def rename_subtitle_speakers(text: str, format_name: str, replacements: dict[str
         elif record['kind'] == 'plain':
             replacement = f'<v {html.escape(replacement, quote=False)}>' if format_name == 'vtt' else f'{html.escape(replacement, quote=False)}: '
         text = text[:record['label_start']] + replacement + text[record['label_end']:]
+    return text
+
+
+def edit_subtitle_text(text: str, format_name: str, segments: list[dict]):
+    records = subtitle_records(text, format_name)
+    for record, segment in reversed(list(zip(records, segments, strict=True))):
+        if record['text'] == segment['text']:
+            continue
+        value = segment['text'].replace('\r\n','\n')
+        if re.search(r'\n[ \t]*\n',value):
+            raise ValueError('자막 발언 안에는 빈 줄을 넣을 수 없습니다.')
+        start,end = record['body_start'],record['body_end']
+        body = text[start:end]
+        leading = re.match(r'(?:\s|<[^/][^>]*>)*',body).group()
+        trailing = re.search(r'(?:\s|</[^>]*>)*$',body).group()
+        text = text[:start] + leading + html.escape(value,quote=False) + trailing + text[end:]
     return text
