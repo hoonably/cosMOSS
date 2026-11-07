@@ -138,16 +138,6 @@ existing installations retain their package licenses. Historical KV experiments 
 Model weights are not redistributed in this repository.
 
 
-## Optional voice profiles
-
-Voice comparison explicitly installs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
-(Apache-2.0) and NumPy (BSD-3-Clause) in a separate local runtime. Their package
-license files remain with the installation. The CPU speaker embedding model is
-[3D-Speaker CAM++](https://github.com/modelscope/3D-Speaker) (Apache-2.0), downloaded
-from sherpa-onnx's [speaker recognition model release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models).
-The ONNX model is SHA-256 pinned in `src/voice_engine.py`; neither the weights nor
-personal voice profiles are bundled in the application or this repository.
-
 ## Speaker analysis in transcription
 
 The transcription pipelines use NVIDIA's

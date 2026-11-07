@@ -327,7 +327,7 @@ The original directory and user-selected library directory are checked for
 unique file-identity or exact-content matches before scans/purges. Inaccessible
 folders, symlinks, active jobs and ambiguous matches defer cleanup. Expiration
 removes only the retained transcript and app-owned audio/records, preserving
-external source audio, Voice Memos, profiles, caches, separate exports and
+external source audio, Voice Memos, caches, separate exports and
 anonymous performance samples. `test_note_retention.py` and note-file API tests
 cover recovery, expiry, ownership, failure retry and retained IDs.
 
@@ -429,51 +429,6 @@ job. Source/browser backend runs remain separate and use their caller's access.
 `tests/startup_access_smoke.py` covers denied/granted/retry/fresh-launch states,
 concurrent checks and no-follow descriptor probes, and renders the onboarding
 screen offscreen without changing permissions or launching the backend.
-
-## Voice profile pipeline
-
-`VoiceEngine` explicitly prepares an isolated uv venv (sherpa-onnx 1.13.8,
-numpy 2.2.6) and SHA-256-pinned 28MB CAM++ ONNX model under
-`.cache/voice-engine/`. The separate worker uses CPU only. Setup checks and
-repairs the environment; reads and transcription never initiate downloads.
-Recording requires an explicit click, WKWebView microphone permission and
-`NSMicrophoneUsageDescription`; camera access stays disabled.
-
-`VoiceProfiles` stores profiles in a private `data/voice-profiles/profiles.sqlite3`.
-The versioned `.mossvoice` format is bounded JSON containing a name, 16kHz mono
-PCM sample, hash, model ID and normalized 192-dimensional embedding. Imports
-validate size, schema, waveform, hash and vectors; they cannot supply executable
-code, paths or model URLs. Export includes the sample for portability.
-
-Enrollment normalizes a five-second excerpt with FFmpeg. Matching takes up to
-three non-overlapping excerpts per diarized speaker, averages normalized
-embeddings and compares cosine similarities by name. The provisional threshold
-is 0.75 with a 0.10 lead over the next distinct name; these are not calibrated
-probabilities. New transcriptions only store name/merge proposals, leaving names,
-speaker IDs and automatic output files unchanged. Optional matching errors
-preserve the transcript. Pairwise speaker comparisons can propose merges without
-enrolled profiles; overlapping speakers are excluded and inconsistent excerpts
-are marked for review. `static/voice-review.js` shows before/after identities and
-counts, similarity scores and playable excerpts. Every checkbox starts unchecked.
-Approval changes only the speaker-dialog draft; only its Save action updates the
-note and output file. Cancel/Escape discard review selections or the dialog draft.
-Manual identification returns the same read-only proposal format. Existing names
-from older app versions are preserved, not reverted.
-Original audio/text is never modified by registration, export, import or preview.
-Subprocesses, microphone tracks and temporary excerpts are cleaned up on finish,
-cancellation or shutdown. Registered profiles and the optional runtime persist.
-
-`tests/test_voice_profiles.py` covers format boundaries, persistence, ambiguity,
-origin checks and fallback on matching failure. `tests/voice_profiles_real_smoke.py`
-uses a supplied real recording and actual ONNX runtime in temporary storage to
-check registration, portable roundtrip, proposal-only completion and all result formats.
-`tests/voice_profiles_ui_smoke.py` checks the same enrollment/import/edit flow in
-WebKit with the supplied sample; it does not grant microphone permissions.
-`tests/voice_review_ui_smoke.py` uses isolated note/file APIs and fixture scores
-to check partial approval, before/after counts, sample playback, cancellation,
-explicit saving and speaker merges in Chromium/WebKit at desktop/mobile widths.
-Do functional QA with copies of existing Downloads files or the user's recordings;
-keep originals unchanged and do not send their contents to AI services.
 
 ## Transcription server contract
 
@@ -706,8 +661,7 @@ normalization/splitting and model preparation, `estimate_note_inference` freezes
 the profile estimate for the actual chunk count in `estimated_inference_seconds`.
 The request window is persisted as `inference_started_at`/`inference_finished_at`.
 It includes transcription-request transport and waiting, all main chunks and
-model-generated boundary bridges, and ends before CPU merge, optional voice
-recommendations or file saving. It is a client request timer, not a GPU profiler.
+model-generated boundary bridges, and ends before CPU merge or file saving. It is a client request timer, not a GPU profiler.
 MLX uses the same measured profile as the dialog when available, with a rough
 backend fallback for this running-job bar on unmeasured hardware/settings.
 The UI advances once per second using the elapsed/estimated ratio, caps it at
