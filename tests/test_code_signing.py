@@ -65,8 +65,8 @@ class PersistentSigningTests(unittest.TestCase):
                     return b'"/existing/login.keychain-db"\n'
                 elif args[1]=='import' and import_fails:
                     raise RuntimeError('import failed')
-                elif args[1]=='find-identity':
-                    return saved['certificate_sha1'].encode()
+                elif args[0]=='openssl':
+                    return (self.root/'macos/signing/certificate.der').read_bytes()
                 return b''
             with self.subTest(import_fails=import_fails),patch.object(signing,'run',side_effect=command),patch.object(signing.subprocess,'run') as cleanup:
                 with self.assertRaises(RuntimeError):
