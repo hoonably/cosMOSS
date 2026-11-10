@@ -283,12 +283,15 @@ normal release; it is an explicit manual-reinstall migration only.
 embedded public key. An install/relaunch waits for transcription, uploads,
 model preparation and summaries to finish, and for pending editor saves.
 The updater is disabled in checkout-based development launchers.
-The native update-check window separates Sparkle's persisted automatic-check
-and automatic-download/install settings. `SUEnableAutomaticChecks` is true and
-`SUAutomaticallyUpdate` is false for a new installation. Existing saved on/off
-choices for both settings are preserved; enabling notifications does not enable
-installation. While checks are off the install checkbox is disabled and its
-saved choice remains visible for when checks are enabled again.
+The native update-check window offers automatic notifications only.
+`SUEnableAutomaticChecks` is true for a new installation; the user's saved
+notification choice is preserved. `SUAllowsAutomaticUpdates` is false and the
+updater resets the old `SUAutomaticallyUpdate` preference to false before it
+starts, migrating existing automatic-install opt-ins to notifications only.
+On a fresh launch, a discovered update opens the information window independently
+of Sparkle's scheduled alert timing. Downloading/installing requires the user to
+choose the install button. Release CI also checks startup, relaunch, legacy
+preferences and notification presentation while the app is inactive.
 Manual checks remain available when automatic notifications are off. Run
 `python tests/update_preferences_smoke.py` to verify the default, persistence,
 manual checks, update availability and signed-feed error handling in isolated apps.

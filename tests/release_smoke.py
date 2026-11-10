@@ -31,6 +31,7 @@ def main():
     assert metadata['SURequireSignedFeed'] and metadata['SUVerifyUpdateBeforeExtraction']
     assert metadata['SUEnableAutomaticChecks']
     assert not metadata['SUAutomaticallyUpdate']
+    assert not metadata['SUAllowsAutomaticUpdates']
     assert 'UTExportedTypeDeclarations' not in metadata
     assert 'NSMicrophoneUsageDescription' not in metadata
     for retired in ('static/voices.js', 'static/voice-review.js', 'src/voice_embedding_worker.py',

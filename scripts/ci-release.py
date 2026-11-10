@@ -36,6 +36,8 @@ try:
   run(['.venv/bin/python','tests/signing_smoke.py','dist/release/cosMOSS.app'])
   run(['.venv/bin/python','tests/persistent_update_smoke.py','dist/release/cosMOSS.app','--legacy-adhoc-current'])
   run(['.venv/bin/python','tests/release_smoke.py','dist/release/cosMOSS.app'])
+  run(['.venv/bin/python','tests/update_preferences_smoke.py'],env={**os.environ,
+      'COSMOSS_TEST_SPARKLE_FRAMEWORK':str(root/'dist/release/cosMOSS.app/Contents/Frameworks/Sparkle.framework')})
  elif name=='Pickly':
   run(['./scripts/test.sh'])
   os.environ['PICKLY_VERSION']=cfg['version'];os.environ['PICKLY_BUILD_NUMBER']=str(cfg['build'])

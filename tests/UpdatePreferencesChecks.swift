@@ -14,7 +14,8 @@ struct UpdatePreferencesChecks {
         precondition(ReleaseNotesText.decode("<p>- One<br>- &lt;literal&gt; &amp; &#x27;quote&#39;</p>") == "- One\n- <literal> & 'quote'")
         let app = NSApplication.shared
         let mode = CommandLine.arguments[1]
-        let startupAlert = mode == "startup-alert"
+        let startupAlert = ["startup-alert", "startup-downloads", "startup-inactive"].contains(mode)
+        let automaticDownloads = mode == "startup-downloads"
         let relaunch = CommandLine.arguments.contains("--relaunch")
         app.setActivationPolicy(startupAlert ? .regular : .prohibited)
         Task { @MainActor in
@@ -25,18 +26,22 @@ struct UpdatePreferencesChecks {
             }
             if mode == "startup-off" || (startupAlert && !relaunch) {
                 UserDefaults.standard.set(startupAlert, forKey: "SUEnableAutomaticChecks")
-                UserDefaults.standard.set(false, forKey: "SUAutomaticallyUpdate")
+                UserDefaults.standard.set(automaticDownloads, forKey: "SUAutomaticallyUpdate")
                 UserDefaults.standard.set(Date(), forKey: "SULastCheckTime")
                 UserDefaults.standard.synchronize()
             }
             let updates = UpdateController.shared
             updates.start()
             if startupAlert {
-                NSApp.activate(ignoringOtherApps: true)
+                if mode != "startup-inactive" { NSApp.activate(ignoringOtherApps: true) }
                 for _ in 0..<120 {
-                    if let window = NSApp.windows.first(where: { $0.isVisible && $0.title != "업데이트 확인" }) {
+                    if updates.updateAvailable, let window = NSApp.windows.first(where: { $0.isVisible && $0.title == "업데이트 확인" }) {
+                        guard updates.automaticallyChecksForUpdates && !UserDefaults.standard.bool(forKey: "SUAutomaticallyUpdate") else {
+                            fatalError("Launch notice must preserve notifications and disable automatic installation")
+                        }
+                        guard updates.status.contains("업데이트가 있습니다") else { fatalError(updates.status) }
                         window.orderOut(nil)
-                        print("PASS \(relaunch ? "relaunch" : "startup"): Sparkle presented an update despite a recent check")
+                        print("PASS \(mode) \(relaunch ? "relaunch" : "startup"): update notice visible despite a recent check; old automatic-download preference \(automaticDownloads) migrated to notifications only")
                         NSApp.terminate(nil)
                         return
                     }
@@ -58,10 +63,9 @@ struct UpdatePreferencesChecks {
                 guard NSApp.windows.contains(where: { $0.title == "업데이트 확인" && $0.isVisible }) else { fatalError("Development update window must open") }
                 guard updates.status.contains("개발용 앱") && !updates.isChecking else { fatalError(updates.status) }
                 updates.setAutomaticChecks(true)
-                updates.setAutomaticDownloads(false)
-                guard updates.automaticallyChecksForUpdates && !updates.automaticallyDownloadsUpdates else { fatalError("Notifications must not enable downloads") }
+                guard updates.automaticallyChecksForUpdates && !UserDefaults.standard.bool(forKey: "SUAutomaticallyUpdate") else { fatalError("Notifications must not enable downloads") }
                 updates.setAutomaticChecks(false)
-                guard !updates.automaticallyChecksForUpdates && !updates.automaticallyDownloadsUpdates else { fatalError("Both automatic settings must be off") }
+                guard !updates.automaticallyChecksForUpdates && !UserDefaults.standard.bool(forKey: "SUAutomaticallyUpdate") else { fatalError("Both automatic settings must be off") }
                 print("PASS development: window opens, settings work, updater stays stopped")
                 NSApp.terminate(nil)
                 return
@@ -76,28 +80,22 @@ struct UpdatePreferencesChecks {
             }
             guard updates.canCheckForUpdates else { fatalError("Updater did not start") }
             if mode == "default" {
-                guard updates.automaticallyChecksForUpdates && !updates.automaticallyDownloadsUpdates else { fatalError("First-install default must notify without installing") }
-                updates.setAutomaticDownloads(true)
+                guard updates.automaticallyChecksForUpdates && !UserDefaults.standard.bool(forKey: "SUAutomaticallyUpdate") else { fatalError("First-install default must notify without installing") }
                 updates.setAutomaticChecks(false)
-                guard updates.automaticallyDownloadsUpdates else { fatalError("Check setting must preserve download preference") }
-                updates.setAutomaticDownloads(false)
-                updates.setAutomaticChecks(false)
-                guard !updates.automaticallyChecksForUpdates && !updates.automaticallyDownloadsUpdates else { fatalError("Could not disable automatic updates") }
+                guard !updates.automaticallyChecksForUpdates && !UserDefaults.standard.bool(forKey: "SUAutomaticallyUpdate") else { fatalError("Could not disable automatic updates") }
                 UserDefaults.standard.synchronize()
                 print("PASS default checked; user's off preference saved")
             } else if mode == "legacy-on" || mode == "legacy-on-restored" {
-                guard updates.automaticallyChecksForUpdates && updates.automaticallyDownloadsUpdates else {
-                    fatalError("Existing user's on preferences must survive new installation defaults and restarts")
+                guard updates.automaticallyChecksForUpdates && !UserDefaults.standard.bool(forKey: "SUAutomaticallyUpdate") else {
+                    fatalError("Existing notification preference must survive while automatic installation is disabled")
                 }
                 if mode == "legacy-on-restored" {
                     updates.setAutomaticChecks(false)
-                    guard updates.automaticallyDownloadsUpdates else { fatalError("Disabling checks must preserve install choice") }
-                    updates.setAutomaticDownloads(false)
                     UserDefaults.standard.synchronize()
                 }
-                print("PASS saved on preferences preserved: \(mode)")
+                print("PASS saved notifications preserved, automatic installation disabled: \(mode)")
             } else {
-                guard !updates.automaticallyChecksForUpdates && !updates.automaticallyDownloadsUpdates else { fatalError("User's off preference was reset on launch") }
+                guard !updates.automaticallyChecksForUpdates && !UserDefaults.standard.bool(forKey: "SUAutomaticallyUpdate") else { fatalError("User's off preference was reset on launch") }
                 if mode != "latest" { updates.refreshUpdateInformation() }
                 for _ in 0..<150 {
                     if !updates.isChecking { break }

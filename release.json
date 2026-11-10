@@ -1,6 +1,6 @@
 {
-  "version": "1.3.0",
-  "build": 1300000,
+  "version": "1.3.1",
+  "build": 1301000,
   "repository": "hoonably/cosMOSS",
   "app_name": "cosMOSS",
   "public_key_file": "macos/UpdatePublicKey.txt",

@@ -59,8 +59,9 @@ def main():
                 str(ROOT / "macos/Sources/CosMOSS/UpdateController.swift"),
                 str(ROOT / "tests/UpdatePreferencesChecks.swift"), "-o", str(executable),
             ], check=True)
-            for mode in ("default", "legacy-on", "legacy-on-restored", "latest", "available", "error",
-                         "development", "startup-alert", "startup-off"):
+            modes = ("default", "legacy-on", "legacy-on-restored", "latest", "available", "error",
+                     "development", "startup-alert", "startup-downloads", "startup-inactive", "startup-off")
+            for mode in modes:
                 startup = mode.startswith("startup-")
                 older = mode == "available" or startup
                 feed_name = "appcast.xml"
@@ -80,6 +81,7 @@ def main():
                     "SUPublicEDKey": (ROOT / "macos/UpdatePublicKey.txt").read_text().strip(),
                     "SUEnableAutomaticChecks": True,
                     "SUAutomaticallyUpdate": False,
+                    "SUAllowsAutomaticUpdates": False,
                     "SURequireSignedFeed": True,
                     "SUVerifyUpdateBeforeExtraction": True,
                     "SUSignedFeedFailureExpirationInterval": 0,
@@ -90,14 +92,14 @@ def main():
                 with (contents / "Info.plist").open("wb") as stream:
                     plistlib.dump(info, stream)
                 subprocess.run(["codesign", "--force", "--sign", "-", str(bundle)], check=True, capture_output=True)
-                launches = ([], ["--relaunch"]) if mode == "startup-alert" else ([],)
+                launches = ([], ["--relaunch"]) if mode in {"startup-alert", "startup-downloads", "startup-inactive"} else ([],)
                 for args in launches:
                     server.requested_paths.clear()
                     result = subprocess.run([str(executable), mode, *args], capture_output=True, text=True, timeout=25)
                     if result.returncode:
                         raise AssertionError(f"{mode} {args}: {result.stdout}\n{result.stderr[-3000:]}")
                     if startup:
-                        assert ("/startup.xml" in server.requested_paths) == (mode == "startup-alert")
+                        assert ("/startup.xml" in server.requested_paths) == (mode != "startup-off")
                     print(result.stdout.strip(), flush=True)
         finally:
             server.shutdown()

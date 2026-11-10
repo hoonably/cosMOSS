@@ -57,6 +57,7 @@ metadata = {
     'SUPublicEDKey': (root / 'macos/UpdatePublicKey.txt').read_text().strip(),
     'SUEnableAutomaticChecks': True,
     'SUAutomaticallyUpdate': False,
+    'SUAllowsAutomaticUpdates': False,
     'SURequireSignedFeed': True,
     'SUVerifyUpdateBeforeExtraction': True,
     'SUSignedFeedFailureExpirationInterval': 0,

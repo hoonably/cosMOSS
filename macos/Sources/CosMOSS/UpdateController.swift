@@ -8,7 +8,6 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
     static let shared = UpdateController()
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var automaticallyChecksForUpdates = true
-    @Published private(set) var automaticallyDownloadsUpdates = false
     @Published private(set) var isChecking = false
     @Published private(set) var updateAvailable = false
     @Published private(set) var releaseNotes = ""
@@ -43,12 +42,13 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
             .receive(on: RunLoop.main)
             .sink { [weak self] value in self?.automaticallyChecksForUpdates = value }
             .store(in: &observers)
-        controller.updater.publisher(for: \.automaticallyDownloadsUpdates)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] value in self?.automaticallyDownloadsUpdates = value }
-            .store(in: &observers)
         automaticallyChecksForUpdates = controller.updater.automaticallyChecksForUpdates
-        automaticallyDownloadsUpdates = controller.updater.automaticallyDownloadsUpdates
+        // Migrate the old opt-in setting before starting Sparkle. Automatic
+        // checks only notify; downloading/installing always requires a click.
+        // Sparkle ignores its setter when SUAllowsAutomaticUpdates is false,
+        // so clear the saved legacy opt-in in the app's own preferences too.
+        UserDefaults.standard.set(false, forKey: "SUAutomaticallyUpdate")
+        controller.updater.automaticallyDownloadsUpdates = false
         // Preferences and the window remain available, but a development
         // launcher must never replace the checkout-based app.
         guard !isDevelopmentBuild else {
@@ -65,6 +65,11 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
 
     func checkForUpdates() {
         start()
+        showUpdateWindow()
+        refreshUpdateInformation()
+    }
+
+    private func showUpdateWindow() {
         if updateWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 420),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -76,18 +81,12 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
         }
         updateWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        refreshUpdateInformation()
     }
 
     func setAutomaticChecks(_ enabled: Bool) {
         // Sparkle persists the user's choice; checking does not grant installation consent.
         controller.updater.automaticallyChecksForUpdates = enabled
         automaticallyChecksForUpdates = controller.updater.automaticallyChecksForUpdates
-    }
-
-    func setAutomaticDownloads(_ enabled: Bool) {
-        controller.updater.automaticallyDownloadsUpdates = enabled
-        automaticallyDownloadsUpdates = controller.updater.automaticallyDownloadsUpdates
     }
 
     func refreshUpdateInformation() {
@@ -117,20 +116,26 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
     }
 
     nonisolated func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool) -> Bool {
-        MainActor.assumeIsolated { !checkingOnLaunch || immediateFocus }
+        // The launch notice is our information window, even when Sparkle is
+        // downloading silently. Avoid a second, competing Sparkle alert.
+        MainActor.assumeIsolated { !checkingOnLaunch }
     }
 
     nonisolated func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
-        // Focus the existing Sparkle alert when it would otherwise wait for another activation.
+        // Installation remains Sparkle's responsibility; the user can bring
+        // its existing session forward using the download/install button.
         if !handleShowingUpdate {
-            MainActor.assumeIsolated { controller.checkForUpdates(nil) }
+            MainActor.assumeIsolated { showUpdateWindow() }
         }
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        guard manualCheck else { return }
+        guard manualCheck || checkingOnLaunch else { return }
         updateAvailable = true
         status = "v\(item.displayVersionString) 업데이트가 있습니다."
+        // Automatic downloads can omit Sparkle's alert entirely. Announce a
+        // discovered launch update independently of that installation policy.
+        if checkingOnLaunch { showUpdateWindow() }
         updateWindow?.setContentSize(NSSize(width: 500, height: 650))
         guard let url = item.releaseNotesURL, url.scheme == "https",
               ["cosmoss-app.pages.dev", "hoonably.github.io"].contains(url.host ?? "") else {
@@ -235,21 +240,7 @@ private struct UpdateCheckView: View {
                 .accessibilityIdentifier("automatic-updates")
                 Text(updates.isDevelopmentBuild
                      ? "설정은 저장되며, 자동 확인은 배포용 앱에서 적용됩니다."
-                     : "앱을 열 때 바로 확인하고, 실행 중에도 새 버전을 알려줍니다.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            VStack(alignment: .leading, spacing: 7) {
-                Toggle("자동 다운로드 및 설치", isOn: Binding(
-                    get: { updates.automaticallyDownloadsUpdates },
-                    set: { updates.setAutomaticDownloads($0) }
-                ))
-                .toggleStyle(.checkbox).font(.system(size: 13)).tint(accent)
-                .disabled(!updates.automaticallyChecksForUpdates)
-                .accessibilityIdentifier("automatic-downloads")
-                Text(updates.automaticallyChecksForUpdates
-                     ? "선택하면 새 버전을 내려받고 작업을 마친 뒤 앱 종료 시 설치합니다."
-                     : "자동 알림을 다시 켜면 저장된 다운로드·설치 선택이 적용됩니다.")
+                     : "앱을 열 때 바로 확인하고 새 버전을 알려줍니다. 다운로드·설치는 직접 선택할 때만 진행합니다.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
