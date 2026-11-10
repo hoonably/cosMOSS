@@ -11,6 +11,7 @@ final class BackendController {
 struct UpdatePreferencesChecks {
     @MainActor
     static func main() {
+        precondition(ReleaseNotesText.decode("<p>- One<br>- &lt;literal&gt; &amp; &#x27;quote&#39;</p>") == "- One\n- <literal> & 'quote'")
         let app = NSApplication.shared
         let mode = CommandLine.arguments[1]
         let startupAlert = mode == "startup-alert"

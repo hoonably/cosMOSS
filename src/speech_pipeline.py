@@ -14,7 +14,7 @@ except ModuleNotFoundError:
 
 PIPELINES = [
     {'key': 'moss-sglang', 'name': 'MOSS 0.9B · SGLang Omni', 'badge': '추천',
-     'description': '전체 녹음의 문맥을 유지해 전사한 뒤 Nemotron 0.1B로 화자를 구분합니다. 90분 초과 시 확인 후 최소 개수로 균등 분할합니다.',
+     'description': '문맥을 유지해 전사한 뒤 Nemotron 0.1B로 화자를 구분합니다. GPU별 자동 구간(최대 90분)을 넘으면 확인 후 최소 개수로 균등 분할합니다.',
      'reference': 'H200 · 65분37초 · 모델 준비 포함 3분19초 · Peak 약24.4 GiB'},
     {'key': 'qwen-transformers', 'name': 'Qwen3-ASR 1.7B · Transformers', 'badge': '빠른 전사',
      'description': '공식 SDK로 약 3분씩 전사한 뒤 시간 정렬과 Nemotron 0.1B를 순서대로 실행합니다.',
@@ -54,13 +54,13 @@ def linear_at(value, points):
     return left[1] + (right[1] - left[1]) * (value - left[0]) / (right[0] - left[0])
 
 
-def estimate_pipeline(key, duration, gpu, batch=0, observations=()):
+def estimate_pipeline(key, duration, gpu, batch=0, observations=(), *, moss_chunk_seconds=None):
     if key not in FAST_PIPELINES or not math.isfinite(duration) or duration <= 0:
         raise ValueError('전사 방식과 음성 길이를 확인해 주세요.')
     if batch not in (0, *BATCHES):
         raise ValueError('동시 청크 수를 다시 선택해 주세요.')
     if key in ENGINE_PIPELINES:
-        return estimate_engine(key, duration, gpu, batch, observations)
+        return estimate_engine(key, duration, gpu, batch, observations,moss_chunk_seconds=moss_chunk_seconds)
     # Quiet boundaries may be five seconds earlier than the nominal cut.
     # Budget for that extra tail chunk instead of accidentally turning a
     # measured single batch into two GPU waves (65:37 has 23 actual chunks).
@@ -111,18 +111,43 @@ def estimate_pipeline(key, duration, gpu, batch=0, observations=()):
             'time_source': source, 'memory_source': 'reference-plus-headroom'}
 
 
-def estimate_engine(key, duration, gpu, batch, observations):
+def estimate_engine(key, duration, gpu, batch, observations, *, moss_chunk_seconds=None):
     # Prediction runs on the client. Remote stage catalogs use only attribution.
-    from src.duration_estimates import server_estimate
-    if key != 'qwen-transformers' and duration > 5400:
-        ranges = balanced_moss_ranges(duration)
-        part = estimate_engine(key, duration/len(ranges), gpu, batch,
-                               [r for r in observations if r.get('audio_seconds',0) <= 5400])
-        return {**part, 'chunk_count':len(ranges), 'chunk_seconds':duration/len(ranges),
-                'time_seconds':part['time_seconds']*len(ranges) if part['time_seconds'] is not None else None,
-                'calibration_status':'provisional', 'calibration_extrapolated':True,
-                'calibration_note':f"{len(ranges)}개 균등 구간의 순차 처리 추정 · 전체 길이 실측 전",
-                'moss_partition_count':len(ranges)}
+    from src.duration_estimates import server_estimate, server_partition_estimate
+    from src.moss_context import recommend_moss_context
+    recommendation=recommend_moss_context(gpu,observations,duration=duration) if key!='qwen-transformers' else None
+    maximum=moss_chunk_seconds or (recommendation['seconds'] if recommendation else 5400)
+    if key != 'qwen-transformers' and duration > maximum:
+        ranges = balanced_moss_ranges(duration,maximum)
+        count = len(ranges)
+        part = estimate_engine(key, duration/count, gpu, batch,
+                               [r for r in observations if r.get('moss_partition_count', 1) == 1],moss_chunk_seconds=maximum)
+        setup = part.get('setup_seconds', 0)
+        elapsed = (max(1, round((part['time_seconds'] - setup)*count + setup))
+                   if part['time_seconds'] is not None else None)
+        name = ' '.join((gpu or {}).get('name', '').lower().removeprefix('nvidia ').split())
+        capacity = (gpu or {}).get('memory_total_mib', 0)/1024
+        nearby = [r for r in observations if r.get('pipeline') == key and r.get('runtime') == ENGINE_VERSION
+                  and r.get('gpu_name') == name and r.get('batch') == part['batch']
+                  and abs(r.get('capacity_gib', 0)-capacity) < 4
+                  and r.get('moss_partition_count', 1) == count
+                  and abs(r.get('audio_seconds', 0)-duration) <= duration*.1]
+        if nearby:
+            elapsed = round(median(r['inference_seconds']*duration/r['audio_seconds'] + r['load_seconds'] for r in nearby))
+        result = {**part, 'chunk_count':count, 'chunk_seconds':duration/count,
+                  'time_seconds':elapsed, 'calibration_status':'provisional', 'calibration_extrapolated':True,
+                  'calibration_note':f"{count}개 균등 구간의 순차 처리 추정 · 모델 준비 1회",
+                  'moss_partition_count':count,'moss_chunk_seconds':maximum,'moss_context_recommendation':recommendation}
+        if 'inference_seconds' in result:
+            result['inference_seconds'] *= count
+        measured_split = server_partition_estimate(key, duration, gpu, ENGINE_VERSION, count, part['batch'])
+        if measured_split:
+            result.update(measured_split)
+        if nearby:
+            result.update(time_source='observed', setup_seconds=median(r['load_seconds'] for r in nearby),
+                          inference_seconds=median(r['inference_seconds']*duration/r['audio_seconds'] for r in nearby),
+                          calibration_extrapolated=False, calibration_note='동일 GPU·방식·분할 수의 유사 길이 완료 실측 기반')
+        return result
     capacity = (gpu or {}).get('memory_total_mib')
     capacity = capacity / 1024 if capacity else None
     free = (gpu or {}).get('memory_free_mib')
@@ -139,7 +164,8 @@ def estimate_engine(key, duration, gpu, batch, observations):
         peak = round((24.42 if key=='moss-sglang' else 35.23)*1.12+1,1)
         seconds = duration
     name = ' '.join((gpu or {}).get('name','').lower().removeprefix('nvidia ').split())
-    compatible = [r for r in observations if r.get('pipeline')==key and r.get('runtime')==ENGINE_VERSION
+    compatible = [r for r in observations if r.get('moss_partition_count', 1) == 1
+                  and r.get('pipeline')==key and r.get('runtime')==ENGINE_VERSION
                   and r.get('gpu_name')==name and r.get('batch')==actual and capacity
                   and abs(r.get('capacity_gib',0)-capacity)<4]
     measured = server_estimate(key, duration, gpu, ENGINE_VERSION, actual)
@@ -161,14 +187,24 @@ def estimate_engine(key, duration, gpu, batch, observations):
         elapsed=round(row['inference_seconds']*duration/row['audio_seconds']+row['load_seconds'])
         peak=max(peak,round(row['peak_process_gib']*1.12+1,1))
         source='observed'
+    if not measured and key=='moss-sglang' and recommendation:
+        peak=recommendation.get('estimated_memory_gib',peak)
     result = dict(pipeline=key,batch=actual,requested_batch=batch,recommended_batch=actual,
         chunk_count=chunks,chunk_seconds=seconds,memory_expected_gib=peak,memory_high_gib=peak,
         capacity_gib=capacity,free_gib=free,budget_gib=round(capacity*.7,1) if capacity else None,
         exceeds_budget=bool(capacity and peak>capacity*.7),exceeds_capacity=bool(capacity and peak>capacity),
         exceeds_free=bool(free is not None and peak>free),capacity_kind='VRAM',time_seconds=elapsed,
         time_source=source,memory_source='reference-plus-headroom')
+    if not measured and compatible:
+        result.update(setup_seconds=row['load_seconds'],
+                      inference_seconds=row['inference_seconds']*duration/row['audio_seconds'])
     if measured:
         result.update({k:v for k,v in measured.items() if k not in {'time_seconds','memory_expected_gib','memory_high_gib','time_source'}})
+    if recommendation:
+        result.update(moss_chunk_seconds=maximum,moss_context_recommendation=recommendation)
+        if not measured:
+            result.update(calibration_status='provisional',calibration_extrapolated=True,
+                calibration_note='엔진 KV 예산 기반 추정 · 해당 GPU 실측 보완 중')
     return result
 
 

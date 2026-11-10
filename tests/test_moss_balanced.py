@@ -16,6 +16,63 @@ from src.speech_pipeline import estimate_pipeline
 
 
 class BalancedMossTests(unittest.TestCase):
+    def test_selected_context_limit_stays_balanced_without_gaps(self):
+        self.assertEqual(balanced_moss_ranges(5400,1800),[(0,1800),(1800,3600),(3600,5400)])
+        self.assertEqual(balanced_moss_ranges(6000,3600),[(0,3000),(3000,6000)])
+        for invalid in (0,-1,5401,float('nan')):
+            with self.assertRaises(ValueError):balanced_moss_ranges(5400,invalid)
+
+    def test_oom_restarts_only_after_completed_partition_and_halves_failed_range(self):
+        calls=[];events=[]
+        def run(**options):
+            calls.append(options)
+            if len(calls)==1:raise RuntimeError(engines.CUDA_OOM_MESSAGE)
+            return dict(items=[{'start':3600,'end':7200}],chunks=[{'offset':3600}],
+                        ranges=[[3600,5400],[5400,7200]],load_seconds=3,inference_seconds=4)
+        saved=dict(phase='processing',start_offset=0,completed_until=3600,items=[{'start':0,'end':3600}],
+                   chunks=[{'offset':0}],ranges=[[0,3600]],load_seconds=1,inference_seconds=2)
+        result=engines.run_moss_with_memory_retries(7200,run,lambda:saved,lambda **e:events.append(e),max_seconds=3600)
+        self.assertEqual(calls[1]['start_offset'],3600)
+        self.assertEqual(calls[1]['moss_chunk_seconds'],1800)
+        self.assertEqual(result['ranges'],[[0,3600],[3600,5400],[5400,7200]])
+        self.assertEqual(result['partition_count'],3)
+        self.assertEqual(result['load_seconds'],4)
+        self.assertEqual(result['inference_seconds'],6)
+        self.assertEqual(events[0]['resume_offset'],3600)
+
+    def test_short_file_oom_halves_actual_input_not_the_ninety_minute_ceiling(self):
+        calls=[]
+        def run(**options):
+            calls.append(options)
+            if len(calls)==1:raise RuntimeError(engines.CUDA_OOM_MESSAGE)
+            return dict(items=[],chunks=[],ranges=[[0,1800],[1800,3600]],load_seconds=0,inference_seconds=1)
+        saved=dict(phase='processing',start_offset=0,completed_until=0)
+        engines.run_moss_with_memory_retries(3600,run,lambda:saved,lambda **_:None)
+        self.assertEqual(calls[1]['moss_chunk_seconds'],1800)
+
+    def test_engine_capacity_rejections_retry_but_normal_token_truncation_does_not(self):
+        self.assertTrue(engines.is_moss_capacity_error('Request prompt exceeds the KV memory budget: input_len=60000.'))
+        self.assertTrue(engines.is_moss_capacity_error('Input length (71687 tokens) exceeds the maximum allowed length (69136 tokens). Use a shorter input or enable --allow-auto-truncate.'))
+        self.assertFalse(engines.is_moss_capacity_error('Requested token count (10 input + 65536 new) exceeds the context. Truncating max_new_tokens.'))
+        self.assertFalse(engines.is_moss_capacity_error('ServerArgs(max_total_tokens=131072, context_length=131072)'))
+        run=Mock(side_effect=[RuntimeError(engines.MOSS_CAPACITY_MESSAGE),
+            dict(items=[],chunks=[],ranges=[[0,2700],[2700,5400]],load_seconds=1,inference_seconds=2)])
+        result=engines.run_moss_with_memory_retries(5400,run,
+            lambda:dict(phase='processing',start_offset=0,completed_until=0),lambda **_:None)
+        self.assertEqual(result['moss_chunk_seconds'],2700)
+
+    def test_non_memory_and_startup_errors_do_not_repeat_and_retries_are_bounded(self):
+        for message,phase in [('invalid audio','processing'),(engines.CUDA_OOM_MESSAGE,'loading')]:
+            run=Mock(side_effect=RuntimeError(message))
+            with self.assertRaises(RuntimeError):
+                engines.run_moss_with_memory_retries(5400,run,lambda:dict(phase=phase,start_offset=0),lambda **_:None)
+            self.assertEqual(run.call_count,1)
+        run=Mock(side_effect=RuntimeError(engines.CUDA_OOM_MESSAGE))
+        with self.assertRaises(RuntimeError):
+            engines.run_moss_with_memory_retries(5400,run,
+                lambda:dict(phase='processing',start_offset=0,completed_until=0),lambda **_:None,max_retries=2)
+        self.assertEqual(run.call_count,3)
+
     def test_minimum_equal_ranges_include_exact_boundary_and_fractional_durations(self):
         for duration,count,seconds in [(5400,1,5400),(6000,2,3000),(12600,3,4200),(5400.1,2,2700.05)]:
             parts=balanced_moss_ranges(duration)
@@ -67,7 +124,7 @@ class BalancedMossTests(unittest.TestCase):
         long=estimate_pipeline('moss-sglang',12600,gpu)
         self.assertEqual(long['chunk_count'],3)
         self.assertEqual(long['memory_expected_gib'],short['memory_expected_gib'])
-        self.assertEqual(long['time_seconds'],3*short['time_seconds'])
+        self.assertAlmostEqual(long['time_seconds'],3*(short['time_seconds']-short['setup_seconds'])+short['setup_seconds'],delta=1)
 
     def test_worker_crops_only_each_partition_and_loads_the_model_once(self):
         spec=importlib.util.spec_from_file_location('moss_worker_fixture',Path(engines.__file__).with_name('speech_engine_worker.py'))
@@ -98,6 +155,38 @@ class BalancedMossTests(unittest.TestCase):
             self.assertFalse(output.with_suffix('.remaining.wav').exists())
             result=json.loads(output.read_text())
             self.assertEqual(result['items'][-1]['end'],6000)
+
+    def test_worker_checkpoint_and_fresh_restart_preserve_completed_audio(self):
+        spec=importlib.util.spec_from_file_location('moss_checkpoint_fixture',Path(engines.__file__).with_name('speech_engine_worker.py'))
+        worker=importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules,{'speech_engines':engines}):spec.loader.exec_module(worker)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);source=root/'input.wav';output=root/'result.json';seen=[]
+            with wave.open(str(source),'wb') as stream:
+                stream.setparams((1,2,2,12000,'NONE','not compressed'))
+                stream.writeframes(b'\x01\0'*6000+b'\x02\0'*6000)
+            def post(url,**kwargs):
+                with wave.open(kwargs['files']['file'][1],'rb') as audio:
+                    sample=audio.readframes(1);seconds=audio.getnframes()/audio.getframerate()
+                seen.append((sample,seconds))
+                if len(seen)==2:raise RuntimeError(engines.CUDA_OOM_MESSAGE)
+                return SimpleNamespace(raise_for_status=lambda:None,json=lambda:{'text':f'[0][S01]part[{seconds}]'})
+            client=Mock();client.__enter__=Mock(return_value=client);client.__exit__=Mock(return_value=False)
+            client.get.return_value=SimpleNamespace(status_code=200);client.post.side_effect=post
+            children=[Mock(),Mock()]
+            for child in children:child.poll.return_value=None
+            def run(**options):
+                worker.moss(dict(duration=6000,audio=str(source),output=str(output),paths={'moss':'fixture'},
+                                 ipc_path=str(root/'ipc'),**options))
+                return json.loads(output.read_text())
+            with patch('httpx.Client',return_value=client),patch.object(worker.subprocess,'Popen',side_effect=children) as launch:
+                result=engines.run_moss_with_memory_retries(6000,run,
+                    lambda:json.loads(output.with_suffix('.checkpoint.json').read_text()),lambda **_:None,max_seconds=3000)
+            self.assertEqual(seen,[(b'\x01\0',3000),(b'\x02\0',3000),(b'\x02\0',1500),(b'\x02\0',1500)])
+            self.assertEqual([(r['start'],r['end']) for r in result['items']],[(0,3000),(3000,4500),(4500,6000)])
+            self.assertEqual(result['partition_count'],3)
+            self.assertEqual(launch.call_count,2)
+            for child in children:child.terminate.assert_called_once()
 
 
 class LongMossConsentTests(unittest.IsolatedAsyncioTestCase):
@@ -144,3 +233,17 @@ class LongMossConsentTests(unittest.IsolatedAsyncioTestCase):
         join.assert_not_called()
         self.assertEqual(len(case.store.list_uploads()),2)
         self.assertTrue(case.queue.empty())
+
+    async def test_gpu_specific_split_below_ninety_minutes_requires_the_actual_plan(self):
+        case=self.case;identity,_=case.upload(10);case.store.update_upload(identity,duration=5400)
+        with patch('src.moss_context.recommend_moss_context',return_value={'seconds':1800,'measured':False}):
+            response=await self.submit(identity)
+            self.assertEqual(response.status_code,409,response.text)
+            self.assertEqual(response.json()['detail']['count'],3)
+            self.assertEqual(response.json()['detail']['max_seconds'],1800)
+            self.assertTrue(case.queue.empty())
+            response=await self.submit(identity,allow_moss_split='true')
+            self.assertEqual(response.status_code,202,response.text)
+            note=case.store.get(identity)
+            self.assertEqual(note['chunk_count'],3)
+            self.assertEqual(json.loads(note['device_snapshot_json'])['options']['moss_chunk_seconds'],1800)

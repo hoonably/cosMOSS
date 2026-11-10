@@ -11,6 +11,10 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
     @Published private(set) var automaticallyDownloadsUpdates = false
     @Published private(set) var isChecking = false
     @Published private(set) var updateAvailable = false
+    @Published private(set) var releaseNotes = ""
+    @Published private(set) var isLoadingNotes = false
+    @Published private(set) var notesFailed = false
+    private var releaseNotesTask: Task<Void, Never>?
     @Published private(set) var status = "새 버전을 확인합니다."
     private var observers: Set<AnyCancellable> = []
     private var updateWindow: NSWindow?
@@ -62,7 +66,7 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
     func checkForUpdates() {
         start()
         if updateWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 380),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 420),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = "업데이트 확인"
             window.isReleasedWhenClosed = false
@@ -93,6 +97,11 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
             status = "업데이트 확인을 준비하고 있습니다…"
             return
         }
+        releaseNotesTask?.cancel()
+        releaseNotes = ""
+        isLoadingNotes = false
+        notesFailed = false
+        updateWindow?.setContentSize(NSSize(width: 500, height: 420))
         pendingCheck = false
         manualCheck = true
         isChecking = true
@@ -122,6 +131,34 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate, SP
         guard manualCheck else { return }
         updateAvailable = true
         status = "v\(item.displayVersionString) 업데이트가 있습니다."
+        updateWindow?.setContentSize(NSSize(width: 500, height: 650))
+        guard let url = item.releaseNotesURL, url.scheme == "https",
+              ["cosmoss-app.pages.dev", "hoonably.github.io"].contains(url.host ?? "") else {
+            notesFailed = true
+            return
+        }
+        isLoadingNotes = true
+        releaseNotesTask?.cancel()
+        releaseNotesTask = Task { [weak self] in
+            do {
+                var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+                request.timeoutInterval = 15
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard !Task.isCancelled else { return }
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      data.count <= 262144, let html = String(data: data, encoding: .utf8) else {
+                    throw URLError(.badServerResponse)
+                }
+                let text = ReleaseNotesText.decode(html)
+                guard !text.isEmpty else { throw URLError(.cannotDecodeContentData) }
+                self?.releaseNotes = text
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.notesFailed = true
+            }
+            self?.isLoadingNotes = false
+        }
+
     }
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
@@ -183,6 +220,9 @@ private struct UpdateCheckView: View {
                     .accessibilityIdentifier("update-status")
             }
             .frame(minHeight: 20, alignment: .leading)
+            if updates.updateAvailable {
+                UpdateNotesView(text: updates.releaseNotes, loading: updates.isLoadingNotes, failed: updates.notesFailed)
+            }
             Divider()
             VStack(alignment: .leading, spacing: 7) {
                 Toggle("새 버전 자동 알림", isOn: Binding(
@@ -235,7 +275,61 @@ private struct UpdateCheckView: View {
             }
         }
         .padding(28)
-        .frame(width: 440)
+        .frame(width: 500)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+
+private struct UpdateNotesView: View {
+    let text: String
+    let loading: Bool
+    let failed: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("업데이트 내용").font(.system(size: 13, weight: .semibold))
+            if loading {
+                HStack { ProgressView().controlSize(.small); Text("변경 내용을 불러오고 있습니다…").font(.system(size: 12)) }
+            } else if failed {
+                Text("변경 내용을 불러오지 못했습니다. 아래 ‘변경 내용’ 링크에서 확인할 수 있습니다.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text))
+                        .font(.system(size: 13)).lineSpacing(5)
+                        .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                }
+                .frame(height: 190)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityIdentifier("update-release-notes")
+    }
+}
+
+/// The release publisher wraps escaped Markdown in one paragraph. Render text,
+/// never remote HTML/scripts, in the update information window.
+enum ReleaseNotesText {
+    static func decode(_ html: String) -> String {
+        guard let open = html.range(of: "<p>", options: .caseInsensitive),
+              let close = html.range(of: "</p>", options: .caseInsensitive, range: open.upperBound..<html.endIndex) else { return "" }
+        var text = String(html[open.upperBound..<close.lowerBound])
+        text = text.replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        if let regex = try? NSRegularExpression(pattern: "&#(x[0-9a-fA-F]+|[0-9]+);") {
+            for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+                guard let full = Range(match.range, in: text), let digits = Range(match.range(at: 1), in: text) else { continue }
+                let value = String(text[digits])
+                let number = value.hasPrefix("x") ? UInt32(value.dropFirst(), radix: 16) : UInt32(value)
+                if let number, let scalar = UnicodeScalar(number) { text.replaceSubrange(full, with: String(scalar)) }
+            }
+        }
+        for (entity, value) in [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&apos;", "'"), ("&amp;", "&")] {
+            text = text.replacingOccurrences(of: entity, with: value)
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

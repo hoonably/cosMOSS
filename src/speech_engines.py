@@ -3,6 +3,23 @@ from __future__ import annotations
 
 ENGINE_VERSION = 'speech-engines-sg019-qwen006-nemo5202-v1'
 ENGINE_PIPELINES = {'moss-sglang', 'qwen-transformers', 'moss-qwen-sequential'}
+CUDA_OOM_MESSAGE = 'GPU 메모리 부족(CUDA OOM)으로 전사가 중단됐습니다. 더 짧게 나누거나 다른 GPU에서 다시 시도해 주세요.'
+MOSS_CAPACITY_MESSAGE = 'MOSS 입력이 현재 엔진의 메모리·문맥 한도를 넘었습니다.'
+
+
+def is_cuda_oom(text):
+    return any(marker in text.lower() for marker in ('cuda out of memory', 'cuda error: out of memory',
+               'torch.outofmemoryerror', 'torch.cuda.outofmemoryerror', 'cuda oom'))
+
+
+def is_moss_capacity_error(text):
+    import re
+    return any('truncating' not in line.lower() and (
+        MOSS_CAPACITY_MESSAGE in line or 'request prompt exceeds the kv memory budget' in line.lower()
+        or 'requested token count exceeds the model\'s maximum context length' in line.lower()
+        or re.search(r'input length \(\d+ tokens\) exceeds the maximum allowed length \(\d+ tokens\)',line,re.I)
+        or re.search(r'the input \(\d+ tokens\) is longer than the model.s context length',line,re.I))
+        for line in text.splitlines())
 
 
 def transcribe_qwen_adaptively(parts, infer, parse, on_progress, *, batch, sample_rate=16000, min_seconds=5):
@@ -161,23 +178,24 @@ def missing_moss_tail(items, turns):
     return last_text if last_voice-last_text > 5 and voiced >= 3 else None
 
 
-def balanced_moss_ranges(duration):
-    """Use the fewest <=90-minute requests, with equally sized contexts."""
+def balanced_moss_ranges(duration, max_seconds=5400):
+    """Use the fewest requests within a selected <=90-minute context."""
     import math
-    if not math.isfinite(duration) or duration <= 0:
+    if not math.isfinite(duration) or duration <= 0 or not math.isfinite(max_seconds) or not 0 < max_seconds <= 5400:
         raise ValueError('Invalid MOSS audio duration')
-    count = math.ceil(duration / 5400)
+    count = math.ceil(duration / max_seconds)
     return [(duration*i/count, duration*(i+1)/count) for i in range(count)]
 
 
-def transcribe_moss_balanced(duration, infer, on_progress, *, allow_split=False, start_offset=0, end_offset=None):
-    ranges = balanced_moss_ranges(duration)
+def transcribe_moss_balanced(duration, infer, on_progress, *, allow_split=False, start_offset=0, end_offset=None,
+                             max_seconds=5400, on_partition_complete=None):
+    ranges = balanced_moss_ranges(duration, max_seconds)
     if len(ranges) > 1 and not allow_split:
         raise ValueError('90분을 넘는 MOSS 녹음은 균등 분할 확인이 필요합니다.')
     end_offset = duration if end_offset is None else end_offset
     if not 0 <= start_offset < end_offset <= duration:
         raise ValueError('Invalid MOSS audio range')
-    items, chunks = [], []
+    items, chunks, completed_ranges = [], [], []
     for index, (a, b) in enumerate(ranges):
         a, b = max(a, start_offset), min(b, end_offset)
         if a >= b:
@@ -193,13 +211,16 @@ def transcribe_moss_balanced(duration, infer, on_progress, *, allow_split=False,
         chunks.extend({**chunk, 'offset':chunk['offset']+a, 'end':b,
                        'transcribed_end':chunk['transcribed_end']+a,
                        'partition_index':index+1, 'partition_count':len(ranges)} for chunk in audit)
+        completed_ranges.append([a,b])
+        if on_partition_complete:
+            on_partition_complete(items, chunks, completed_ranges)
         on_progress(partition_index=index+1, partition_count=len(ranges),
                     chunk_count=len(ranges), completed=index+1)
     return items, chunks
 
 
-def missing_moss_partition_tail(items, turns, duration):
-    for start, end in balanced_moss_ranges(duration):
+def missing_moss_partition_tail(items, turns, duration, ranges=None):
+    for start, end in ranges if ranges is not None else balanced_moss_ranges(duration):
         rows = [{'end':start}] + [{'end':min(row['end'],end)} for row in items
                                 if row['start'] < end and row['end'] > start]
         speech = [dict(start=max(turn['start'],start),end=min(turn['end'],end)) for turn in turns
@@ -208,3 +229,49 @@ def missing_moss_partition_tail(items, turns, duration):
         if offset is not None:
             return offset, end
     return None
+
+
+def run_moss_with_memory_retries(duration, run, checkpoint, on_retry, *, max_seconds=5400,
+                                 start_offset=0, end_offset=None, min_seconds=60, max_retries=7):
+    """Restart an OOM stage with smaller contexts, preserving finished partitions."""
+    import math
+    end_offset = duration if end_offset is None else end_offset
+    merged = dict(items=[], chunks=[], ranges=[], load_seconds=0, inference_seconds=0)
+    retries=[]
+    offset=start_offset
+    for attempt in range(max_retries+1):
+        try:
+            result=run(start_offset=offset,end_offset=end_offset,moss_chunk_seconds=max_seconds,
+                       memory_retry_count=attempt,allow_moss_split=True)
+        except RuntimeError as error:
+            if not (is_cuda_oom(str(error)) or is_moss_capacity_error(str(error))):
+                raise
+            saved=checkpoint() or {}
+            # Shortening audio cannot fix an engine that cannot load at all.
+            if saved.get('phase') != 'processing' or attempt==max_retries:
+                raise
+            covered=saved.get('completed_until',offset)
+            if saved.get('start_offset') != offset or not offset <= covered <= end_offset:
+                raise RuntimeError('메모리 재시도 위치를 확인하지 못했습니다. 불완전한 전사를 저장하지 않았습니다.') from error
+            for field in ('items','chunks','ranges'):
+                merged[field].extend(saved.get(field,[]))
+            for field in ('load_seconds','inference_seconds'):
+                merged[field]+=saved.get(field,0)
+            offset=covered
+            if offset>=end_offset:
+                raise
+            failed=next((min(b,end_offset)-max(a,offset) for a,b in balanced_moss_ranges(duration,max_seconds)
+                         if a<end_offset and b>offset),end_offset-offset)
+            if failed<=min_seconds:
+                raise
+            smaller=max(min_seconds,math.floor(failed/2))
+            retries.append(dict(attempt=attempt+1,resume_offset=offset,previous_seconds=failed,max_seconds=smaller))
+            max_seconds=smaller
+            on_retry(**retries[-1])
+            continue
+        for field in ('items','chunks','ranges'):
+            merged[field].extend(result.get(field,[]))
+        for field in ('load_seconds','inference_seconds'):
+            merged[field]+=result.get(field,0)
+        return {**result,**merged,'partition_count':len(merged['ranges']) or result.get('partition_count',1),
+                'moss_chunk_seconds':max_seconds,'adaptive_memory_retries':retries}

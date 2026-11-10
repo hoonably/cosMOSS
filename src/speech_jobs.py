@@ -9,7 +9,7 @@ import shlex
 import sqlite3
 
 from src.speech_pipeline import FAST_PIPELINES
-from src.speech_engines import ENGINE_PIPELINES, runtime_for
+from src.speech_engines import CUDA_OOM_MESSAGE, ENGINE_PIPELINES, is_cuda_oom, runtime_for
 from src.ssh_devices import discover_hosts, ssh_arguments
 
 
@@ -28,7 +28,7 @@ class SpeechJobs:
     def record(self, result):
         # Only numeric/runtime identity metadata; never persist recordings,
         # transcripts, filenames, SSH hosts, note IDs or GPU UUIDs here.
-        if (result.get('moss_partition_count', 1) > 1 or result.get('runtime') != runtime_for(result.get('pipeline'))
+        if (result.get('runtime') != runtime_for(result.get('pipeline')) or result.get('adaptive_memory_retries')
                 or not result.get('segments') or not result.get('peak_process_mib')):
             return
         positive = ('audio_seconds', 'inference_seconds', 'capacity_gib', 'peak_process_mib')
@@ -39,6 +39,10 @@ class SpeechJobs:
             return
         sample = {key: result[key] for key in ('pipeline', 'runtime', 'batch', 'audio_seconds', 'inference_seconds',
                                                'load_seconds', 'capacity_gib')}
+        partitions = result.get('moss_partition_count', 1)
+        if type(partitions) is not int or not 1 <= partitions <= 1000:
+            return
+        sample['moss_partition_count'] = partitions
         sample['gpu_name'] = ' '.join(result['gpu_name'].lower().removeprefix('nvidia ').split())
         sample['peak_process_gib'] = result['peak_process_mib'] / 1024
         with sqlite3.connect(self.database) as connection:
@@ -83,7 +87,7 @@ class SpeechJobs:
             '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=3', '--', host,
             'python3 -u -c ' + shlex.quote(bootstrap), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, limit=32 * 1024**2)
-        last, remote_error, detail = {}, '', ''
+        last, remote_error, detail, memory_error = {}, '', '', ''
         async def send():
             process.stdin.write(json.dumps(request).encode() + b'\n')
             await process.stdin.drain()
@@ -104,15 +108,20 @@ class SpeechJobs:
                     line = raw.decode(errors='replace').strip()
                     if line.startswith('COSMOSS_SPEECH:'):
                         event = json.loads(line.split(':', 1)[1])
+                        if event.get('phase') == 'loading':
+                            memory_error = ''
+                            remote_error = ''
                         if event.get('phase') == 'error' and not remote_error:
                             remote_error = event.get('error', '')
                         last = event
                         on_event(event)
                     elif line:
                         detail = line[-1200:]
+                        if is_cuda_oom(line):
+                            memory_error = CUDA_OOM_MESSAGE
                 await process.wait()
             if process.returncode or last.get('phase') not in {'installed', 'done', 'idle'}:
-                raise RuntimeError(remote_error or last.get('error') or detail or '원격 전사 결과를 받지 못했습니다.')
+                raise RuntimeError(memory_error or remote_error or last.get('error') or detail or '원격 전사 결과를 받지 못했습니다.')
             if action == 'run' and (last.get('phase') != 'done' or not isinstance(last.get('result'), dict)):
                 raise RuntimeError('원격 전사 결과가 불완전합니다.')
             return last

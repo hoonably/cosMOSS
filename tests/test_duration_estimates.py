@@ -1,5 +1,6 @@
 """Regression against held-out measurements, hardware boundaries and UI plans."""
 import json
+import copy
 from pathlib import Path
 import tempfile
 import time
@@ -38,16 +39,36 @@ class CalibrationTests(unittest.TestCase):
         self.assertLess(no_bridge['time_seconds'],bridge['time_seconds'])
         self.assertEqual(no_bridge['memory_raw_gib'],bridge['memory_raw_gib'])
 
-    def test_held_out_server_time_and_raw_peak_errors_remain_within_measured_bounds(self):
+    def test_legacy_held_out_server_time_and_raw_peak_errors_remain_within_measured_bounds(self):
         measured={'moss-sglang':(124.5587,20.05664,.02),
                   'qwen-transformers':(68.58135,13.33984,.05),
                   'moss-qwen-sequential':(261.45834,20.05664,.15)}
-        for key,(elapsed,peak,tolerance) in measured.items():
-            estimate=estimate_pipeline(key,1320,H200)
-            self.assertLess(abs(estimate['time_seconds']/elapsed-1),tolerance)
-            self.assertLess(abs(estimate['memory_raw_gib']/peak-1),.022)
-            self.assertGreater(estimate['memory_expected_gib'],peak)
-            self.assertEqual(estimate['calibration_status'],'checked')
+        legacy = {**calibrations(), 'server_profiles': {}}
+        with patch('src.duration_estimates.calibrations', return_value=legacy):
+            for key,(elapsed,peak,tolerance) in measured.items():
+                estimate=estimate_pipeline(key,1320,H200)
+                self.assertLess(abs(estimate['time_seconds']/elapsed-1),tolerance)
+                self.assertLess(abs(estimate['memory_raw_gib']/peak-1),.022)
+                self.assertGreater(estimate['memory_expected_gib'],peak)
+                self.assertEqual(estimate['calibration_status'],'checked')
+
+    def test_hardware_specific_profiles_and_measured_split_costs_do_not_leak(self):
+        config = copy.deepcopy(calibrations())
+        profile = copy.deepcopy(config['profiles']['moss-sglang'])
+        profile.update(hardware={'name':'fixture gpu','capacity_gib':48},
+            time_knots=[[600,10],[1800,50]], memory_knots=[[600,8],[1800,10]],
+            cold_setup_seconds=20, split_time_knots={'2':[[7200,250],[10800,500]]})
+        config['server_profiles'] = {'moss-sglang':[profile]}
+        gpu = {'name':'NVIDIA Fixture GPU','memory_total_mib':48*1024}
+        with patch('src.duration_estimates.calibrations', return_value=config):
+            self.assertEqual(estimate_pipeline('moss-sglang',900,gpu)['time_seconds'],40)
+            split = estimate_pipeline('moss-sglang',7200,gpu)
+            self.assertEqual(split['time_seconds'],270)
+            self.assertEqual(split['setup_seconds'],20)
+            self.assertEqual(split['inference_seconds'],250)
+            self.assertIsNone(estimate_pipeline('moss-sglang',900,{**gpu,'name':'Other GPU'})['time_seconds'])
+            self.assertIsNone(estimate_pipeline('moss-sglang',900,{**gpu,'memory_total_mib':80*1024})['time_seconds'])
+            self.assertIsNone(estimate_pipeline('qwen-transformers',900,gpu)['time_seconds'])
 
     def test_mac_validation_limits_are_exposed_instead_of_claiming_accuracy(self):
         checked=mac_estimate(mac('mlx-16bit'),1320,1,M4,MLX_RUNTIME)
@@ -217,8 +238,9 @@ class CalibrationAPITests(unittest.IsolatedAsyncioTestCase):
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),base_url='http://localhost') as client:
                     response=await client.get(f'/api/devices/{device["id"]}/speech-estimate',params={'pipeline':'moss-sglang','duration':1320,'gpu_uuid':'GPU-fixture'})
                 self.assertEqual(response.status_code,200,response.text)
-                self.assertEqual(response.json()['time_seconds'],124)
-                self.assertEqual(response.json()['memory_expected_gib'],23.4)
+                expected = estimate_pipeline('moss-sglang',1320,H200)
+                self.assertEqual(response.json()['time_seconds'],expected['time_seconds'])
+                self.assertEqual(response.json()['memory_expected_gib'],expected['memory_expected_gib'])
                 execute.assert_not_called()
 
 

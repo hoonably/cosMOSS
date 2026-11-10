@@ -463,7 +463,9 @@ class Summaries:
                     *command(provider, binary, output, schema, model=state.get('model', ''), effort=state.get('effort', '')), cwd=temporary_folder, env=environment, start_new_session=True,
                     stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await asyncio.wait_for(process.communicate(prompt.encode("utf-8")), timeout=900)
+                # Long transcripts can legitimately take over 15 minutes. The
+                # user can cancel; provider failures still surface via exit status.
+                stdout, stderr = await process.communicate(prompt.encode("utf-8"))
                 if process.returncode:
                     detail = (stderr or stdout).decode("utf-8", errors="replace")[-1800:].strip()
                     raise ValueError(f"{PROVIDERS[provider]['name']} 실행 실패. {detail or '터미널에서 CLI 로그인 상태를 확인해 주세요.'}")
@@ -492,8 +494,6 @@ class Summaries:
         except asyncio.CancelledError:
             self._save(note_id, {**state, "phase": "cancelled", "error": None})
             raise
-        except asyncio.TimeoutError:
-            self._save(note_id, {**state, "phase": "error", "error": "요약 시간이 15분을 넘었습니다. 노트를 나누거나 다시 실행해 주세요."})
         except (OSError, ValueError, TypeError) as error:
             self._save(note_id, {**state, "phase": "error", "error": str(error)})
         finally:

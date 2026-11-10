@@ -1,0 +1,3918 @@
+{
+  "schema": 1,
+  "scope": "CUDA MOSS BF16 context policy; single-request failure diagnostic and full automatic pipeline validation. No audio or transcript content.",
+  "single_90_minute_requests": {
+    "h200": {
+      "schema": 1,
+      "status": "completed",
+      "pipeline": "MOSS SGLang only; one unsplit request per point",
+      "precision": "bf16",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "max_total_tokens": 131072,
+      "context_length": 131072,
+      "max_new_tokens": "max(512,min(65536,ceil(audio_seconds*20)))",
+      "mem_fraction_static": 0.4,
+      "cases": [
+        {
+          "minutes": 90,
+          "audio_seconds": 5400,
+          "peak_process_mib": 27436,
+          "samples": 265,
+          "missing_samples": 0,
+          "wall_seconds": 150.21234671771526,
+          "memory_trace": [
+            {
+              "elapsed_seconds": 0.06,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 0.622,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 1.191,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 1.753,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 2.313,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 2.879,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 3.438,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 4.007,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 4.565,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 5.125,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 5.683,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 6.238,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 6.795,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 7.349,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 7.906,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 8.461,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 9.019,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 9.575,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 10.135,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 10.69,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 11.25,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 11.808,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 12.366,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 12.931,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 13.488,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 14.069,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 14.624,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 15.197,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 15.754,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 16.318,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 16.887,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 17.456,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 18.02,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 18.578,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 19.14,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 19.701,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 20.265,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 20.82,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 21.382,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 21.982,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 22.581,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 23.177,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 23.744,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 24.379,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 24.965,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 25.523,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 26.082,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 26.637,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 27.193,
+              "gpu_mib": 0,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 27.748,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 28.301,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 28.854,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 29.408,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 29.962,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 30.514,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 31.069,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 31.621,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 32.176,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 32.732,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 33.285,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 33.839,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 34.393,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 34.946,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 35.504,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 36.065,
+              "gpu_mib": 518,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 36.624,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 37.176,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 37.745,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 38.298,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 38.858,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 39.41,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 39.969,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 40.527,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 41.085,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 41.638,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 42.193,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 42.746,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 43.311,
+              "gpu_mib": 612,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 43.867,
+              "gpu_mib": 682,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 44.426,
+              "gpu_mib": 2590,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 44.982,
+              "gpu_mib": 17096,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 45.555,
+              "gpu_mib": 17118,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 46.113,
+              "gpu_mib": 17490,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 46.667,
+              "gpu_mib": 17528,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 47.218,
+              "gpu_mib": 17574,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 47.774,
+              "gpu_mib": 17614,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 48.329,
+              "gpu_mib": 17652,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 48.88,
+              "gpu_mib": 17684,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 49.442,
+              "gpu_mib": 17558,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 49.998,
+              "gpu_mib": 17558,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 50.557,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 51.113,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 51.679,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 52.235,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 52.794,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 53.35,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 53.914,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 54.468,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 55.024,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 55.58,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 56.135,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 56.69,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 57.253,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 57.805,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 58.36,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 58.916,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 59.477,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 60.033,
+              "gpu_mib": 17562,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 60.585,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 61.14,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 61.695,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 62.251,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 62.811,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 63.371,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 63.922,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 64.48,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 65.032,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 65.596,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 66.148,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 66.711,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 67.268,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 67.832,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 68.385,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 68.938,
+              "gpu_mib": 17564,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 69.493,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 70.047,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 70.601,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 71.173,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 71.727,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 72.283,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 72.834,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 73.389,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 73.946,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 74.501,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 75.055,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 75.611,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 76.165,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 76.721,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 77.281,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 77.837,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 78.395,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 78.95,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 79.514,
+              "gpu_mib": 17568,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 80.07,
+              "gpu_mib": 18026,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 80.638,
+              "gpu_mib": 18160,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 81.209,
+              "gpu_mib": 18032,
+              "phase": "loading"
+            },
+            {
+              "elapsed_seconds": 81.773,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 82.323,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 82.876,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 83.43,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 83.981,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 84.536,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 85.093,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 85.647,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 86.205,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 86.757,
+              "gpu_mib": 18248,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 87.328,
+              "gpu_mib": 27400,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 87.884,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 88.442,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 88.997,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 89.563,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 90.12,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 90.677,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 91.231,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 91.788,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 92.347,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 92.904,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 93.473,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 94.029,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 94.59,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 95.148,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 95.717,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 96.274,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 96.841,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 97.395,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 97.961,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 98.515,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 99.072,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 99.627,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 100.183,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 100.739,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 101.297,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 101.853,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 102.411,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 102.968,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 103.528,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 104.084,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 104.64,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 105.196,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 105.751,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 106.308,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 106.865,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 107.433,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 107.991,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 108.551,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 109.111,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 109.68,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 110.236,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 110.799,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 111.354,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 111.92,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 112.478,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 113.037,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 113.594,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 114.156,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 114.713,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 115.285,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 115.841,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 116.401,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 116.959,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 117.524,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 118.08,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 118.639,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 119.195,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 119.751,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 120.307,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 120.864,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 121.421,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 121.976,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 122.531,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 123.088,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 123.658,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 124.214,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 124.785,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 125.34,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 125.907,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 126.463,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 127.02,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 127.575,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 128.141,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 128.697,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 129.253,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 129.809,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 130.369,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 130.924,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 131.484,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 132.042,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 132.599,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 133.154,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 133.71,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 134.265,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 134.82,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 135.378,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 135.935,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 136.489,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 137.044,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 137.601,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 138.157,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 138.718,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 139.274,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 139.842,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 140.403,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 140.962,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 141.517,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 142.07,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 142.629,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 143.186,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 143.743,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 144.3,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 144.854,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 145.416,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 145.971,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 146.525,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 147.078,
+              "gpu_mib": 27436,
+              "phase": "processing"
+            },
+            {
+              "elapsed_seconds": 147.639,
+              "gpu_mib": 0,
+              "phase": "processing"
+            }
+          ],
+          "status": "request_ok",
+          "load_seconds": 81.16070256382227,
+          "inference_seconds": 64.80293067544699,
+          "output_characters": 21556,
+          "segment_count": 471
+        }
+      ],
+      "protocol": "One 90-minute MOSS request. No app percentage guard, no CPU/disk offload, no continuation or diarization. Same real recording prefix as earlier sweep. Measures request execution/peak memory, not transcript completeness or accuracy.",
+      "gpu_name": "NVIDIA H200",
+      "capacity_mib": 143771,
+      "stop_reason": "90_minute_measurement_complete",
+      "private_audio_removed": true,
+      "prior_duration_points": [
+        {
+          "minutes": 10.0,
+          "peak_process_gib": 18.859375
+        },
+        {
+          "minutes": 30.0,
+          "peak_process_gib": 20.845703125
+        },
+        {
+          "minutes": 60.0,
+          "peak_process_gib": 23.82421875
+        },
+        {
+          "minutes": 90.0,
+          "peak_process_gib": 26.79296875
+        }
+      ],
+      "verification": {
+        "gpu_processes_released": true,
+        "gpu_memory_after_mib": 4,
+        "private_audio_removed": true,
+        "private_remote_directories_removed": true,
+        "product_code_changed": false,
+        "app_reinstalled": false,
+        "committed_or_pushed_or_released": false
+      },
+      "excluded_attempts": [
+        {
+          "audio_minutes": 30,
+          "reason": "Measurement callback failed before transcription; excluded from all charts."
+        }
+      ],
+      "model_supported_input_reference": "https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize"
+    },
+    "3090": {
+      "gpu_name": "NVIDIA GeForce RTX 3090",
+      "gpu_index": 1,
+      "capacity_mib": 24576,
+      "status": "error",
+      "actual_error_type": "engine_capacity_limit",
+      "concise_error": "Input length 71687 tokens exceeds max_req_input_len 69136 tokens.",
+      "peak_process_mib": 20508,
+      "load_seconds": 83.76327801961452,
+      "inference_seconds": 13.420245746150613,
+      "wall_seconds": 99.29491290450096,
+      "sample_interval_seconds": 0.5,
+      "missing_samples": 0,
+      "output_characters": null,
+      "segment_count": null,
+      "cleanup_verified": true,
+      "phase_boundaries": [
+        [
+          0,
+          "loading"
+        ],
+        [
+          83.763287,
+          "processing"
+        ],
+        [
+          97.185191,
+          "cleanup"
+        ]
+      ],
+      "http_status_code": 400,
+      "request_count": 1,
+      "audio_seconds": 5400,
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "vram_percentage_guard": false,
+      "automatic_split": false,
+      "continuation": false,
+      "nemotron": false,
+      "request_verified": {
+        "model_matches_manifest": true,
+        "parameter_names": [
+          "model",
+          "response_format",
+          "temperature",
+          "repetition_penalty",
+          "max_new_tokens"
+        ],
+        "response_format": "verbose_json",
+        "temperature": 0,
+        "repetition_penalty": 1,
+        "max_new_tokens": 65536,
+        "file_name": "audio.wav",
+        "file_mime": "audio/wav"
+      },
+      "input_token_length": 71687,
+      "max_req_input_len": 69136,
+      "input_rejection_comparison": ">=",
+      "input_tokens_over_limit": 2551,
+      "kv_cache_token_capacity": 69138,
+      "kv_cache_k_size_gb_logged": 3.69,
+      "kv_cache_v_size_gb_logged": 3.69,
+      "configured_max_total_tokens": 131072,
+      "configured_mem_fraction_static": 0.4,
+      "cuda_oom_message_present": false,
+      "error_detail_available": true,
+      "error_message": "Input length (71687 tokens) exceeds the maximum allowed length (69136 tokens). Use a shorter input or enable --allow-auto-truncate.",
+      "diagnostic_evidence_reviewed": true,
+      "attempt_number": 2,
+      "total_90min_requests_this_task": 2,
+      "diagnostic_retry_count": 1,
+      "trace_bin_seconds": 2,
+      "memory_trace": [
+        [
+          0,
+          0,
+          "loading"
+        ],
+        [
+          2.095394,
+          0,
+          "loading"
+        ],
+        [
+          4.14908,
+          0,
+          "loading"
+        ],
+        [
+          6.096211,
+          0,
+          "loading"
+        ],
+        [
+          8.09542,
+          0,
+          "loading"
+        ],
+        [
+          10.101555,
+          0,
+          "loading"
+        ],
+        [
+          12.0951,
+          0,
+          "loading"
+        ],
+        [
+          14.095645,
+          0,
+          "loading"
+        ],
+        [
+          17.092969,
+          256,
+          "loading"
+        ],
+        [
+          18.093619,
+          256,
+          "loading"
+        ],
+        [
+          21.592573,
+          300,
+          "loading"
+        ],
+        [
+          22.092389,
+          300,
+          "loading"
+        ],
+        [
+          25.594257,
+          1258,
+          "loading"
+        ],
+        [
+          27.593101,
+          10284,
+          "loading"
+        ],
+        [
+          29.592787,
+          10618,
+          "loading"
+        ],
+        [
+          31.592791,
+          10716,
+          "loading"
+        ],
+        [
+          33.59351,
+          10838,
+          "loading"
+        ],
+        [
+          34.093289,
+          10848,
+          "loading"
+        ],
+        [
+          36.091889,
+          10766,
+          "loading"
+        ],
+        [
+          38.093831,
+          10766,
+          "loading"
+        ],
+        [
+          40.094309,
+          10766,
+          "loading"
+        ],
+        [
+          42.095505,
+          10766,
+          "loading"
+        ],
+        [
+          44.098056,
+          10766,
+          "loading"
+        ],
+        [
+          46.098744,
+          10766,
+          "loading"
+        ],
+        [
+          48.09882,
+          10766,
+          "loading"
+        ],
+        [
+          51.098879,
+          10770,
+          "loading"
+        ],
+        [
+          52.093448,
+          10770,
+          "loading"
+        ],
+        [
+          54.093643,
+          10770,
+          "loading"
+        ],
+        [
+          56.093791,
+          10770,
+          "loading"
+        ],
+        [
+          58.09665,
+          10770,
+          "loading"
+        ],
+        [
+          60.098572,
+          10770,
+          "loading"
+        ],
+        [
+          62.09838,
+          10770,
+          "loading"
+        ],
+        [
+          65.098309,
+          10794,
+          "loading"
+        ],
+        [
+          66.09344,
+          10794,
+          "loading"
+        ],
+        [
+          68.093428,
+          10794,
+          "loading"
+        ],
+        [
+          70.092889,
+          10794,
+          "loading"
+        ],
+        [
+          72.097197,
+          10794,
+          "loading"
+        ],
+        [
+          74.099737,
+          10794,
+          "loading"
+        ],
+        [
+          76.098176,
+          10794,
+          "loading"
+        ],
+        [
+          79.598303,
+          10798,
+          "loading"
+        ],
+        [
+          81.593422,
+          11620,
+          "loading"
+        ],
+        [
+          82.093442,
+          11558,
+          "loading"
+        ],
+        [
+          83.593694,
+          11332,
+          "loading"
+        ],
+        [
+          84.093347,
+          11362,
+          "processing"
+        ],
+        [
+          86.098886,
+          11362,
+          "processing"
+        ],
+        [
+          88.099435,
+          11362,
+          "processing"
+        ],
+        [
+          90.094573,
+          11362,
+          "processing"
+        ],
+        [
+          93.595579,
+          20508,
+          "processing"
+        ],
+        [
+          94.098405,
+          20508,
+          "processing"
+        ],
+        [
+          96.095381,
+          20508,
+          "processing"
+        ],
+        [
+          97.093547,
+          20508,
+          "processing"
+        ],
+        [
+          97.615432,
+          0,
+          "cleanup"
+        ],
+        [
+          98.095029,
+          0,
+          "cleanup"
+        ],
+        [
+          99.294879,
+          0,
+          "cleanup"
+        ]
+      ]
+    }
+  },
+  "automatic_pipeline_validation": {
+    "status": "done",
+    "duration": 5400,
+    "pipeline": "moss-sglang",
+    "requested_moss_chunk_seconds": 4800,
+    "gpu_index": 1,
+    "active": {},
+    "outer_execute_count": 1,
+    "gpu_name": "NVIDIA GeForce RTX 3090",
+    "capacity_mib": 24576,
+    "source_sha256": {
+      "speech_engine_bootstrap.py": "da2f2f19500cf1cc04a5ddea1a5b84d2859c99b871d819f259972c82e7c75de3",
+      "speech_engine_worker.py": "7bbc11c7a0fbeeb5b8ca4ba6eddc4c00eda9d99c6d5841f89f7a6c0eef3a12f3",
+      "speech_engines.py": "b174875aefc1b300f5eedc7a40207b2d4f83983dc3cfabc9e43e74485e39f28c"
+    },
+    "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+    "moss_partition_count": 2,
+    "chunk_count": 3,
+    "moss_chunk_seconds": 4800,
+    "load_seconds": 167.7944443449378,
+    "inference_seconds": 156.3652094490826,
+    "total_seconds": 324.1596537940204,
+    "peak_process_mib": 15974,
+    "memory_phases": {
+      "moss": 11620,
+      "nemotron": 748
+    },
+    "has_auxiliary_transcript": false,
+    "segment_count": 469,
+    "transcript_end_seconds": 5400,
+    "adaptive_memory_retries": 0,
+    "worker_returncode": 0,
+    "wall_seconds": 327.2393726846203,
+    "cleanup_verified": true,
+    "gpu_lock_released": true,
+    "private_temporary_files_removed": true,
+    "cleanup_evidence": {
+      "owned_processes_remaining": 0,
+      "gpu_memory_mib": 1,
+      "gpu_utilization": 0
+    },
+    "verification": "90-minute 45x2 actual bootstrap/worker pipeline with Nemotron and missing-tail recovery, done event and worker exit 0. Numeric metrics only."
+  },
+  "initial_context_policy": {
+    "scope": "Initial automatic context recommendation, not a physical capacity guarantee. Idle CUDA GPU, MOSS BF16 current engine; low-capacity startup unverified. Whole audio balanced into minimal partitions.",
+    "generic_curve": [
+      {
+        "capacity_gib": 8.0,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.1,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.2,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.3,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.4,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.5,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.6,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.7,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.8,
+        "minutes": 5.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 8.9,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.0,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.1,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.2,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.3,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.4,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.5,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.6,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.7,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.8,
+        "minutes": 10.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 9.9,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.0,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.1,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.2,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.3,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.4,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.5,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.6,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.7,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.8,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 10.9,
+        "minutes": 15.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.0,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.1,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.2,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.3,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.4,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.5,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.6,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.7,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.8,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 11.9,
+        "minutes": 20.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.0,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.1,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.2,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.3,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.4,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.5,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.6,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.7,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.8,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 12.9,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.0,
+        "minutes": 25.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.1,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.2,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.3,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.4,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.5,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.6,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.7,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.8,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 13.9,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.0,
+        "minutes": 30.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.1,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.2,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.3,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.4,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.5,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.6,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.7,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.8,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 14.9,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.0,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.1,
+        "minutes": 35.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.2,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.3,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.4,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.5,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.6,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.7,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.8,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 15.9,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.0,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.1,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.2,
+        "minutes": 40.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.3,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.4,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.5,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.6,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.7,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.8,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 16.9,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.0,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.1,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.2,
+        "minutes": 45.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.3,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.4,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.5,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.6,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.7,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.8,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 17.9,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.0,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.1,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.2,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.3,
+        "minutes": 50.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.4,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.5,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.6,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.7,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.8,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 18.9,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.0,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.1,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.2,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.3,
+        "minutes": 55.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.4,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.5,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.6,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.7,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.8,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 19.9,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.0,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.1,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.2,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.3,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.4,
+        "minutes": 60.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.5,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.6,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.7,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.8,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 20.9,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.0,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.1,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.2,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.3,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.4,
+        "minutes": 65.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.5,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.6,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.7,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.8,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 21.9,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.0,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.1,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.2,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.3,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.4,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.5,
+        "minutes": 70.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.6,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.7,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.8,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 22.9,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.0,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.1,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.2,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.3,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.4,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.5,
+        "minutes": 75.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.6,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.7,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.8,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 23.9,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.0,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.1,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.2,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.3,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.4,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.5,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.6,
+        "minutes": 80.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.7,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.8,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 24.9,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.0,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.1,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.2,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.3,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.4,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.5,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.6,
+        "minutes": 85.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 25.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 26.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 27.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 28.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 29.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 30.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 31.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 32.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 33.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 34.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 35.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 36.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 37.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 38.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 39.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 40.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 41.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 42.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 43.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 44.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 45.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 46.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.0,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.1,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.2,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.3,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.4,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.5,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.6,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.7,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.8,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 47.9,
+        "minutes": 90.0,
+        "fits": true
+      },
+      {
+        "capacity_gib": 48.0,
+        "minutes": 90.0,
+        "fits": true
+      }
+    ],
+    "generic_thresholds": [
+      {
+        "minutes": 15,
+        "capacity_gib": 9.88
+      },
+      {
+        "minutes": 30,
+        "capacity_gib": 13.05
+      },
+      {
+        "minutes": 45,
+        "capacity_gib": 16.21
+      },
+      {
+        "minutes": 60,
+        "capacity_gib": 19.37
+      },
+      {
+        "minutes": 75,
+        "capacity_gib": 22.53
+      },
+      {
+        "minutes": 90,
+        "capacity_gib": 25.69
+      }
+    ],
+    "hardware": [
+      {
+        "name": "NVIDIA H200",
+        "label": "H200\n140.4 GiB",
+        "seconds": 5400,
+        "source": "hardware-measured",
+        "fits": true,
+        "measured": true,
+        "available_gib": 140.4013671875,
+        "required_gib": 31.01,
+        "capacity_gib": 140.4013671875,
+        "extrapolated": false,
+        "engine_input_limit_tokens": 131070,
+        "engine_context_ceiling_seconds": 9626,
+        "estimated_memory_gib": 31.0
+      },
+      {
+        "name": "NVIDIA RTX 6000 Ada Generation",
+        "label": "RTX 6000 Ada\n48 GiB",
+        "seconds": 5400,
+        "source": "hardware-measured",
+        "fits": true,
+        "measured": true,
+        "available_gib": 47.98828125,
+        "required_gib": 31.15,
+        "capacity_gib": 47.98828125,
+        "extrapolated": false,
+        "engine_input_limit_tokens": 131070,
+        "engine_context_ceiling_seconds": 9626,
+        "estimated_memory_gib": 31.2
+      },
+      {
+        "name": "NVIDIA GeForce RTX 3090",
+        "label": "RTX 3090\n24 GiB",
+        "seconds": 4800,
+        "source": "hardware-measured",
+        "fits": true,
+        "measured": true,
+        "available_gib": 24.0,
+        "required_gib": 22.31,
+        "capacity_gib": 24.0,
+        "extrapolated": true,
+        "engine_input_limit_tokens": 69136,
+        "engine_context_ceiling_seconds": 4919,
+        "estimated_memory_gib": 22.3
+      }
+    ],
+    "validation": {
+      "status": "done",
+      "duration": 5400,
+      "pipeline": "moss-sglang",
+      "requested_moss_chunk_seconds": 4800,
+      "gpu_index": 1,
+      "active": {},
+      "outer_execute_count": 1,
+      "gpu_name": "NVIDIA GeForce RTX 3090",
+      "capacity_mib": 24576,
+      "source_sha256": {
+        "speech_engine_bootstrap.py": "da2f2f19500cf1cc04a5ddea1a5b84d2859c99b871d819f259972c82e7c75de3",
+        "speech_engine_worker.py": "7bbc11c7a0fbeeb5b8ca4ba6eddc4c00eda9d99c6d5841f89f7a6c0eef3a12f3",
+        "speech_engines.py": "b174875aefc1b300f5eedc7a40207b2d4f83983dc3cfabc9e43e74485e39f28c"
+      },
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "moss_partition_count": 2,
+      "chunk_count": 3,
+      "moss_chunk_seconds": 4800,
+      "load_seconds": 167.7944443449378,
+      "inference_seconds": 156.3652094490826,
+      "total_seconds": 324.1596537940204,
+      "peak_process_mib": 15974,
+      "memory_phases": {
+        "moss": 11620,
+        "nemotron": 748
+      },
+      "has_auxiliary_transcript": false,
+      "segment_count": 469,
+      "transcript_end_seconds": 5400,
+      "adaptive_memory_retries": 0,
+      "worker_returncode": 0,
+      "wall_seconds": 327.2393726846203,
+      "cleanup_verified": true,
+      "gpu_lock_released": true,
+      "private_temporary_files_removed": true,
+      "cleanup_evidence": {
+        "owned_processes_remaining": 0,
+        "gpu_memory_mib": 1,
+        "gpu_utilization": 0
+      },
+      "verification": "90-minute 45x2 actual bootstrap/worker pipeline with Nemotron and missing-tail recovery, done event and worker exit 0. Numeric metrics only."
+    }
+  },
+  "prediction_check": {
+    "predicted_total_seconds": 363,
+    "actual_total_seconds": 324.1596537940204,
+    "absolute_percentage_error": 11.98,
+    "validation_jobs": 1
+  },
+  "caveat": "Automatic full-job global peak is authoritative. Its memory_phases field captured the last invocation per stage; accumulation across recovery invocations was fixed after the measured source revision."
+}

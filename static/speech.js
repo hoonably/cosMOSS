@@ -2,10 +2,10 @@
 (() => {
   const pipeline = $('#speech-pipeline'), localModel = $('#upload-local-model'), batch = $('#speech-batch');
   const keys = ['moss-sglang','qwen-transformers','moss-qwen-sequential'];
-  let deviceId = null, consentKey = null, localOptionsKey = null;
+  let deviceId = null, localOptionsKey = null;
   let setupKey = null, setupState = null, setupRevision = 0, setupTimer = null, setupController = null;
   const descriptions = {
-    'moss-sglang': '전체 녹음의 문맥을 유지해 전사합니다. 90분을 넘으면 확인 후 최소 개수로 균등 분할합니다. 화자 구분은 Nemotron 0.1B.',
+    'moss-sglang': '문맥을 유지해 전사합니다. GPU별 자동 구간(최대 90분)을 넘으면 확인 후 최소 개수로 균등 분할합니다. 화자 구분은 Nemotron 0.1B.',
     'qwen-transformers': '약 3분씩 빠르게 전사한 뒤 단어 시간을 정렬합니다. 화자 구분은 Nemotron 0.1B.',
     'moss-qwen-sequential': 'MOSS 전체 전사 후 Qwen3-ASR 1.7B를 순차 실행합니다. MOSS 본문과 비교용 Qwen 대본을 각각 보관합니다.',
   };
@@ -96,7 +96,6 @@
       let saved;
       try { saved = JSON.parse(localStorage.getItem(preferenceKey())); } catch (_) {}
       batch.value = ['0','1','4','8','16','24'].includes(saved?.batch) ? saved.batch : '0';
-      $('#allow-speech-memory-risk').checked = false;
       resetSetup();
     }
     pipeline.disabled = !server || state.uploading;
@@ -108,10 +107,6 @@
     batch.closest('label').classList.toggle('hidden', fixed);
     $('.upload-chunk-row').classList.toggle('hidden', fast);
     $('.upload-chunk-info').classList.toggle('hidden', fast);
-    if (!fast) {
-      $('#speech-memory-consent').classList.add('hidden');
-      $('#allow-speech-memory-risk').required = false;
-    }
     $('#speech-description').textContent = local
       ? 'MOSS MLX로 전사한 뒤 Nemotron 0.1B로 전체 녹음의 화자를 구분합니다. 두 모델은 순서대로 실행하고 메모리를 해제합니다.'
       : descriptions[pipeline.value] || '';
@@ -141,10 +136,6 @@
     clearTimeout(state.estimateTimer);
     state.estimateController?.abort();
     state.estimateKey = key;
-    const nextConsent = JSON.stringify([device.id,chosen,batch.value,gpu.uuid,gpu.memory_total_mib,duration]);
-    if (consentKey !== nextConsent) $('#allow-speech-memory-risk').checked = false;
-    consentKey = nextConsent;
-    $('#speech-memory-consent').classList.add('hidden');
     const box = $('#upload-estimates');
     box.classList.remove('hidden','needs-gpu-selection','is-pending','is-over-capacity');
     $('#upload-estimate-memory').textContent = '—';
@@ -160,21 +151,19 @@
         $('#upload-estimate-memory').textContent = `약 ${result.memory_expected_gib.toFixed(1)} GiB`;
         $('#upload-estimate-time').textContent = result.time_seconds == null ? '추가 측정 필요' : `약 ${clock(result.time_seconds)}`;
         renderEstimateCalibration(result);
-        $('#speech-batch-plan').textContent = chosen === 'moss-sglang' ? '전체 1청크 · 문맥 유지'
-          : chosen === 'moss-qwen-sequential' ? 'MOSS 전체 1청크 · Qwen 약20분 보조 대본'
+        const mossPlan = (result.moss_partition_count || 1)>1 ? `${result.moss_partition_count}개 균등 구간 · 구간당 ${clock(result.chunk_seconds)}` : '전체 1청크 · 문맥 유지';
+        const context = result.moss_chunk_seconds ? ` · 자동 최대 ${result.moss_chunk_seconds/60}분` : '';
+        $('#speech-batch-plan').textContent = chosen === 'moss-sglang' ? mossPlan+context
+          : chosen === 'moss-qwen-sequential' ? `MOSS ${mossPlan}${context} · Qwen 보조 대본`
           : `${result.chunk_count}개 청크 · 한 번에 ${result.batch}개${batch.value === '0' ? ' 자동 추천' : ''}`;
         $('#speech-batch-plan').classList.remove('needs-input');
         const risk = result.exceeds_budget || result.exceeds_capacity;
         box.classList.toggle('is-over-capacity', risk);
         const warning = $('#upload-memory-warning');
         warning.classList.toggle('hidden', !risk && !result.exceeds_free);
-        const advice = fixed ? '더 큰 GPU 또는 다른 전사 방식을 선택해 주세요.' : '동시 청크 수를 줄여 주세요.';
-        warning.textContent = result.exceeds_capacity ? `필요한 약 ${result.memory_expected_gib.toFixed(1)} GiB가 전체 VRAM을 초과합니다. ${advice}`
-          : result.exceeds_budget ? `예상 Peak Memory가 전체 VRAM의 70%를 넘습니다. 메모리 부족으로 실패할 수 있습니다. ${advice}`
+        warning.textContent = result.exceeds_capacity ? `예상 메모리 약 ${result.memory_expected_gib.toFixed(1)} GiB가 전체 VRAM을 넘습니다. 실행할 수 있지만 실제 메모리가 부족하면 실패합니다.`
+          : result.exceeds_budget ? `예상 메모리가 전체 VRAM의 70%를 넘습니다. 실행할 수 있지만 실제 메모리가 부족하면 실패합니다.`
           : result.exceeds_free ? `약 ${result.memory_expected_gib.toFixed(1)} GiB가 필요합니다. 현재 여유 VRAM보다 큽니다. 다른 작업의 사용량을 확인하세요.` : '';
-        $('#speech-memory-consent').classList.toggle('hidden', !result.exceeds_budget || result.exceeds_capacity);
-        $('#allow-speech-memory-risk').required = result.exceeds_budget && !result.exceeds_capacity;
-        batch.setCustomValidity(result.exceeds_capacity ? advice : '');
       } catch (error) {
         if (state.estimateKey === key && error.name !== 'AbortError') $('#upload-estimate-note').textContent = error.message || '예상값을 확인하지 못했습니다. GPU를 다시 선택해 주세요.';
       }
@@ -190,12 +179,10 @@
   }
   function changed() {
     batch.setCustomValidity('');
-    $('#allow-speech-memory-risk').required = false;
-    $('#allow-speech-memory-risk').checked = false;
     clearUploadEstimate(); renderFilePreparation();
   }
   pipeline.addEventListener('change', () => {
-    batch.value = '0'; consentKey = null; resetSetup(); changed();
+    batch.value = '0'; resetSetup(); changed();
   });
   localModel.addEventListener('change', () => { resetSetup(); changed(); });
   batch.addEventListener('change', () => {
@@ -223,8 +210,7 @@
     }
   });
   $('#upload-dialog').addEventListener('close', () => {
-    deviceId = null; consentKey = null; localOptionsKey = null; resetSetup();
-    $('#allow-speech-memory-risk').required = false;
+    deviceId = null; localOptionsKey = null; resetSetup();
     batch.setCustomValidity('');
   });
   window.cosmossSpeech = {active,sync,estimate,form,blocked,selectedModel};

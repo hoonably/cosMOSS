@@ -13,7 +13,7 @@ import sys
 import time
 import wave
 
-from speech_engines import MODELS, balanced_moss_ranges, transcribe_moss_balanced, transcribe_qwen_adaptively
+from speech_engines import CUDA_OOM_MESSAGE, MOSS_CAPACITY_MESSAGE, MODELS, balanced_moss_ranges, is_cuda_oom, is_moss_capacity_error, transcribe_moss_balanced, transcribe_qwen_adaptively
 
 
 def emit(**event):
@@ -77,6 +77,12 @@ def moss(request):
         '--asr.engine.max_total_tokens', '131072', '--asr.engine.max_running_requests', '16',
         '--asr.engine.cuda_graph_max_bs', '16']
     log_path = Path(request['output']).with_suffix('.log')
+    checkpoint_path = Path(request['output']).with_suffix('.checkpoint.json')
+    maximum = request.get('moss_chunk_seconds') or 5400
+    snapshot=dict(phase='loading',start_offset=request.get('start_offset',0),
+                  completed_until=request.get('start_offset',0),items=[],chunks=[],ranges=[],load_seconds=0,inference_seconds=0)
+    save(checkpoint_path,snapshot)
+    ready=None
     started = time.monotonic()
     with log_path.open('w') as log:
         child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
@@ -92,6 +98,8 @@ def moss(request):
                         pass
                     time.sleep(1)
             ready = time.monotonic()
+            snapshot.update(phase='processing',load_seconds=ready-started)
+            save(checkpoint_path,snapshot)
             def infer(offset, end, maximum):
                 data = dict(model=request['paths']['moss'], response_format='verbose_json', temperature='0',
                             repetition_penalty='1', max_new_tokens=str(maximum))
@@ -118,17 +126,40 @@ def moss(request):
                             files={'file': ('audio.wav', audio, 'audio/wav')})
                         response.raise_for_status()
                         return response.json()
+                except httpx.HTTPError as error:
+                    # SGLang writes CUDA failures to its private server log;
+                    # propagate the cause instead of only an HTTP 500 message.
+                    with log_path.open('rb') as stream:
+                        stream.seek(max(0, log_path.stat().st_size-16384))
+                        server_error = stream.read().decode(errors='replace')
+                    body = error.response.text if isinstance(error, httpx.HTTPStatusError) else ''
+                    if is_cuda_oom(str(error)+'\n'+body+'\n'+server_error):
+                        raise RuntimeError(CUDA_OOM_MESSAGE) from None
+                    if is_moss_capacity_error(str(error)+'\n'+body+'\n'+server_error):
+                        raise RuntimeError(MOSS_CAPACITY_MESSAGE) from None
+                    raise
                 finally:
                     if cropped:
                         audio_path.unlink(missing_ok=True)
+            def completed(items,chunks,ranges):
+                snapshot.update(items=items,chunks=chunks,ranges=ranges,completed_until=ranges[-1][1],
+                                inference_seconds=time.monotonic()-ready)
+                save(checkpoint_path,snapshot)
             items, chunks = transcribe_moss_balanced(duration, infer,
-                lambda **event: emit(phase='transcribing', engine='moss-sglang', **event),
+                lambda **event: emit(phase='transcribing', engine='moss-sglang',
+                                    memory_retry_count=request.get('memory_retry_count',0),**event),
                 allow_split=request.get('allow_moss_split', False),
-                start_offset=request.get('start_offset', 0), end_offset=request.get('end_offset'))
+                start_offset=request.get('start_offset', 0), end_offset=request.get('end_offset'),
+                max_seconds=maximum,on_partition_complete=completed)
             result = dict(items=items, chunks=chunks, text='\n'.join(c['text'] for c in chunks),
-                partition_count=len(balanced_moss_ranges(duration)),
+                partition_count=len(snapshot['ranges']),ranges=snapshot['ranges'],moss_chunk_seconds=maximum,
                 load_seconds=ready-started, inference_seconds=time.monotonic()-ready)
             save(request['output'], result)
+        except BaseException:
+            snapshot.update(load_seconds=(ready or time.monotonic())-started,
+                            inference_seconds=time.monotonic()-ready if ready else 0)
+            save(checkpoint_path,snapshot)
+            raise
         finally:
             child.terminate()
             try:
@@ -206,8 +237,8 @@ def align(request):
     audio = get_audio(request['audio'])
     chunks = json.loads(Path(request['qwen_result']).read_text())['chunks']
     total = torch.cuda.get_device_properties(0).total_memory
-    budget = max(512*1024**2, request['asr_peak_bytes']-int(1.5*1024**3))
-    torch.cuda.set_per_process_memory_fraction(min(.95, budget/total))
+    # Only guide batch growth; CUDA allocations have no app-imposed ceiling.
+    budget = total
     config = AutoConfig.from_pretrained(request['paths']['aligner'], local_files_only=True)
     force_fa2(config)
     started = time.monotonic()
@@ -241,7 +272,7 @@ def align(request):
             del values
         except torch.cuda.OutOfMemoryError:
             if batch <= 1:
-                raise RuntimeError('정렬기가 전사 메모리 예산 안에 들어가지 않습니다. MOSS 방식으로 다시 시도해 주세요.') from None
+                raise
             batch = max(1,batch//2)
         gc.collect()
         torch.cuda.empty_cache()
@@ -298,5 +329,9 @@ if __name__ == '__main__':
                 raise RuntimeError('이 전사 방식은 BF16을 지원하는 NVIDIA GPU가 필요합니다.')
         {'prepare':prepare,'moss':moss,'qwen':qwen,'aligner':align,'nemotron':nemotron}[request['stage']](request)
     except Exception as error:
+        if 'request' in locals() and request.get('output'):
+            save(Path(request['output']).with_suffix('.error.json'),
+                 {'cuda_oom':is_cuda_oom(type(error).__module__+'.'+type(error).__name__+': '+str(error)),
+                  'context_capacity':request.get('stage')=='moss' and is_moss_capacity_error(str(error))})
         emit(phase='error',error=str(error)[-1800:])
         raise

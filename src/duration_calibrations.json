@@ -1,6 +1,20 @@
 {
-  "version": "duration-calibration-20261023-v1",
+  "version": "duration-calibration-20261110-moss-v2",
   "provenance": "One Korean recording; one fresh process per condition; model loading included; transfer/download excluded. Validation duration held out; failed outputs excluded.",
+  "moss_engine_context": {
+    "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+    "reference_capacity_gib": 24,
+    "reference_kv_tokens": 69138,
+    "input_limit_headroom_tokens": 2,
+    "max_kv_tokens": 131072,
+    "kv_bytes_per_token": 114688,
+    "mem_fraction_static": 0.4,
+    "audio_tokens_per_second": 12.5,
+    "fixed_input_tokens": 4187,
+    "input_budget_fraction": 0.95,
+    "status": "provisional",
+    "provenance": "RTX 3090 24 GiB: a 5400-second unsplit request had input length 71687, max_req_input_len 69136, allocated BF16 KV capacity 69138 tokens; HTTP 400, not CUDA OOM. KV bytes = 2 K/V * 28 layers * 8 KV heads * 128 head dimensions * 2 BF16 bytes. The fixed input allowance is the residual after 12.5 audio tokens/second; includes prompt/padding/headroom rather than assuming all 71687 tokens scale with duration. Capacity scaling is an initial estimate, not validation on unmeasured GPUs."
+  },
   "profiles": {
     "mlx-16bit": {
       "platform": "mac",
@@ -468,5 +482,208 @@
       "memory_multiplier": 1.12,
       "memory_headroom_gib": 1.0
     }
+  },
+  "server_profiles": {
+    "moss-sglang": [
+      {
+        "platform": "server",
+        "model": "moss-sglang",
+        "sample_count": 6,
+        "time_knots": [
+          [
+            600.0,
+            6.605125218629837
+          ],
+          [
+            1800.0,
+            9.410399250686169
+          ],
+          [
+            3600.0,
+            20.570084296166897
+          ],
+          [
+            5400.0,
+            69.23718222603202
+          ]
+        ],
+        "memory_knots": [
+          [
+            600.0,
+            18.859375
+          ],
+          [
+            1800.0,
+            20.845703125
+          ],
+          [
+            3600.0,
+            23.82421875
+          ],
+          [
+            5400.0,
+            26.79296875
+          ],
+          [
+            7200.0,
+            26.79296875
+          ],
+          [
+            10800.0,
+            26.822265625
+          ]
+        ],
+        "bridge_time_knots": [],
+        "cold_setup_seconds": 96.26204955391586,
+        "validation": {
+          "duration_seconds": null,
+          "status": "provisional",
+          "time_absolute_error_percent": null,
+          "reason": "Same-input duration sweep; no independent held-out run; concurrent cases on two different GPUs."
+        },
+        "hardware": {
+          "name": "h200",
+          "capacity_gib": 140.4013671875
+        },
+        "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+        "memory_metric": "owned-process-vram",
+        "memory_multiplier": 1.12,
+        "memory_headroom_gib": 1.0,
+        "measurement_report": "docs/performance/2026-11-10-moss-servers.json",
+        "split_time_knots": {
+          "2": [
+            [
+              7200.0,
+              80.80456613749266
+            ],
+            [
+              10800.0,
+              202.6548820026219
+            ]
+          ]
+        }
+      },
+      {
+        "platform": "server",
+        "model": "moss-sglang",
+        "sample_count": 6,
+        "time_knots": [
+          [
+            600.0,
+            11.067550856154412
+          ],
+          [
+            1800.0,
+            19.636538569815457
+          ],
+          [
+            3600.0,
+            50.420603703241795
+          ],
+          [
+            5400,
+            604.7543018255383
+          ]
+        ],
+        "memory_knots": [
+          [
+            600.0,
+            19.009765625
+          ],
+          [
+            1800.0,
+            20.9765625
+          ],
+          [
+            3600.0,
+            23.955078125
+          ],
+          [
+            5400,
+            26.923828125
+          ],
+          [
+            7200,
+            26.923828125
+          ],
+          [
+            10800,
+            26.92578125
+          ]
+        ],
+        "bridge_time_knots": [],
+        "cold_setup_seconds": 112.65289598540403,
+        "validation": {
+          "duration_seconds": null,
+          "status": "provisional",
+          "time_absolute_error_percent": null,
+          "reason": "Same-input duration sweep; no independent held-out run; concurrent cases on two different GPUs."
+        },
+        "hardware": {
+          "name": "rtx 6000 ada generation",
+          "capacity_gib": 47.98828125
+        },
+        "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+        "memory_metric": "owned-process-vram",
+        "memory_multiplier": 1.12,
+        "memory_headroom_gib": 1.0,
+        "measurement_report": "docs/performance/2026-11-10-moss-servers.json",
+        "split_time_knots": {
+          "2": [
+            [
+              7200,
+              225.59205022687092
+            ],
+            [
+              10800,
+              1010.0394205930643
+            ]
+          ]
+        }
+      },
+      {
+        "platform": "server",
+        "model": "moss-sglang",
+        "sample_count": 2,
+        "time_knots": [
+          [
+            600,
+            13.399666401557624
+          ],
+          [
+            1800,
+            23.165023904293776
+          ]
+        ],
+        "memory_knots": [
+          [
+            600,
+            12.14453125
+          ],
+          [
+            1800,
+            14.111328125
+          ]
+        ],
+        "bridge_time_knots": [],
+        "cold_setup_seconds": 301.49577487818897,
+        "validation": {
+          "duration_seconds": null,
+          "status": "provisional",
+          "time_absolute_error_percent": null,
+          "reason": "Same-input duration sweep; no independent held-out run; concurrent cases on two different GPUs."
+        },
+        "hardware": {
+          "name": "geforce rtx 3090",
+          "capacity_gib": 24
+        },
+        "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+        "memory_metric": "owned-process-vram",
+        "memory_multiplier": 1.12,
+        "memory_headroom_gib": 1.0,
+        "measurement_report": "docs/performance/2026-11-10-moss-servers.json",
+        "split_time_knots": {}
+      }
+    ]
   }
 }

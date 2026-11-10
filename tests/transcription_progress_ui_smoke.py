@@ -4,6 +4,7 @@ Usage: uv run --no-project --with playwright python
 tests/transcription_progress_ui_smoke.py URL PNG [chromium|webkit]
 """
 import asyncio
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,8 @@ async def main():
     errors = []
     async with async_playwright() as pw:
         options = {'executable_path':'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'} if engine == 'chromium' else {}
+        if engine == 'webkit' and os.environ.get('PLAYWRIGHT_WEBKIT_EXECUTABLE'):
+            options['executable_path'] = os.environ['PLAYWRIGHT_WEBKIT_EXECUTABLE']
         browser = await getattr(pw, engine).launch(headless=True, **options)
         page = await browser.new_page(viewport={'width':1440,'height':1000}, device_scale_factor=2)
         page.set_default_timeout(10000)
@@ -86,6 +89,34 @@ async def main():
                   inference_finished_at='2026-10-21T00:15:40+00:00')
         assert await page.locator('.job-percent').inner_text() == '오류'
         assert await page.locator('[data-job-action=restart]').is_visible()
+        await put(status='processing', progress_phase='transcribing', error=None,
+                  inference_started_at='2026-10-21T00:20:00+00:00', inference_finished_at=None,
+                  inference_elapsed_seconds=10, estimated_inference_seconds=100,
+                  model_progress={'pipeline_phase':'loading','engine':'moss'},
+                  model_loading_seconds=10, model_processing_seconds=0, model_timing_phase='loading')
+        assert '전사 모델 로딩 중' in await page.locator('.job-heading > div > span').inner_text()
+        await page.clock.fast_forward(2000)
+        assert '모델 준비 00:12' in await page.locator('.job-timing').inner_text()
+        assert '처리 00:00' in await page.locator('.job-timing').inner_text()
+        await page.locator('.background-job').screenshot(path=str(output.with_stem(output.stem + '-loading')))
+        await put(model_progress={'pipeline_phase':'transcribing'}, inference_elapsed_seconds=17,
+                  model_loading_seconds=12, model_processing_seconds=5, model_timing_phase='processing')
+        await page.clock.fast_forward(3000)
+        await page.evaluate('updateBackgroundProgress()')
+        assert '모델 준비 00:12' in await page.locator('.job-timing').inner_text()
+        assert '처리 00:08' in await page.locator('.job-timing').inner_text()
+        await put(model_progress={'pipeline_phase':'retrying_memory','memory_retry_count':1,'max_seconds':1800})
+        assert '메모리에 맞춰 구간을 나누는 중' in await page.locator('.job-heading > div > span').inner_text()
+        assert '완료한 구간은 유지' in await page.locator('.job-detail').inner_text()
+        await put(status='error', progress_phase='error', error='GPU 메모리 부족(CUDA OOM)으로 전사가 중단됐습니다.',
+                  inference_finished_at='2026-10-21T00:20:20+00:00')
+        await page.reload()
+        await page.locator('.background-job').wait_for()
+        assert 'GPU 메모리 부족(CUDA OOM)' in await page.locator('.job-detail').inner_text()
+        assert await page.locator('.job-percent').inner_text() == '오류'
+        assert await page.locator('[data-job-action=restart]').is_visible()
+        assert await page.locator('[data-job-action=remove]').is_visible()
+        await page.locator('.background-job').screenshot(path=str(output.with_stem(output.stem + '-error')))
         assert not errors, errors
         await browser.close()
     print(f'PASS {engine}: model-only estimated %, one-second clock, 99% cap, completion before postprocessing, cancellation/retry/error, desktop/mobile')

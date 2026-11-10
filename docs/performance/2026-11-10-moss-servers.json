@@ -1,0 +1,416 @@
+{
+  "pipeline": "moss-sglang",
+  "source_seconds": 10181.4826875,
+  "repeated_tail_seconds": 618.5173125,
+  "scope": "Default MOSS SGLang + Nemotron, fresh worker per case, no model downloads in timed region. Transfer separately recorded. Same audio prefix across GPUs; final 180-minute input repeats the beginning only beyond available source.",
+  "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+  "source_revision": "5057bf31fcafe929dd1b18e6d81fef93d7fd50a0",
+  "schema": 1,
+  "cases": [
+    {
+      "family": "3090",
+      "gpu_name": "NVIDIA GeForce RTX 3090",
+      "capacity_gib": 24,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 600,
+      "inference_seconds": 13.399666401557624,
+      "load_seconds": 304.40237608458847,
+      "total_seconds": 317.8020424861461,
+      "peak_process_mib": 12436,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "segment_count": 92,
+      "transcript_end_seconds": 599.84
+    },
+    {
+      "family": "3090",
+      "gpu_name": "NVIDIA GeForce RTX 3090",
+      "capacity_gib": 24,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 1800,
+      "inference_seconds": 23.165023904293776,
+      "load_seconds": 298.58917367178947,
+      "total_seconds": 321.75419757608324,
+      "peak_process_mib": 14450,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "segment_count": 71,
+      "transcript_end_seconds": 1800
+    },
+    {
+      "family": "ada",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "capacity_gib": 47.98828125,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 600.0,
+      "inference_seconds": 11.067550856154412,
+      "load_seconds": 134.02509096171707,
+      "total_seconds": 145.09264181787148,
+      "peak_process_mib": 19466,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 119.19109908677638,
+          "inference_seconds": 10.052115147933364
+        },
+        "nemotron": {
+          "load_seconds": 1.368942596949637,
+          "inference_seconds": 1.0154357082210481
+        }
+      },
+      "segment_count": 91,
+      "transcript_end_seconds": 599.84,
+      "previous_prediction_seconds": null
+    },
+    {
+      "family": "ada",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "capacity_gib": 47.98828125,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 1800.0,
+      "inference_seconds": 19.636538569815457,
+      "load_seconds": 90.00543538713828,
+      "total_seconds": 109.64197395695373,
+      "peak_process_mib": 21480,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 77.14049668004736,
+          "inference_seconds": 17.28134081698954
+        },
+        "nemotron": {
+          "load_seconds": 1.1162026412785053,
+          "inference_seconds": 2.355197752825916
+        }
+      },
+      "segment_count": 77,
+      "transcript_end_seconds": 1794.0,
+      "previous_prediction_seconds": null
+    },
+    {
+      "family": "ada",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "capacity_gib": 47.98828125,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 3600.0,
+      "inference_seconds": 50.420603703241795,
+      "load_seconds": 90.70088081341237,
+      "total_seconds": 141.12148451665416,
+      "peak_process_mib": 24530,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 77.14287156099454,
+          "inference_seconds": 45.85552224703133
+        },
+        "nemotron": {
+          "load_seconds": 1.2329871337860823,
+          "inference_seconds": 4.565081456210464
+        }
+      },
+      "segment_count": 157,
+      "transcript_end_seconds": 3590.64,
+      "previous_prediction_seconds": null
+    },
+    {
+      "family": "ada",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "capacity_gib": 47.98828125,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 5400,
+      "inference_seconds": 604.7543018255383,
+      "load_seconds": 170.35760152572766,
+      "total_seconds": 775.1119033512659,
+      "peak_process_mib": 27570,
+      "moss_partition_count": 1,
+      "chunk_count": 2,
+      "segment_count": 1396,
+      "transcript_end_seconds": 5400
+    },
+    {
+      "family": "ada",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "capacity_gib": 47.98828125,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 7200,
+      "inference_seconds": 225.59205022687092,
+      "load_seconds": 91.28070100909099,
+      "total_seconds": 316.8727512359619,
+      "peak_process_mib": 24530,
+      "moss_partition_count": 2,
+      "chunk_count": 3,
+      "segment_count": 641,
+      "transcript_end_seconds": 7199.96
+    },
+    {
+      "family": "ada",
+      "gpu_name": "NVIDIA RTX 6000 Ada Generation",
+      "capacity_gib": 47.98828125,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 10800,
+      "inference_seconds": 1010.0394205930643,
+      "load_seconds": 171.2681236010976,
+      "total_seconds": 1181.307544194162,
+      "peak_process_mib": 27572,
+      "moss_partition_count": 2,
+      "chunk_count": 5,
+      "segment_count": 2235,
+      "transcript_end_seconds": 10781.779999999999
+    },
+    {
+      "family": "h200",
+      "gpu_name": "NVIDIA H200",
+      "capacity_gib": 140.4013671875,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 600.0,
+      "inference_seconds": 6.605125218629837,
+      "load_seconds": 142.59335133433342,
+      "total_seconds": 149.19847655296326,
+      "peak_process_mib": 19312,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 129.24125976860523,
+          "inference_seconds": 5.723966125398874
+        },
+        "nemotron": {
+          "load_seconds": 1.1313176788389683,
+          "inference_seconds": 0.8811590932309628
+        }
+      },
+      "segment_count": 92,
+      "transcript_end_seconds": 599.84,
+      "previous_prediction_seconds": 111
+    },
+    {
+      "family": "h200",
+      "gpu_name": "NVIDIA H200",
+      "capacity_gib": 140.4013671875,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 1800.0,
+      "inference_seconds": 9.410399250686169,
+      "load_seconds": 134.48619946837425,
+      "total_seconds": 143.89659871906042,
+      "peak_process_mib": 21346,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 121.213477704674,
+          "inference_seconds": 7.612807668745518
+        },
+        "nemotron": {
+          "load_seconds": 1.1827494390308857,
+          "inference_seconds": 1.797591581940651
+        }
+      },
+      "segment_count": 70,
+      "transcript_end_seconds": 1798.88,
+      "previous_prediction_seconds": 134
+    },
+    {
+      "family": "h200",
+      "gpu_name": "NVIDIA H200",
+      "capacity_gib": 140.4013671875,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 3600.0,
+      "inference_seconds": 20.570084296166897,
+      "load_seconds": 95.67536113783717,
+      "total_seconds": 116.24544543400407,
+      "peak_process_mib": 24396,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 82.17510913684964,
+          "inference_seconds": 17.381999026983976
+        },
+        "nemotron": {
+          "load_seconds": 1.4079183712601662,
+          "inference_seconds": 3.1880852691829205
+        }
+      },
+      "segment_count": 160,
+      "transcript_end_seconds": 2897.12,
+      "previous_prediction_seconds": 188
+    },
+    {
+      "family": "h200",
+      "gpu_name": "NVIDIA H200",
+      "capacity_gib": 140.4013671875,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 5400.0,
+      "inference_seconds": 69.23718222603202,
+      "load_seconds": 95.8119474761188,
+      "total_seconds": 165.04912970215082,
+      "peak_process_mib": 27436,
+      "moss_partition_count": 1,
+      "chunk_count": 1,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 82.17080381885171,
+          "inference_seconds": 64.56220123171806
+        },
+        "nemotron": {
+          "load_seconds": 1.4483955837786198,
+          "inference_seconds": 4.674980994313955
+        }
+      },
+      "segment_count": 471,
+      "transcript_end_seconds": 5400.0,
+      "previous_prediction_seconds": 244
+    },
+    {
+      "family": "h200",
+      "gpu_name": "NVIDIA H200",
+      "capacity_gib": 140.4013671875,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 7200.0,
+      "inference_seconds": 80.80456613749266,
+      "load_seconds": 95.92899911478162,
+      "total_seconds": 176.73356525227427,
+      "peak_process_mib": 24398,
+      "moss_partition_count": 2,
+      "chunk_count": 3,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 82.16782848909497,
+          "inference_seconds": 75.19463947415352
+        },
+        "nemotron": {
+          "load_seconds": 1.6500051729381084,
+          "inference_seconds": 5.609926663339138
+        }
+      },
+      "segment_count": 630,
+      "transcript_end_seconds": 7199.94,
+      "previous_prediction_seconds": 275
+    },
+    {
+      "family": "h200",
+      "gpu_name": "NVIDIA H200",
+      "capacity_gib": 140.4013671875,
+      "pipeline": "moss-sglang",
+      "runtime": "speech-engines-sg019-qwen006-nemo5202-v1",
+      "batch": 1,
+      "audio_seconds": 10800.0,
+      "inference_seconds": 202.6548820026219,
+      "load_seconds": 96.5950999930501,
+      "total_seconds": 299.249981995672,
+      "peak_process_mib": 27466,
+      "moss_partition_count": 2,
+      "chunk_count": 4,
+      "stage_metrics": {
+        "moss": {
+          "load_seconds": 82.17630533501506,
+          "inference_seconds": 194.0756910070777
+        },
+        "nemotron": {
+          "load_seconds": 1.9675847627222538,
+          "inference_seconds": 8.579190995544195
+        }
+      },
+      "segment_count": 1312,
+      "transcript_end_seconds": 10781.880000000001,
+      "previous_prediction_seconds": 387
+    }
+  ],
+  "unsuccessful_attempts": [
+    {
+      "family": "3090",
+      "audio_seconds": 1800,
+      "status": "error"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 5400,
+      "status": "error"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 10800,
+      "status": "error"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 600,
+      "status": "error"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 3600,
+      "status": "error"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 7200,
+      "status": "error"
+    },
+    {
+      "family": "ada",
+      "audio_seconds": 5400,
+      "status": "error"
+    },
+    {
+      "family": "ada",
+      "audio_seconds": 7200,
+      "status": "error"
+    },
+    {
+      "family": "ada",
+      "audio_seconds": 10800,
+      "status": "error"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 3600,
+      "status": "error"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 5400,
+      "status": "error"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 7200,
+      "status": "skipped"
+    },
+    {
+      "family": "3090",
+      "audio_seconds": 10800,
+      "status": "skipped"
+    }
+  ],
+  "validation": "One pass per duration per GPU family on identical audio prefixes. Provisional: no independent recording/held-out run. Input content/speech density and cold-start/cache variation can change real latency."
+}

@@ -167,6 +167,20 @@ class SummaryTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(task, 5)
         return self.manager.status(self.store.get(self.note['id']))
 
+    async def test_summary_does_not_impose_the_old_fifteen_minute_deadline(self):
+        self.fake_cli("import sys,json\nsys.stdin.read()\nprint(json.dumps({'structured_output':documents('긴 요약 완료'),'is_error':False}))\n")
+        original = asyncio.wait_for
+        async def reject_old_deadline(awaitable, timeout):
+            if timeout == 900:
+                awaitable.close()
+                raise AssertionError('A valid long-running summary must not be killed at 15 minutes')
+            return await original(awaitable, timeout)
+        with patch('src.summaries.asyncio.wait_for', side_effect=reject_old_deadline):
+            self.start(self.note, 'claude', '긴 녹음 요약')
+            result = await self.completed()
+        self.assertEqual(result['phase'], 'done', result.get('error'))
+        self.assertEqual(result['result']['text'], '긴 요약 완료')
+
     async def test_codex_uses_fixed_snapshot_via_stdin_without_shell(self):
         capture = self.root / 'capture.txt'
         self.fake_cli(f'''import pathlib,sys,time

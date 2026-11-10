@@ -161,33 +161,34 @@ class FastJobTests(unittest.IsolatedAsyncioTestCase):
                                 self.assertEqual(snapshot['options']['speech_batch'],int(legacy.get('speech_batch',0)))
                                 self.assertEqual(queue.get_nowait(),note['id'])
 
-    async def test_api_requires_memory_acknowledgement_and_never_overrides_capacity(self):
+    async def test_api_allows_execution_despite_predicted_memory_limits(self):
         from src import main
         from src.devices import DeviceStore
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);store=NoteStore(root/'notes.sqlite3');devices=DeviceStore(root/'devices.sqlite3')
             device=devices.add_ssh(name='test',host='fixture',remote_port=8001,backend='cuda',model='OpenMOSS-Team/MOSS-Transcribe-Diarize')
-            identity='c'*32;audio=store.upload_directory(identity)/'a.wav';audio.parent.mkdir(parents=True);audio.write_bytes(b'fixture')
-            store.create_upload({'id':identity,'original_filename':'a.wav','source_path':str(audio),'normalized_path':str(audio),
-                                 'status':'ready','duration':3937.13})
             gpu={**H200,'uuid':'GPU-11111111-2222-3333-4444-555555555555','index':0,'idle_candidate':True,
                  'memory_total_mib':24576,'name':'NVIDIA RTX 6000 Ada Generation'}
-            body={'upload_id':identity,'device_id':device['id'],'gpu_uuid':gpu['uuid'],'speech_pipeline':'qwen-batch','speech_batch':'8'}
+            body={'device_id':device['id'],'gpu_uuid':gpu['uuid'],'speech_pipeline':'qwen-batch'}
             with patch.object(main,'STORE',store),patch.object(main,'DEVICES',devices),patch.object(main,'QUEUE',asyncio.Queue()), \
                  patch.object(main,'probe_host',new=AsyncMock(return_value={'gpus':[gpu]})), \
                  patch.object(main.SPEECH,'observations',return_value=[]):
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),base_url='http://localhost') as client:
-                    response=await client.post('/api/notes',data=body)
-                    self.assertEqual(response.status_code,409,response.text)
-                    self.assertEqual(store.list(),[])
-                    response=await client.post('/api/notes',data={**body,'speech_batch':'24','allow_memory_risk':'true'})
-                    self.assertEqual(response.status_code,422,response.text)
-                    self.assertEqual(store.list(),[])
-                    response=await client.post('/api/notes',data={**body,'allow_memory_risk':'true'})
-                    self.assertEqual(response.status_code,202,response.text)
-                    snapshot=json.loads(store.get(response.json()['id'])['device_snapshot_json'])
-                    self.assertEqual(snapshot['options']['speech_batch'],8)
-                    self.assertEqual(snapshot['options']['speech_pipeline'],'qwen-batch')
+                    for batch in [8,24]:
+                        with self.subTest(batch=batch):
+                            identity=('c' if batch==8 else 'd')*32
+                            upload=store.upload_directory(identity)/'a.wav'
+                            upload.parent.mkdir(parents=True,exist_ok=True);upload.write_bytes(b'fixture')
+                            store.create_upload({'id':identity,'original_filename':'a.wav','source_path':str(upload),
+                                'normalized_path':str(upload),'status':'ready','duration':3937.13})
+                            plan=estimate_pipeline('qwen-batch',3937.13,gpu,batch)
+                            self.assertTrue(plan['exceeds_budget'])
+                            self.assertEqual(plan['exceeds_capacity'],batch==24)
+                            response=await client.post('/api/notes',data={**body,'upload_id':identity,'speech_batch':str(batch)})
+                            self.assertEqual(response.status_code,202,response.text)
+                            snapshot=json.loads(store.get(response.json()['id'])['device_snapshot_json'])
+                            self.assertEqual(snapshot['options']['speech_batch'],batch)
+                            self.assertEqual(snapshot['options']['speech_pipeline'],'qwen-batch')
 
     async def test_fast_job_skips_old_server_and_keeps_raw_and_export(self):
         from src import main

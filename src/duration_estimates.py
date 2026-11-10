@@ -78,14 +78,34 @@ def mac_estimate(device, duration, count, hardware, runtime):
     return result
 
 
-def server_estimate(key, duration, gpu, runtime, batch):
-    profile = calibrations()['profiles'].get(key)
-    if not profile or profile['platform'] != 'server' or runtime != profile['runtime']:
-        return None
+def server_profile(key, gpu, runtime):
     name = ' '.join((gpu or {}).get('name', '').lower().removeprefix('nvidia ').split())
     capacity = (gpu or {}).get('memory_total_mib')
-    if (name != profile['hardware']['name'] or not isinstance(capacity, (int, float)) or not math.isfinite(capacity)
-            or abs(capacity / 1024 - profile['hardware']['capacity_gib']) >= 4):
+    if not isinstance(capacity, (int, float)) or not math.isfinite(capacity):
+        return None
+    profiles = list(calibrations().get('server_profiles', {}).get(key, []))
+    legacy = calibrations()['profiles'].get(key)
+    if legacy:
+        profiles.append(legacy)
+    return next((p for p in profiles if p['platform'] == 'server' and p['runtime'] == runtime
+                 and name == p['hardware']['name']
+                 and abs(capacity/1024-p['hardware']['capacity_gib']) < 4), None)
+
+
+def server_partition_estimate(key, duration, gpu, runtime, count, batch):
+    profile = server_profile(key, gpu, runtime)
+    points = profile.get('split_time_knots', {}).get(str(count)) if profile else None
+    if not points or batch != 1:
+        return None
+    inference = interpolate(duration, points)
+    return {**metadata({**profile, 'time_knots': points}, duration),
+            'setup_seconds': profile['cold_setup_seconds'], 'inference_seconds': inference,
+            'time_seconds': max(1, round(profile['cold_setup_seconds']+inference))}
+
+
+def server_estimate(key, duration, gpu, runtime, batch):
+    profile = server_profile(key, gpu, runtime)
+    if not profile:
         return None
     chunks = 1 if duration <= 180 else math.ceil(duration / 175)
     automatic = min(24, chunks) if key == 'qwen-transformers' else 1 if key == 'moss-sglang' else min(4, math.ceil(duration / 1195))

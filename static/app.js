@@ -15,7 +15,7 @@ const state = {
   notes: [], current: null, saveTimer: null, pollTimer: null,
   pendingChanges: null, savePromise: null, noteRequest: 0, editRevision: 0, openingNote: null,
   maxUploadBytes: null, defaultChunkMinutes: 30, uploading: false, deletingId: null,
-  elapsedAnchor: null, elapsedTimer: null, backgroundTimer: null, backgroundAnchors: new Map(), jobActions: new Map(),
+  elapsedAnchor: null, elapsedTimer: null, backgroundTimer: null, backgroundAnchors: new Map(), stageAnchors: new Map(), jobActions: new Map(),
   uploadPreparation: null, uploadBatch: [], uploadChunkCount: null, cancellingId: null, restartingId: null, cancellationNoteId: null, deletionNoteId: null,
   estimateKey: null, estimateTimer: null, estimateController: null, chunkDefaultSaving: false,
   voiceMemos: [], voiceMemoSelected: new Set(), voiceMemoRequest: 0, voiceMemoLoading: false, voiceMemoController: null,
@@ -116,7 +116,7 @@ $("#check-app-update").addEventListener("click", async () => {
   try {
     await flushSave();
     await bridge.postMessage({});
-    $("#developer-dialog").close();
+    if ($("#developer-dialog").open) $("#developer-dialog").close();
   } catch (error) { toast(error.message || "업데이트를 확인하지 못했습니다.", true); }
 });
 
@@ -175,13 +175,36 @@ function elapsedSeconds(anchor, now = performance.now()) {
   return anchor.seconds + (anchor.running ? Math.max(0, now - anchor.at) / 1000 : 0);
 }
 
+function stageTimingText(note, total) {
+  if (note.model_loading_seconds == null) {
+    state.stageAnchors.delete(note.id);
+    return total == null ? '' : `경과 ${clock(total)}`;
+  }
+  const running = note.status === 'processing' && !note.inference_finished_at;
+  const phase = running ? note.model_timing_phase : null;
+  const key = `${note.inference_started_at}:${phase}`;
+  const previous = state.stageAnchors.get(note.id);
+  if (previous?.note !== note || previous?.key !== key) {
+    const at = note._elapsedReceivedAt ?? performance.now();
+    const delta = previous ? Math.max(0, at - previous.at) / 1000 : 0;
+    const loading = running && previous?.key === key
+      ? Math.max(note.model_loading_seconds, previous.loading + (phase === 'loading' ? delta : 0)) : note.model_loading_seconds;
+    const processing = running && previous?.key === key
+      ? Math.max(note.model_processing_seconds, previous.processing + (phase === 'processing' ? delta : 0)) : note.model_processing_seconds;
+    state.stageAnchors.set(note.id, {note, key, at, phase, loading, processing});
+  }
+  const anchor = state.stageAnchors.get(note.id);
+  const delta = running ? Math.max(0, performance.now() - anchor.at) / 1000 : 0;
+  return `모델 준비 ${clock(anchor.loading + (phase === 'loading' ? delta : 0))} · 처리 ${clock(anchor.processing + (phase === 'processing' ? delta : 0))}`;
+}
+
 function renderElapsedClock() {
   clearTimeout(state.elapsedTimer);
   state.elapsedTimer = null;
   const anchor = state.elapsedAnchor;
   if (!anchor) return;
   const seconds = elapsedSeconds(anchor);
-  $("#progress-elapsed").textContent = `경과 ${clock(seconds)}`;
+  $("#progress-elapsed").textContent = stageTimingText(anchor.note, seconds);
   renderProgressValues(anchor.note, seconds);
   if (anchor.running) {
     // Schedule the next displayed second, independently of HTTP polling.
@@ -219,7 +242,7 @@ function renderCompletionTime(note) {
   const known = note.status === "done" && note.processing_seconds != null;
   element.classList.toggle("hidden", !known);
   element.textContent = known
-    ? `전사 소요 ${note.processing_seconds < 1 ? "1초 미만" : clock(Math.round(note.processing_seconds))}` : "";
+    ? `전사 소요 ${note.processing_seconds < 1 ? "1초 미만" : clock(Math.round(note.processing_seconds))}${note.model_loading_seconds == null ? "" : ` · ${stageTimingText(note, null)}`}` : "";
 }
 
 function statusText(status) {
@@ -310,6 +333,9 @@ function backgroundJobPhase(note) {
   if (note.status === "error") return "전사 실패";
   if (note.status === "cancelled") return "전사 취소됨";
   if (note.inference_finished_at) return "노트 마무리 중";
+  if (note.model_progress?.pipeline_phase === 'retrying_memory') return '메모리에 맞춰 구간을 나누는 중';
+  if (note.model_progress?.pipeline_phase === 'loading' && note.model_progress.memory_retry_count) return '더 짧은 구간으로 모델 다시 로딩 중';
+  if (note.model_progress?.pipeline_phase === "loading") return note.model_progress.engine === "nemotron" ? "화자 모델 로딩 중" : "전사 모델 로딩 중";
   if (note.model_progress?.partition_count > 1) return `${note.model_progress.partition_index}/${note.model_progress.partition_count} 구간 순차 전사 중`;
   if (note.model_progress?.continuing) return "남은 구간 이어서 전사 중";
   if (note.model_progress?.pipeline_phase === "aligning") return "단어 시간 정렬 중";
@@ -348,10 +374,11 @@ function updateBackgroundProgress() {
     if (progress.indeterminate) track.removeAttribute('aria-valuenow');
     else track.setAttribute('aria-valuenow', String(progress.percent));
     track.setAttribute('aria-valuetext', `${backgroundJobPhase(note)}${progress.indeterminate ? '' : ` · 예상 ${progress.percent}%`}`);
-    const timing = [elapsed == null ? '' : `경과 ${clock(elapsed)}`, progress.estimate ? `예상 ${clock(progress.estimate)}` : ''].filter(Boolean).join(' · ');
+    const timing = [stageTimingText(note, elapsed), progress.estimate ? `예상 ${clock(progress.estimate)}` : ''].filter(Boolean).join(' · ');
     card.querySelector('.job-timing').textContent = active ? timing : '';
     card.querySelector('.job-detail').textContent = note.status === "error" ? (note.error || "장치 연결을 확인한 후 다시 시도해 주세요.")
       : note.status === "cancelled" ? "임시 녹음은 삭제됐습니다. 원본을 다시 선택해 전사할 수 있어요."
+      : note.model_progress?.memory_retry_count ? '메모리 부족으로 구간을 줄여 다시 처리하고 있어요. 완료한 구간은 유지됩니다.'
       : note.status === "queued" ? "앞선 작업이 끝나면 자동으로 시작됩니다."
       : progress.complete ? "전사 결과를 노트에 저장하고 있어요."
       : progress.percent >= 99 ? "모델의 완료 응답을 기다리고 있어요."
@@ -363,6 +390,7 @@ function renderBackgroundJobs() {
   const order = {processing:0,queued:1,error:2,cancelled:2};
   const jobs = state.notes.filter(note => note.status !== "done").sort((a,b) => (order[a.status] ?? 3) - (order[b.status] ?? 3) || a.created_at.localeCompare(b.created_at));
   const section = $('#background-jobs'), list = $('#background-job-list');
+  for (const id of state.stageAnchors.keys()) if (id !== state.current?.id && !jobs.some(note=>note.id===id)) state.stageAnchors.delete(id);
   for (const id of state.backgroundAnchors.keys()) if (!jobs.some(note=>note.id===id)) state.backgroundAnchors.delete(id);
   const focused = document.activeElement.closest?.('.background-job');
   const focusedId = focused?.dataset.id, focusedAction = document.activeElement.dataset?.jobAction;
@@ -690,6 +718,7 @@ function renderWorkspace() {
       linking: "음성을 전사하고 있어요",
       finalizing: "모델 전사가 끝났어요",
     }[phase] || "음성을 읽고 있어요";
+    if (note.model_progress?.pipeline_phase === 'loading') $('#processing-title').textContent = backgroundJobPhase(note);
     if (phase === 'transcribing') {
       const modelPhase = note.model_progress?.pipeline_phase;
       if (modelPhase === 'aligning') $("#processing-title").textContent = '단어의 시간을 맞추고 있어요';
@@ -1529,14 +1558,8 @@ $("#upload-form").addEventListener("submit", async event => {
   let pending = [...preparations], added = 0;
   try {
     await flushSave();
-    const moss = fastSpeech && ['moss-sglang','moss-qwen-sequential'].includes(body.get('speech_pipeline'));
-    const inputs = joining ? [{duration:preparations.reduce((sum,item)=>sum+item.duration,0),file:{name:body.get('title') || preparations[0].file.name}}] : preparations;
-    const plans = moss ? inputs.filter(item=>item.duration > 5400).map(item=>({title:item.file.name,
-      duration:item.duration,count:Math.ceil(item.duration/5400),seconds:item.duration/Math.ceil(item.duration/5400)})) : [];
-    if (plans.length) {
-      if (!await confirmMossSplit(plans)) return;
-      body.set('allow_moss_split','true');
-    }
+    // The server confirms the actual GPU-specific balanced plan before consuming
+    // uploads. A stale client-side 90-minute plan must not approve other cuts.
     while (pending.length) {
       let result;
       if (joining) {
@@ -2565,6 +2588,7 @@ window.addEventListener("beforeunload", event => {
   if (state.pendingChanges || state.savePromise || state.uploading) event.preventDefault();
 });
 const saveLocationReady = loadSaveLocation();
+loadAppInfo();
 refreshAppSetup(true).catch(error => toast(error.message, true));
 loadModelCatalog().catch(error => toast(error.message, true));
 loadNotes();

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from src.speech_engines import ENGINE_VERSION, stages
+from src.speech_engines import CUDA_OOM_MESSAGE, ENGINE_VERSION, stages
 from src.speech_pipeline import PIPELINES, DEFAULT_PIPELINE, estimate_pipeline
 from src.speech_jobs import SpeechJobs
 from src.store import NoteStore
@@ -46,14 +46,43 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual((long['chunk_count'],long['chunk_seconds']),(2,3000))
         self.assertTrue(long['calibration_extrapolated'])
         self.assertGreater(estimate_pipeline('qwen-transformers',5401,GPU)['chunk_count'],1)
-        self.assertTrue(estimate_pipeline('moss-sglang',100,{**GPU,'memory_total_mib':24576})['exceeds_capacity'])
+        self.assertFalse(estimate_pipeline('moss-sglang',100,{**GPU,'memory_total_mib':24576})['exceeds_capacity'])
+
+    def test_split_prediction_charges_setup_once_and_learns_without_polluting_short_curve(self):
+        part = estimate_pipeline('moss-sglang', 4200, GPU)
+        long = estimate_pipeline('moss-sglang', 12600, GPU)
+        self.assertAlmostEqual(long['time_seconds'],
+            (part['time_seconds'] - part['setup_seconds'])*3 + part['setup_seconds'], delta=1)
+        with tempfile.TemporaryDirectory() as folder:
+            jobs = SpeechJobs(Path(folder)/'samples.db')
+            jobs.record(dict(pipeline='moss-sglang', runtime=ENGINE_VERSION,
+                segments=[{'text':'not stored'}], peak_process_mib=25000, batch=1,
+                audio_seconds=12600, inference_seconds=570, load_seconds=30,
+                capacity_gib=GPU['memory_total_mib']/1024, gpu_name='NVIDIA H200', moss_partition_count=3))
+            rows = jobs.observations()
+            self.assertEqual(len(rows), 1)
+            learned = estimate_pipeline('moss-sglang',12600,GPU,observations=rows)
+            self.assertEqual(learned['time_seconds'],600)
+            self.assertEqual(learned['time_source'],'observed')
+            self.assertEqual(estimate_pipeline('moss-sglang',4200,GPU,observations=rows)['time_seconds'],part['time_seconds'])
+            self.assertEqual(estimate_pipeline('moss-sglang',12600,{**GPU,'name':'RTX 3090'},observations=rows)['time_source'],'unmeasured')
+
+    def test_other_gpu_split_estimate_also_charges_observed_setup_once(self):
+        gpu = {**GPU, 'name':'NVIDIA RTX 6000 Ada Generation', 'memory_total_mib':48*1024}
+        row = dict(pipeline='moss-sglang',runtime=ENGINE_VERSION,batch=1,
+            gpu_name='rtx 6000 ada generation',capacity_gib=48,audio_seconds=4200,
+            inference_seconds=300,load_seconds=30,peak_process_gib=25)
+        result = estimate_pipeline('moss-sglang',12600,gpu,observations=[row])
+        self.assertEqual(result['time_seconds'],930)
+        self.assertEqual(result['setup_seconds'],30)
+        self.assertEqual(result['inference_seconds'],900)
 
     def test_history_does_not_mix_old_engine_measurements(self):
         with tempfile.TemporaryDirectory() as folder:
             jobs=SpeechJobs(Path(folder)/'samples.db')
             sample=dict(pipeline='moss-sglang',runtime=ENGINE_VERSION,segments=[{'text':'secret'}],
                 peak_process_mib=25000,batch=1,audio_seconds=100,inference_seconds=10,load_seconds=20,
-                capacity_gib=48,gpu_name='NVIDIA RTX 6000 Ada Generation')
+                capacity_gib=48,gpu_name='Fixture GPU')
             jobs.record(sample)
             observations=jobs.observations()
             self.assertNotIn('secret',json.dumps(observations))
@@ -64,6 +93,48 @@ class PlanningTests(unittest.TestCase):
 
 
 class EngineAPITests(unittest.IsolatedAsyncioTestCase):
+    async def test_cuda_oom_cause_survives_generic_remote_stage_failure(self):
+        class Process:
+            returncode = 1
+            stdin = None
+
+            async def wait(self):
+                return self.returncode
+
+        async def lines(detail):
+            for line in ['COSMOSS_SPEECH:{"phase":"loading","engine":"moss"}', detail,
+                         'COSMOSS_SPEECH:{"phase":"error","error":"전사 엔진 단계가 실패했습니다."}']:
+                yield (line+'\n').encode()
+
+        with tempfile.TemporaryDirectory() as folder:
+            jobs=SpeechJobs(Path(folder)/'samples.db')
+            for detail,expected in [('torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1 GiB',CUDA_OOM_MESSAGE),
+                                    ('ValueError: invalid audio','전사 엔진 단계가 실패했습니다.')]:
+                process=Process();process.stdout=lines(detail)
+                with patch('src.speech_jobs.discover_hosts',return_value=['fixture']), \
+                     patch('src.speech_jobs.asyncio.create_subprocess_exec',new=AsyncMock(return_value=process)):
+                    with self.assertRaisesRegex(RuntimeError,'메모리 부족' if expected==CUDA_OOM_MESSAGE else '엔진 단계') as caught:
+                        await jobs.execute('fixture','moss-sglang','run',lambda _:None,batch=1)
+                    self.assertEqual(str(caught.exception),expected)
+
+    async def test_memory_failure_remains_a_saved_job_after_reopening(self):
+        from src import main
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);store=NoteStore(root/'notes.db');identity='a'*32
+            audio=store.upload_directory(identity)/'audio.wav';audio.parent.mkdir(parents=True);audio.write_bytes(b'fixture')
+            device={'id':'remote','backend':'cuda','host':'fixture','gpu_uuid':'GPU-fixture',
+                    'options':{'speech_pipeline':'moss-sglang'}}
+            store.create({'id':identity,'title':'메모리 오류 작업','original_filename':'audio.wav','source_path':str(audio),
+                          'duration':3600,'status':'queued','device_id':'remote','device_snapshot_json':json.dumps(device)})
+            with patch.object(main,'STORE',store),patch.object(main.DEVICES,'get',return_value=device), \
+                 patch.object(main.MEDIA_TOOLS,'require_ready',new=AsyncMock()), \
+                 patch.object(main,'transcribe_fast',new=AsyncMock(side_effect=RuntimeError(CUDA_OOM_MESSAGE))):
+                await main.transcribe(identity)
+            saved=NoteStore(root/'notes.db').get(identity)
+            self.assertEqual(saved['status'],'error')
+            self.assertEqual(saved['error'],CUDA_OOM_MESSAGE)
+            self.assertEqual(saved['title'],'메모리 오류 작업')
+
     async def asyncSetUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

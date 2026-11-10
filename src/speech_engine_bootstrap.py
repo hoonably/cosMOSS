@@ -84,7 +84,7 @@ def main():
                            ('worker.py','engine_worker_source'),('runtime_environment.py','runtime_source')]:
             (job/name).write_text(request[field])
         sys.path.insert(0,str(job))
-        from speech_engines import ENGINE_PIPELINES,ENGINE_VERSION,REQUIREMENTS,MODELS,stages,model_keys,missing_moss_partition_tail
+        from speech_engines import CUDA_OOM_MESSAGE,MOSS_CAPACITY_MESSAGE,ENGINE_PIPELINES,ENGINE_VERSION,REQUIREMENTS,MODELS,stages,model_keys,missing_moss_partition_tail,run_moss_with_memory_retries
         from speech_pipeline import attribute_speakers,utterances
         from runtime_environment import ensure_uv
         key,action = request['model_key'],request['action']
@@ -156,8 +156,12 @@ def main():
                     check()
                     if stage and time.monotonic()-last>=.5:
                         last=time.monotonic()
-                        output=subprocess.check_output(['nvidia-smi','--query-compute-apps=pid,used_memory,gpu_uuid',
-                            '--format=csv,noheader,nounits'],text=True,timeout=5)
+                        try:
+                            output=subprocess.check_output(['nvidia-smi','--query-compute-apps=pid,used_memory,gpu_uuid',
+                                '--format=csv,noheader,nounits'],text=True,timeout=5)
+                        except (OSError, subprocess.SubprocessError):
+                            # Telemetry must not terminate a working model.
+                            output=''
                         used=0
                         for line in output.splitlines():
                             pid,memory,gpu=[x.strip() for x in line.split(',')]
@@ -169,8 +173,6 @@ def main():
                                 used+=int(memory)
                         peak=max(peak,used)
                         peak_mib=max(peak_mib,peak)
-                        if used>capacity_mib*(.95 if request.get('allow_memory_risk') else .7):
-                            raise RuntimeError('전사 메모리 안전 예산을 초과해 작업을 중단했습니다. 다른 GPU 또는 전사 방식을 선택해 주세요.')
                     time.sleep(.25)
             finally:
                 try:
@@ -199,10 +201,17 @@ def main():
                     if time.monotonic()>deadline:
                         raise RuntimeError('이전 모델의 GPU 메모리 해제를 확인하지 못해 다음 단계를 시작하지 않았습니다.')
                     time.sleep(.25)
-            if code:
-                raise RuntimeError('전사 엔진 단계가 실패했습니다. 위의 모델 오류를 확인해 주세요.')
             if stage:
-                stage_peaks[stage]=peak
+                # Continuation/recovery can launch the same stage again. Keep
+                # its highest peak, including failed attempts, for diagnostics.
+                stage_peaks[stage]=max(stage_peaks.get(stage,0),peak)
+            if code:
+                error_path=job/(stage+'.error.json') if stage else None
+                if error_path and error_path.exists():
+                    error_info=json.loads(error_path.read_text())
+                    if error_info.get('cuda_oom'):raise RuntimeError(CUDA_OOM_MESSAGE)
+                    if error_info.get('context_capacity'):raise RuntimeError(MOSS_CAPACITY_MESSAGE)
+                raise RuntimeError('전사 엔진 단계가 실패했습니다. 위의 모델 오류를 확인해 주세요.')
             return peak
         if action=='install':
             lock=(root/'install.lock').open('a')
@@ -290,11 +299,14 @@ def main():
         started=time.monotonic()
         def execute_stage(stage, env, **overrides):
             check()
-            emit(phase='loading',engine=stage,resume_offset=overrides.get('start_offset',0))
+            emit(phase='loading',engine=stage,resume_offset=overrides.get('start_offset',0),
+                 memory_retry_count=overrides.get('memory_retry_count',0))
             config={k:request.get(k) for k in ('batch','model_key','language','hotwords','prompt','allow_moss_split')}
             config.update(stage=stage,paths=paths,audio=str(job/'audio.wav'),duration=duration,output=str(job/(stage+'.json')),
-                qwen_result=str(job/'qwen.json'),asr_peak_bytes=stage_peaks.get('qwen',0)*1024**2)
+                qwen_result=str(job/'qwen.json'))
             config.update(overrides)
+            for suffix in ('.json','.error.json','.checkpoint.json'):
+                (job/(stage+suffix)).unlink(missing_ok=True)
             stage_env=environment.copy()
             if env=='sglang':
                 folder = root/'envs/sglang'
@@ -311,27 +323,40 @@ def main():
                 (job/'request.json').write_text(json.dumps(config))
                 run([str(root/'envs'/env/'bin/python'),'-u',str(job/'worker.py'),str(job/'request.json')],env=stage_env,stage=stage)
             return json.loads((job/(stage+'.json')).read_text())
+        moss_chunk_seconds=request.get('moss_chunk_seconds') or 5400
+        def execute_moss(start_offset=0,end_offset=None):
+            nonlocal moss_chunk_seconds
+            def checkpoint():
+                path=job/'moss.checkpoint.json'
+                return json.loads(path.read_text()) if path.exists() else None
+            value=run_moss_with_memory_retries(duration,
+                lambda **options:execute_stage('moss','sglang',**options),checkpoint,
+                lambda **event:emit(phase='retrying_memory',engine='moss-sglang',**event),
+                max_seconds=moss_chunk_seconds,start_offset=start_offset,end_offset=end_offset)
+            moss_chunk_seconds=value['moss_chunk_seconds']
+            return value
         for stage,env in stages(key):
-            results[stage]=execute_stage(stage,env)
+            results[stage]=execute_moss() if stage=='moss' else execute_stage(stage,env)
         turns=results['nemotron']['turns']
         if 'moss' in results:
             # Natural EOS can also stop early with syntactically valid markup.
             # Whole-recording diarization provides independent evidence of a
             # spoken tail, so complete that tail before publishing the note.
             for _ in range(2*results['moss'].get('partition_count',1)):
-                missing=missing_moss_partition_tail(results['moss']['items'],turns,duration)
+                missing=missing_moss_partition_tail(results['moss']['items'],turns,duration,results['moss'].get('ranges'))
                 if missing is None:
                     break
                 offset,end=missing
-                recovered=execute_stage('moss','sglang',start_offset=offset,end_offset=end)
+                recovered=execute_moss(start_offset=offset,end_offset=end)
                 if max((row['end'] for row in recovered['items']),default=offset)<=offset+1:
                     raise RuntimeError('MOSS가 녹음 뒤쪽 발화를 전사하지 못했습니다. 불완전한 결과를 완료로 저장하지 않았습니다.')
                 results['moss']['items'].extend(recovered['items'])
                 results['moss']['chunks'].extend(recovered['chunks'])
                 for metric in ('load_seconds','inference_seconds'):
                     results['moss'][metric]+=recovered[metric]
+                results['moss']['adaptive_memory_retries'].extend(recovered.get('adaptive_memory_retries',[]))
             results['moss']['items'].sort(key=lambda row:row['start'])
-            if missing_moss_partition_tail(results['moss']['items'],turns,duration) is not None:
+            if missing_moss_partition_tail(results['moss']['items'],turns,duration,results['moss'].get('ranges')) is not None:
                 raise RuntimeError('MOSS 전사에 녹음 뒤쪽 발화가 누락되어 있습니다. 불완전한 결과를 완료로 저장하지 않았습니다.')
         items=results['aligner']['items'] if key=='qwen-transformers' else results['moss']['items']
         attributed=attribute_speakers(items,turns)
@@ -351,7 +376,8 @@ def main():
             model_revisions={k:MODELS[k][1] for k in model_keys(key)},schedule='sequential-unload',
             auxiliary_transcript=results['qwen'] if key=='moss-qwen-sequential' else None,
             has_auxiliary_transcript=key=='moss-qwen-sequential',
-            moss_partition_count=results.get('moss',{}).get('partition_count',1))
+            moss_partition_count=results.get('moss',{}).get('partition_count',1),moss_chunk_seconds=moss_chunk_seconds,
+            adaptive_memory_retries=results.get('moss',{}).get('adaptive_memory_retries',[]))
         emit(phase='done',result=result)
 
 

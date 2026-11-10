@@ -31,10 +31,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import TranscriptionConfig
 from src.audio_join import join_recordings
-from src.speech_engines import balanced_moss_ranges
 from src.devices import DeviceStore, ResolvedDevice, public_device, resolve_device
 from src.local_models import LocalModels, RUNTIME_VERSION as MLX_RUNTIME_VERSION
 from src.media_tools import MediaTools
+from src.processing_clock import advance_stage, stage_elapsed
 from src.model_catalog import catalog, model_selection, recommendation, DEFAULT_OPTIONS, default_chunk_minutes, local_hardware, has_model_selection
 from src.processing_estimates import estimate_processing
 from src.process_lifecycle import watch_desktop_parent
@@ -295,6 +295,13 @@ def public_note(note: dict[str, Any]) -> dict[str, Any]:
         result["processing_elapsed_seconds"] = (note.get("preprocessing_seconds") or 0) + max(
             0.0, (datetime.now(UTC) - datetime.fromisoformat(note["processing_started_at"])).total_seconds()
         )
+    timing = (note.get('model_progress') or {}).get('stage_timing')
+    timing_end = note.get('inference_finished_at') or note.get('processing_finished_at')
+    split_elapsed = stage_elapsed(timing, datetime.fromisoformat(timing_end) if timing_end else None)
+    if split_elapsed:
+        result.update(model_loading_seconds=split_elapsed['loading_seconds'],
+                      model_processing_seconds=split_elapsed['processing_seconds'],
+                      model_timing_phase=timing.get('phase') if note['status'] == 'processing' and not timing_end else None)
     if note.get('id'):
         result.update(SUMMARIES.marker(note))
     return result
@@ -1075,7 +1082,8 @@ async def transcribe_fast(note, device, started):
         await run_audio_work(normalize_audio, source, normalized)
     duration = note.get('duration') or await run_audio_work(probe_duration, normalized)
     gpu = device.get('gpu_hardware', {})
-    plan = estimate_pipeline(key, duration, gpu, device['options'].get('speech_batch', 0), SPEECH.observations())
+    plan = estimate_pipeline(key, duration, gpu, device['options'].get('speech_batch', 0), SPEECH.observations(),
+                             moss_chunk_seconds=device['options'].get('moss_chunk_seconds'))
     # A resumed job reuses its original GPU UUID and configuration. The lock
     # still rejects another cosMOSS owner; no process is displaced.
     STORE.update(note['id'], progress_phase='preparing_model', normalized_path=str(normalized), duration=duration,
@@ -1084,13 +1092,24 @@ async def transcribe_fast(note, device, started):
     if ready['phase'] != 'installed':
         raise RuntimeError('왼쪽 처리 장치에서 선택한 모델을 먼저 다운로드해 주세요.')
     inference_started = False
+    stage_timing = {}
     def on_event(event):
-        nonlocal inference_started
+        nonlocal inference_started, stage_timing
         phase = event.get('phase')
         changes = {}
-        if phase == 'loading' and key in ENGINE_PIPELINES:
+        if phase in {'loading', 'transcribing', 'aligning', 'diarizing','retrying_memory'}:
+            stage_timing = advance_stage(stage_timing, 'loading' if phase in {'loading','retrying_memory'} else 'processing')
+        if phase=='retrying_memory':
+            changes.update(progress_phase='transcribing',model_progress={'pipeline_phase':'retrying_memory',
+                'memory_retry_count':event.get('attempt',1),'max_seconds':event.get('max_seconds')})
+            current=STORE.get(note['id'])
+            remaining=estimate_pipeline(key,max(1,duration-event.get('resume_offset',0)),gpu,
+                device['options'].get('speech_batch',0),SPEECH.observations(),moss_chunk_seconds=event['max_seconds'])
+            elapsed=(datetime.now(UTC)-datetime.fromisoformat(current['inference_started_at'])).total_seconds() if current.get('inference_started_at') else 0
+            changes['estimated_inference_seconds']=round(elapsed+remaining['time_seconds']) if remaining['time_seconds'] else None
+        elif phase == 'loading' and key in ENGINE_PIPELINES:
             changes.update(progress_phase='transcribing', model_progress={'pipeline_phase':'loading', 'engine':event.get('engine'),
-                           'continuing':event.get('resume_offset', 0) > 0})
+                           'continuing':event.get('resume_offset', 0) > 0,'memory_retry_count':event.get('memory_retry_count',0)})
             if not inference_started:
                 changes.update(inference_started_at=datetime.now(UTC).isoformat(), estimated_inference_seconds=plan['time_seconds'])
                 inference_started = True
@@ -1099,7 +1118,8 @@ async def transcribe_fast(note, device, started):
         elif phase in {'transcribing', 'aligning', 'diarizing'}:
             changes.update(progress_phase='transcribing', model_progress={'pipeline_phase': phase,
                            'continuing':event.get('resume_offset', 0) > 0,
-                           'partition_index':event.get('partition_index'), 'partition_count':event.get('partition_count')},
+                           'partition_index':event.get('partition_index'), 'partition_count':event.get('partition_count'),
+                           'memory_retry_count':event.get('memory_retry_count',0)},
                            progress_total_steps=event.get('chunk_count', plan['chunk_count']) + 1)
             if not inference_started:
                 changes.update(inference_started_at=datetime.now(UTC).isoformat(), estimated_inference_seconds=plan['time_seconds'])
@@ -1107,20 +1127,23 @@ async def transcribe_fast(note, device, started):
             if 'completed' in event:
                 changes.update(processed_chunks=event['completed'], progress_completed_steps=event['completed'])
         if changes:
+            if 'model_progress' in changes:
+                changes['model_progress']['stage_timing'] = stage_timing
             STORE.update(note['id'], **changes)
     prompt = DEFAULT_PROMPT + (f"热词提示：{note['hotwords']}" if note.get('hotwords') else '')
     response = await SPEECH.execute(device['host'], key, 'run', on_event, audio=normalized,
                                    gpu_uuid=device['gpu_uuid'], batch=plan['batch'], language=note.get('language'),
-                                   allow_memory_risk=device['options'].get('allow_memory_risk', False),
                                    allow_moss_split=device['options'].get('allow_moss_split', False),
+                                   moss_chunk_seconds=plan.get('moss_chunk_seconds'),
                                    hotwords=note.get('hotwords'), prompt=prompt)
     result = response['result']
+    stage_timing = advance_stage(stage_timing, None)
     STORE.update(note['id'], inference_finished_at=datetime.now(UTC).isoformat(), progress_phase='finalizing')
     SPEECH.record(result)
-    await complete_pipeline_transcription(note, result, normalized, started)
+    await complete_pipeline_transcription(note, result, normalized, started, stage_timing=stage_timing)
 
 
-async def complete_pipeline_transcription(note, result, normalized, started):
+async def complete_pipeline_transcription(note, result, normalized, started, *, stage_timing=None):
     """Mac and server jobs publish the same initial note and review metadata."""
     duration = note.get('duration') or result.get('audio_seconds') or await run_audio_work(probe_duration, normalized)
     segments = result['segments']
@@ -1131,7 +1154,7 @@ async def complete_pipeline_transcription(note, result, normalized, started):
     metrics = {key: value for key, value in result.items() if key not in {'segments', 'words', 'turns', 'asr_chunks', 'asr_segments', 'auxiliary_transcript'}}
     completed = dict(status='done', progress_phase='done', chunk_count=result['chunk_count'],
         processed_chunks=result['chunk_count'], progress_completed_steps=result['chunk_count'] + 1,
-        progress_total_steps=result['chunk_count'] + 1, processed_audio_seconds=duration, model_progress={},
+        progress_total_steps=result['chunk_count'] + 1, processed_audio_seconds=duration, model_progress={'stage_timing':stage_timing} if stage_timing else {},
         processing_finished_at=datetime.now(UTC).isoformat(),
         processing_seconds=round((note.get('preprocessing_seconds') or 0) + time.monotonic() - started, 3),
         raw_transcript=canonical_transcript(segments), raw_segments=segments, segments=segments,
@@ -1966,7 +1989,7 @@ async def create_note(
     output_directory: str = Form("", max_length=4096),
     speech_pipeline: SpeechPipelineKey | None = Form(None),
     speech_batch: int = Form(0, ge=0, le=24),
-    allow_memory_risk: bool = Form(False),
+    allow_memory_risk: bool = Form(False),  # Accepted for older clients; memory warnings no longer gate execution.
     allow_moss_split: bool = Form(False),
     local_model_key: Literal['mlx-8bit', 'mlx-4bit', 'mlx-16bit', 'custom'] | None = Form(None),
 ) -> dict[str, Any]:
@@ -2059,26 +2082,22 @@ async def create_note(
             return
         if not duration or not math.isfinite(duration):
             raise HTTPException(422, '음성 길이를 먼저 확인해 주세요.')
-        if speech_pipeline in {'moss-sglang','moss-qwen-sequential'} and duration > 5400 and not allow_moss_split:
-            ranges = balanced_moss_ranges(duration)
-            raise HTTPException(409, {'code':'moss_split_confirmation_required',
-                'message':'90분을 넘는 녹음은 확인 후 균등 분할해 순서대로 전사합니다.',
-                'duration':duration,'count':len(ranges),'seconds':duration/len(ranges)})
         try:
             plan = estimate_pipeline(speech_pipeline, duration, gpu, speech_batch, SPEECH.observations())
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
-        if plan['exceeds_capacity']:
-            raise HTTPException(422, f"약 {plan['memory_expected_gib']:.1f} GiB가 필요합니다. 더 큰 GPU 또는 다른 전사 방식을 선택해 주세요.")
-        if plan['exceeds_budget'] and not allow_memory_risk:
-            raise HTTPException(409, f"예상 Peak Memory가 전체 VRAM의 70%를 넘습니다. 경고를 확인하거나 동시 청크 수를 줄여 주세요.")
+        if speech_pipeline in {'moss-sglang','moss-qwen-sequential'} and plan.get('moss_partition_count',1)>1 and not allow_moss_split:
+            raise HTTPException(409, {'code':'moss_split_confirmation_required',
+                'message':'선택한 GPU의 자동 구간 길이에 맞춰 균등 분할해 순서대로 전사합니다.',
+                'duration':duration,'count':plan['moss_partition_count'],'seconds':plan['chunk_seconds'],
+                'max_seconds':plan['moss_chunk_seconds']})
         device['options'] = {**device.get('options', {}), 'speech_pipeline': speech_pipeline, 'speech_batch': speech_batch,
-                             'allow_memory_risk': allow_memory_risk, 'allow_moss_split':allow_moss_split}
+                             'allow_moss_split':allow_moss_split,'moss_chunk_seconds':plan.get('moss_chunk_seconds')}
         if speech_pipeline in ENGINE_PIPELINES:
             repo = 'Qwen/Qwen3-ASR-1.7B' if speech_pipeline == 'qwen-transformers' else 'OpenMOSS-Team/MOSS-Transcribe-Diarize'
             device.update(model=repo, model_id=repo, model_key='cuda-original', model_source='cache', model_path='')
         settings.update(device_snapshot_json=json.dumps(device, ensure_ascii=False), chunk_seconds=plan['chunk_seconds'])
-        if speech_pipeline in {'moss-sglang','moss-qwen-sequential'} and duration > 5400:
+        if speech_pipeline in {'moss-sglang','moss-qwen-sequential'} and plan.get('moss_partition_count',1)>1:
             settings['chunk_count'] = plan['chunk_count']
     if upload_ids:
         joined_id = uuid.uuid4().hex

@@ -22,7 +22,7 @@ async def main():
            'memory_used_mib':0,'utilization_percent':0,'processes':[],'process_info_known':True,'idle_candidate':True} for i in range(4)]
     gpus[1].update(idle_candidate=False, memory_used_mib=9338, memory_free_mib=15238,
                    busy_confirmation='busy-fixture',processes=[{'pid':'42','name':'fixture.py','memory_mib':9338}])
-    errors=[];submitted=[];home_changes=[];downloads=[]
+    errors=[];submitted=[];home_changes=[];downloads=[];context_override=[None]
     prepared={'moss-sglang','moss-qwen-sequential'}
     note={'id':'f'*32,'title':'녹음','original_filename':'녹음.m4a','status':'queued',
           'created_at':datetime.now(timezone.utc).isoformat(),'segments':[],'speaker_names':{}}
@@ -36,7 +36,8 @@ async def main():
     async def estimate(route):
         query={k:v[0] for k,v in parse_qs(urlsplit(route.request.url).query).items()}
         gpu=next(g for g in gpus if g['uuid']==query['gpu_uuid'])
-        await route.fulfill(json=estimate_pipeline(query['pipeline'],float(query['duration']),gpu,int(query['batch'])))
+        await route.fulfill(json=estimate_pipeline(query['pipeline'],float(query['duration']),gpu,int(query['batch']),
+                                                  moss_chunk_seconds=context_override[0]))
     async def selection(route):
         home_changes.append(route.request.post_data_json)
         remote['options']['speech_pipeline']=route.request.post_data_json['pipeline']
@@ -108,9 +109,18 @@ async def main():
         }''')
         assert 'GiB' in await page.locator('.gpu-memory').first.inner_text()
         assert 'MiB' in await page.locator('.gpu-memory').first.get_attribute('title')
-        await page.wait_for_function('document.querySelector("#upload-estimate-time").textContent==="약 03:18"')
+        seconds=estimate_pipeline('moss-sglang',3937.1306875,gpus[0])['time_seconds']
+        expected=f'약 {seconds//60:02d}:{seconds%60:02d}'
+        await page.wait_for_function('expected=>document.querySelector("#upload-estimate-time").textContent===expected',arg=expected)
         assert '전체 1청크' in await page.locator('#speech-batch-plan').inner_text()
         await page.locator('#upload-dialog').screenshot(path=png.replace('.png','-moss.png'))
+        context_override[0]=1800
+        await page.evaluate('clearUploadEstimate(); cosmossSpeech.estimate()')
+        await page.wait_for_function('document.querySelector("#speech-batch-plan").textContent.includes("3개 균등 구간")')
+        assert '자동 최대 30분' in await page.locator('#speech-batch-plan').inner_text()
+        context_override[0]=None
+        await page.evaluate('clearUploadEstimate(); cosmossSpeech.estimate()')
+        await page.wait_for_function('document.querySelector("#speech-batch-plan").textContent.includes("전체 1청크")')
         # Larger inventories scroll independently, retaining scroll/selection
         # through the same refresh that runs every three seconds in the app.
         for i in range(4,12):
@@ -148,13 +158,18 @@ async def main():
         await page.locator('#confirm-gpu-warning').click()
         await page.wait_for_function('document.querySelectorAll("input[name=selected-gpu]")[1].checked')
         await choose_option(page,'#speech-batch','8')
-        await page.wait_for_function('!document.querySelector("#speech-memory-consent").classList.contains("hidden")')
-        assert await page.locator('#allow-speech-memory-risk').get_attribute('required') is not None
+        await page.locator('#upload-memory-warning').wait_for(state='visible')
+        assert await page.locator('#speech-memory-consent').count() == 0
         assert '70%' in await page.locator('#upload-memory-warning').inner_text()
+        assert '실행할 수 있지만' in await page.locator('#upload-memory-warning').inner_text()
+        assert await page.locator('#speech-batch').evaluate('e=>e.checkValidity()')
         assert await page.locator('#upload-estimate-time').inner_text()=='추가 측정 필요'
+        await choose_option(page,'#speech-batch','24')
+        await page.wait_for_function('document.querySelector("#upload-memory-warning").textContent.includes("전체 VRAM을 넘습니다")')
+        assert await page.locator('#speech-batch').evaluate('e=>e.checkValidity()')
         await choose_option(page,'#speech-batch','0')
-        await page.wait_for_function('document.querySelector("#speech-memory-consent").classList.contains("hidden")')
-        assert not await page.locator('#allow-speech-memory-risk').is_checked()
+        await page.wait_for_function('document.querySelector("#speech-batch-plan").textContent.includes("자동 추천")')
+        assert await page.locator('#speech-batch').evaluate('e=>e.checkValidity()')
         for width in (1440,1100,390):
             await page.set_viewport_size({'width':width,'height':1000})
             if width>1040: await column_layout()

@@ -1,12 +1,13 @@
 """Native update bridge and editor-save gating with no network update or AI run."""
 import asyncio
 import sys
+import os
 from playwright.async_api import async_playwright
 
 
 async def main():
     async with async_playwright() as pw:
-        browser = await pw.webkit.launch(headless=True)
+        browser = await pw.webkit.launch(headless=True, **({'executable_path':os.environ['PLAYWRIGHT_WEBKIT_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_WEBKIT_EXECUTABLE') else {}))
         page = await browser.new_page(viewport={'width': 1440, 'height': 900})
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -22,12 +23,14 @@ async def main():
         await page.route('**/api/summary/providers', lambda r: r.fulfill(json=[]))
         await page.route('**/api/devices', lambda r: r.fulfill(json=[]))
         await page.goto(sys.argv[1])
+        await page.locator('.topbar-actions #check-app-update').wait_for()
+        assert await page.locator('#developer-dialog #check-app-update').count() == 0
         await page.click('#open-developer-info')
-        await page.locator('#check-app-update').wait_for()
         assert await page.locator('#app-version').inner_text() == 'v1.0.0'
         assert await page.locator('#check-app-update').is_enabled()
         assert await page.evaluate('document.activeElement.id') == 'developer-dialog-title'
-        await page.click('#check-app-update')
+        await page.click('#close-developer-info')
+        await page.click('.topbar-actions #check-app-update')
         assert await page.evaluate('window.updateChecks') == 1
         assert not await page.locator('#developer-dialog').evaluate('el=>el.open')
         assert await page.evaluate('window.prepareForAppUpdate()')
