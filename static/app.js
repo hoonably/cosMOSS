@@ -1513,7 +1513,8 @@ $("#upload-form").addEventListener("submit", async event => {
   body.delete('selected-gpu');body.delete('file');
   body.set('device_id',device.id);
   window.cosmossSpeech?.form(body);
-  body.delete('output_directory');
+  await saveLocationReady;
+  if (state.saveDirectory) body.set('output_directory', state.saveDirectory);
   const fastSpeech = !!window.cosmossSpeech?.active();
   if (device.backend === 'cuda') {
     if (!state.selectedGpu || state.gpuDeviceId !== device.id) return toast('이번 전사에 사용할 GPU를 선택해 주세요.',true);
@@ -1835,30 +1836,10 @@ function runtimeState(id) {
   return (id === "local" ? state.localModel : state.workerStates[id])?.runtime || state.environments[id];
 }
 
-function renderAppSetup() {
-  const setup = state.appSetup;
-  const busy = !!setup?.busy || state.appSetupChecking;
-  $("#open-app-settings").textContent = setup?.busy ? "설정 · 준비 중" : state.appSetupChecking ? "설정 · 확인 중" : "설정";
-  $("#open-app-settings").classList.toggle("is-busy", busy);
-  $("#app-settings-components").innerHTML = [["ffmpeg", "FFmpeg · 음성 변환"], ["ffprobe", "FFprobe · 파일 정보 확인"]].map(([key, title]) => {
-    const item = setup?.components?.[key];
-    const detail = item?.ready ? `${item.version} · ${item.source === "app" ? "앱에서 준비됨" : "이미 설치된 도구 사용"}` : "준비하기를 누르면 자동으로 설치합니다.";
-    return `<div class="environment-component"><div><strong>${title}</strong><span class="environment-component-status${item?.ready ? " is-ready" : ""}">${item ? item.ready ? "준비됨" : "준비 필요" : "확인 중"}</span></div><p>${escapeHtml(detail)}</p></div>`;
-  }).join("");
-  const phases = { checking: "설치된 도구를 확인하고 있습니다…", downloading: "파일 처리 도구를 다운로드하고 있습니다…", installing: "다운로드한 도구를 확인하고 있습니다…" };
-  $("#app-settings-status").textContent = setup?.error || (busy ? phases[setup?.phase] || "준비 상태를 확인하고 있습니다…" : setup?.ready ? "파일 처리 도구가 준비됐습니다." : "처음 한 번 준비하면 다음 실행부터 다시 사용할 수 있습니다.");
-  $("#app-settings-status").classList.toggle("is-ready", !!setup?.ready && !busy);
-  $("#app-settings-progress").innerHTML = downloadProgressHtml(setup, "파일 처리 도구 다운로드 진행률");
-  $("#check-app-settings").disabled = busy;
-  $("#prepare-app-settings").disabled = busy;
-  $("#prepare-app-settings").textContent = busy ? "준비 중…" : setup?.ready ? "다시 확인·복구" : "준비하기";
-}
-
 async function refreshAppSetup(start = false) {
   const request = ++state.appSetupRequest;
   clearTimeout(state.appSetupTimer);
   state.appSetupChecking = true;
-  renderAppSetup();
   try {
     const setup = await api("/api/setup", start ? { method: "POST" } : {});
     if (request === state.appSetupRequest) state.appSetup = start ? { components: state.appSetup?.components, ...setup } : setup;
@@ -1868,19 +1849,10 @@ async function refreshAppSetup(start = false) {
   } finally {
     if (request === state.appSetupRequest) {
       state.appSetupChecking = false;
-      renderAppSetup();
       if (state.appSetup?.busy) state.appSetupTimer = setTimeout(refreshAppSetup, 800);
     }
   }
 }
-
-$("#open-app-settings").addEventListener("click", () => {
-  $("#app-settings-dialog").showModal();
-  refreshAppSetup();
-});
-$("#close-app-settings").addEventListener("click", () => $("#app-settings-dialog").close());
-$("#check-app-settings").addEventListener("click", () => refreshAppSetup());
-$("#prepare-app-settings").addEventListener("click", () => refreshAppSetup(true).catch(error => toast(error.message, true)));
 
 async function checkEnvironment(id) {
   if (state.environmentRequests.has(id)) return;
@@ -2593,7 +2565,7 @@ window.addEventListener("beforeunload", event => {
   if (state.pendingChanges || state.savePromise || state.uploading) event.preventDefault();
 });
 const saveLocationReady = loadSaveLocation();
-refreshAppSetup();
+refreshAppSetup(true).catch(error => toast(error.message, true));
 loadModelCatalog().catch(error => toast(error.message, true));
 loadNotes();
 setInterval(() => { if (!document.hidden && !state.libraryLoading) loadNotes(); }, 5000);

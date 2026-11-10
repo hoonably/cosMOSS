@@ -103,9 +103,9 @@ class MediaTools:
             await asyncio.to_thread(self.install)
             self.state = {"phase": "ready"}
         except (urllib.error.URLError, TimeoutError):
-            self.state = {"phase": "error", "error": "도구를 다운로드하지 못했습니다. 인터넷 연결을 확인하고 설정에서 다시 준비해 주세요."}
+            self.state = {"phase": "error", "error": "도구를 다운로드하지 못했습니다. 인터넷 연결을 확인하고 파일을 다시 선택해 준비를 다시 시도해 주세요."}
         except tarfile.TarError:
-            self.state = {"phase": "error", "error": "도구 압축 파일을 확인하지 못했습니다. 설정에서 다시 준비해 주세요."}
+            self.state = {"phase": "error", "error": "도구 압축 파일을 확인하지 못했습니다. 파일을 다시 선택해 준비를 다시 시도해 주세요."}
         except Exception as error:
             self.state = {"phase": "error", "error": str(error)}
 
@@ -121,11 +121,11 @@ class MediaTools:
         if self.task is not None and not self.task.done():
             await asyncio.shield(self.task)
         if not (await asyncio.to_thread(self.inspect))["ready"]:
-            raise RuntimeError(self.state.get("error", "상단 설정에서 파일 처리 도구를 준비해 주세요."))
+            raise RuntimeError(self.state.get("error", "파일을 다시 선택하면 파일 처리 도구 준비를 다시 시도합니다."))
 
     def check_cancelled(self) -> None:
         if self.cancelled.is_set():
-            raise RuntimeError("파일 처리 도구 준비가 중단되었습니다. 설정에서 다시 준비해 주세요.")
+            raise RuntimeError("파일 처리 도구 준비가 중단되었습니다. 파일을 다시 선택해 준비를 다시 시도해 주세요.")
 
     def install(self) -> None:
         if self.inspect()["ready"]:
@@ -197,7 +197,7 @@ class MediaTools:
                 for name in TOOLS:
                     self.check_cancelled()
                     if not probe_tool(folder / "bin" / name, name)["ready"]:
-                        raise RuntimeError(f"{name} 실행을 확인하지 못했습니다. 설정에서 다시 준비해 주세요.")
+                        raise RuntimeError(f"{name} 실행을 확인하지 못했습니다. 파일을 다시 선택해 준비를 다시 시도해 주세요.")
                 # Preserve bin/, lib/, LICENSES/ and build provenance together.
                 metadata = {"folder": str(folder.relative_to(self.root)), "archive_sha256": ARCHIVE_SHA256}
                 pointer.write_text(json.dumps(metadata))
@@ -218,7 +218,7 @@ class MediaTools:
             return cached
         self.inspect()
         if name not in self.paths:
-            raise RuntimeError("상단 설정에서 파일 처리 도구를 준비해 주세요.")
+            raise RuntimeError("파일을 다시 선택하면 파일 처리 도구 준비를 다시 시도합니다.")
         return self.paths[name]
 
     async def close(self) -> None:

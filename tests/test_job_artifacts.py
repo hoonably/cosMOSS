@@ -42,6 +42,18 @@ class JobArtifactTests(unittest.TestCase):
         self.assertIsNone(self.store.get(note['id'])['normalized_path'])
         self.assertEqual(len(list(self.downloads.glob('*.txt'))),2)
 
+    def test_selected_folder_contains_main_and_auxiliary_and_remains_readable(self):
+        note = self.note()
+        folder = self.root / '선택한 폴더'
+        note = self.store.update(note['id'], output_directory=str(folder))
+        note = self.store.update(note['id'], **self.artifacts.publish(note, '보조 대본'))
+        self.assertEqual(Path(note['text_path']).parent, folder)
+        self.assertEqual(Path(note['pipeline_result']['auxiliary_path']).parent, folder)
+        self.assertEqual(self.artifacts.auxiliary(note), '보조 대본')
+        self.assertFalse(self.downloads.exists())
+        note = self.store.update(note['id'], **self.artifacts.publish(note, preserve_existing=True))
+        self.assertEqual(len(list(folder.glob('*.txt'))), 2)
+
     def test_name_collisions_and_user_files_are_never_overwritten(self):
         note=self.note();self.downloads.mkdir()
         (self.downloads/'회의.txt').write_text('user file')

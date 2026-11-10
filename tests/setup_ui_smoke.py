@@ -70,25 +70,16 @@ async def main():
             await route.fulfill(status=202, json={'phase':'installed'})
         await page.route('**/api/devices/remote/model/prepare', prepare_remote)
         await page.goto(base)
-        await page.click('#open-app-settings')
-        await page.wait_for_function("document.querySelectorAll('#app-settings-components .environment-component-status').length===2")
-        assert await page.locator('#app-settings-components').get_by_text('준비 필요',exact=True).count() == 2
-        assert not any(method == 'POST' and url.endswith('/api/setup') for method,url in requests)
-        await page.click('#prepare-app-settings')
-        await page.locator('#app-settings-progress progress').wait_for(state='visible')
-        assert await page.locator('#prepare-app-settings').is_disabled()
-        await page.click('#close-app-settings')
+        assert await page.locator('#open-app-settings').count() == 0
+        assert await page.locator('#app-settings-dialog').count() == 0
         await page.wait_for_function('state.appSetup?.ready && !state.appSetup.busy')
-        await page.click('#open-app-settings')
-        await page.wait_for_function("document.querySelector('#app-settings-status').textContent.includes('준비됐습니다')")
+        assert any(method == 'POST' and url.endswith('/api/setup') for method,url in requests)
         await page.screenshot(path=str(output))
         fail_next = True
-        await page.click('#prepare-app-settings')
-        await page.wait_for_function("document.querySelector('#app-settings-status').textContent.includes('네트워크')")
-        assert await page.locator('#prepare-app-settings').is_enabled()
-        await page.click('#prepare-app-settings')
+        await page.evaluate('refreshAppSetup(true)')
+        await page.wait_for_function('state.appSetup?.phase === "error"')
+        await page.evaluate('refreshAppSetup(true)')
         await page.wait_for_function('state.appSetup?.ready && !state.appSetup.busy')
-        await page.click('#close-app-settings')
         await page.locator('[data-device-id="remote"] [data-device-action="install"]').click()
         await page.locator('#prepare-local-model:not([disabled])').wait_for()
         assert await page.locator('[data-knob="chunk_minutes"]').input_value() == '60'
@@ -106,13 +97,10 @@ async def main():
         await page.click('#close-local-model')
         await page.wait_for_function('state.appSetup?.ready && !state.appSetup.busy')
         await page.set_viewport_size({'width':390,'height':844})
-        await page.click('#open-app-settings')
-        bounds = await page.locator('#app-settings-dialog').bounding_box()
-        assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 390, bounds
         await page.screenshot(path=str(output.with_name(output.stem + '-mobile.png')))
         assert not errors, errors
         await browser.close()
-    print(f'PASS {engine}: common setup, progress, background polling, error/retry, remote-only model setup, mobile dialog')
+    print(f'PASS {engine}: automatic setup, background polling, error/retry, remote-only model setup, no settings dialog')
 
 
 if __name__ == '__main__':

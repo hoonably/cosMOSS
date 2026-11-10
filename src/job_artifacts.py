@@ -19,20 +19,27 @@ class JobArtifacts:
         self.store = store
         self.downloads = Path(downloads or DEFAULT_DOWNLOADS).expanduser().resolve()
 
+    def output_folder(self, note):
+        folder = Path(note.get("output_directory") or self.downloads).expanduser()
+        if not folder.is_absolute():
+            raise ValueError("저장 폴더는 절대 경로로 지정해 주세요.")
+        return folder.resolve()
+
     def _save_auxiliary(self, note, text, metrics):
+        folder = Path(note["text_path"]).parent
         content = text.encode('utf-8')
         expected = digest(content)
         previous = metrics.get('auxiliary_path')
         if previous:
             path = Path(previous)
-            if (path.parent == self.downloads and not path.is_symlink() and path.is_file()
+            if (path.parent == folder and not path.is_symlink() and path.is_file()
                     and digest(path.read_bytes()) == expected):
                 return {'auxiliary_path': str(path), 'auxiliary_hash': expected}
-        self.downloads.mkdir(parents=True, exist_ok=True)
+        folder.mkdir(parents=True, exist_ok=True)
         stem = Path(note['text_path']).stem + ' - Qwen 보조 대본'
         suffix = 0
         while True:
-            path = self.downloads / f'{stem}{"-"+str(suffix) if suffix else ""}.txt'
+            path = folder / f'{stem}{"-"+str(suffix) if suffix else ""}.txt'
             try:
                 descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 break
@@ -54,7 +61,7 @@ class JobArtifacts:
             auxiliary_text = metrics.get(PENDING_AUXILIARY)
         if auxiliary_text is not None:
             # Only an unsuccessful file save temporarily needs this small value
-            # in the job record. Successful outputs live in Downloads.
+            # in the job record. Successful outputs live in the selected output folder.
             metrics[PENDING_AUXILIARY] = auxiliary_text
         changes = {'pipeline_result': metrics}
         try:
@@ -62,16 +69,16 @@ class JobArtifacts:
             if preserve_existing and existing and existing.is_file() and not existing.is_symlink():
                 saved = note
             else:
-                metadata = write_text(note, str(self.downloads))
+                metadata = write_text(note, str(self.output_folder(note)))
                 changes.update(metadata)
                 saved = {**note, **metadata}
             if auxiliary_text is not None:
                 metrics.update(self._save_auxiliary(saved, auxiliary_text, metrics))
                 metrics['has_auxiliary_transcript'] = True
                 metrics.pop(PENDING_AUXILIARY, None)
-            changes.update(output_directory=str(self.downloads), text_save_error=None)
+            changes.update(output_directory=str(Path(saved["text_path"]).parent), text_save_error=None)
         except (OSError, ValueError) as error:
-            changes['text_save_error'] = f'전사는 완료했지만 다운로드 폴더에 저장하지 못했습니다. 다시 저장해 주세요: {error}'
+            changes['text_save_error'] = f'전사는 완료했지만 지정한 폴더에 저장하지 못했습니다. 다시 저장해 주세요: {error}'
         return changes
 
     def discard_working_files(self, note_id):
@@ -90,9 +97,9 @@ class JobArtifacts:
     def auxiliary(self, note):
         metrics = note.get('pipeline_result') or {}
         path = Path(metrics.get('auxiliary_path') or '')
-        if (not path.is_absolute() or path.parent != self.downloads or path.is_symlink()
+        if (not path.is_absolute() or path.parent != (Path(note['text_path']).parent if note.get('text_path') else self.output_folder(note)) or path.is_symlink()
                 or not path.is_file() or path.stat().st_size > 32 * 1024**2):
-            raise FileNotFoundError('다운로드 폴더의 Qwen 보조 대본 파일을 찾을 수 없습니다.')
+            raise FileNotFoundError('저장 폴더의 Qwen 보조 대본 파일을 찾을 수 없습니다.')
         return path.read_text()
 
     def migrate(self, hidden_ids=()):

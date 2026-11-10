@@ -114,7 +114,7 @@ class BatchNotesTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(note['status'], 'queued')
             self.assertEqual(note['output_format'], 'vtt')
             self.assertEqual(note['hotwords'], 'AI, Nemotron')
-            self.assertEqual(note['output_directory'], str(self.root / 'Downloads'))
+            self.assertEqual(note['output_directory'], str(self.root / 'exports'))
             with self.assertRaises(KeyError):
                 self.store.get_upload(identity)
         self.assertIsNone(self.main.BATCH_SUBMISSION.get())

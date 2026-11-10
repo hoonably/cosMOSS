@@ -55,14 +55,14 @@ class AutomaticOutputTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(inference.await_count, 1, self.store.get(note_id).get('error'))
         return self.store.get(note_id)
 
-    async def test_selected_format_is_saved_in_downloads_and_edits_use_same_file(self):
+    async def test_selected_format_is_saved_in_selected_folder_and_edits_use_same_file(self):
         for format_name in ('txt', 'srt', 'vtt'):
             with self.subTest(format=format_name):
-                folder = self.downloads
+                folder = self.root / "선택한 폴더"
                 folder.mkdir(exist_ok=True)
                 original = folder / f'회의.{format_name}'
                 original.write_text('이전 파일은 보존합니다.')
-                response = await self.create(format_name, self.root / 'old-preference')
+                response = await self.create(format_name, folder)
                 self.assertEqual(response.status_code, 202, response.text)
                 note = await self.run_inference(response.json()['id'])
                 self.assertEqual(note['status'], 'done', note.get('error'))

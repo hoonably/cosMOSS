@@ -2052,7 +2052,7 @@ async def create_note(
         "language": language.strip() or None, "hotwords": hotwords.strip() or None,
         "chunk_seconds": chunk_minutes * 60 if chunk_minutes is not None else device.get("options", {}).get("chunk_minutes", default_chunk_minutes) * 60,
         "output_format": output_format,
-        "output_directory": str(JobArtifacts(STORE).downloads),
+        "output_directory": output_directory or str(JobArtifacts(STORE).downloads),
     }
     def configure_fast(duration):
         if not fast:
@@ -2356,7 +2356,7 @@ def save_note_text(note_id: str, request: TextFileRequest) -> dict:
             return public_note(TEXT_LIBRARY.get(note_id))
         note = STORE.get(note_id)
         artifacts = JobArtifacts(STORE)
-        note = save_text(STORE, note_id, str(artifacts.downloads), reuse_existing=not note.get("output_directory"))
+        note = save_text(STORE, note_id, request.directory or note.get("output_directory") or str(artifacts.downloads), reuse_existing=not note.get("output_directory"))
         note = STORE.update(note_id, **artifacts.publish(note, preserve_existing=True))
         if note.get('text_save_error'):
             raise ValueError(note['text_save_error'])

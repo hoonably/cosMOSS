@@ -196,6 +196,6 @@ class MediaToolsTests(unittest.IsolatedAsyncioTestCase):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),base_url='http://localhost') as client:
                 response = await client.post('/api/uploads',files={'file':('voice.wav',b'audio','audio/wav')})
                 self.assertEqual(response.status_code,503,response.text)
-                self.assertIn('상단 설정',response.json()['detail'])
+                self.assertIn('파일을 다시 선택',response.json()['detail'])
         self.fetch.assert_not_called()
         self.assertIsNone(self.manager.task)
