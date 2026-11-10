@@ -6,6 +6,17 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>cosMOSS</title>
         <item>
+            <title>1.3.0</title>
+            <pubDate>Tue, 10 Nov 2026 16:34:17 +0000</pubDate>
+            <link>https://cosmoss-app.pages.dev</link>
+            <sparkle:fullReleaseNotesLink>https://cosmoss-app.pages.dev/updates/v1.3.0.html</sparkle:fullReleaseNotesLink>
+            <sparkle:version>1300000</sparkle:version>
+            <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://cosmoss-app.pages.dev/downloads/v1.3.0/cosMOSS-v1.3.0-macos-arm64.dmg" length="17128645" type="application/octet-stream" sparkle:edSignature="qFAOc07AR//kD8nX/DxyYNHViyrsWwBSDHXjDnlfF6CHGVS2xJ3e4HMR91RsthETpGzOkv90UC/fV205ahgoDA=="/>
+        </item>
+        <item>
             <title>1.2.1</title>
             <pubDate>Tue, 10 Nov 2026 07:06:13 +0000</pubDate>
             <link>https://cosmoss-app.pages.dev</link>
@@ -49,20 +60,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://cosmoss-app.pages.dev/downloads/v1.1.1/cosMOSS-v1.1.1-macos-arm64.dmg" length="17095217" type="application/octet-stream" sparkle:edSignature="GxtnBPGYNaYCRCmXaoXCHv71+GP814HtaGk7nAvbyX4PT2RGQnX9s3hsv62bJJwvjjIWgVNPIgE3eBhz4ym+Dg=="/>
         </item>
-        <item>
-            <title>1.1.0</title>
-            <pubDate>Sat, 07 Nov 2026 04:32:01 +0000</pubDate>
-            <link>https://cosmoss-app.pages.dev</link>
-            <sparkle:fullReleaseNotesLink>https://cosmoss-app.pages.dev/updates/v1.1.0.html</sparkle:fullReleaseNotesLink>
-            <sparkle:version>1100000</sparkle:version>
-            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://cosmoss-app.pages.dev/downloads/v1.1.0/cosMOSS-v1.1.0-macos-arm64.dmg" length="17093896" type="application/octet-stream" sparkle:edSignature="nM1iCNxEI8Kk43hB+BW+d3R7L2fkmm7qkt4irNvPqOcJATFv8ncHiQbpJIaWOmjEYfCEMZ+n3FQ9gAGYi1RQAg=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: F3wzI9alJSbZq4oO7g+r7+gBs1i5k0tKRVmdBZzgNZgkN/TvfMCpVd2dye/pfptWHpd5uQ+lJQO1t0iawW0YDg==
+edSignature: KozOcjuqoK9tBHjMSEk/Totz1jX34LLLdZYZUtueBLGcUvIIvT81E9NCN6xrgpNMN/S3svvw6QPgpn2cwOQPDg==
 length: 4741
 -->
