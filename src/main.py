@@ -1273,7 +1273,7 @@ async def security_middleware(request: Request, call_next):
             return JSONResponse({"detail": "이 작업은 이 Mac에서만 사용할 수 있습니다."}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "외부 웹사이트에서는 이 작업을 실행할 수 없습니다."}, status_code=403)
-        if (request.url.path.startswith(('/api/voice-memos', '/api/trash', '/api/summary/presets')) or request.url.path in {'/api/notes','/api/notes/batch','/api/summary/default-prompt'} or request.url.path.endswith(('/rename','/trash'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
+        if (request.url.path.startswith(('/api/voice-memos', '/api/trash', '/api/summary/presets', '/api/summary/cli-update/')) or request.url.path in {'/api/notes','/api/notes/batch','/api/summary/default-prompt'} or request.url.path.endswith(('/rename','/trash'))) and request.headers.get('origin') not in (None, str(request.base_url).rstrip('/')):
             return JSONResponse({'detail': '외부 웹사이트에서는 이 작업을 실행할 수 없습니다.'}, status_code=403)
     if request.url.path not in {"/healthz", "/readyz"} and not valid_basic_auth(
         request.headers.get("Authorization")
@@ -2425,6 +2425,26 @@ async def summary_models(provider: Literal['codex', 'claude'], refresh: bool = F
         raise HTTPException(409, str(error)) from None
 
 
+@app.get('/api/summary/cli-update/{provider}')
+async def check_summary_cli_update(provider: Literal['codex', 'claude']):
+    return await SUMMARY_MODELS.check_update(provider)
+
+
+@app.post('/api/summary/cli-update/{provider}')
+async def update_summary_cli(provider: Literal['codex', 'claude']):
+    lock = SUMMARY_MODELS.update_locks[provider]
+    if lock.locked():
+        raise HTTPException(409, 'CLI를 업데이트하고 있습니다.')
+    async with lock:
+        if any(SUMMARIES.busy(note_id) and SUMMARIES.states.get(note_id, {}).get('provider') == provider
+               for note_id in SUMMARIES.tasks):
+            raise HTTPException(409, '요약이 끝난 뒤 다시 시도해 주세요.')
+        try:
+            return await SUMMARY_MODELS.update_cli(provider)
+        except (ValueError, OSError) as error:
+            raise HTTPException(409, str(error)) from None
+
+
 @app.put('/api/summary/models/selection')
 async def save_summary_model_selection(request: SummaryModelSelection):
     try:
@@ -2485,6 +2505,8 @@ async def start_summary(note_id: str, request: SummaryRequest) -> dict:
         if not status["ready"]:
             raise ValueError(f"{status['name']}: {status['message']} {status['login'] if status['installed'] else status['install']}")
         selection = await SUMMARY_MODELS.resolve(request.provider, request.model, request.effort)
+        if SUMMARY_MODELS.update_locks[request.provider].locked():
+            raise ValueError('CLI 업데이트가 끝난 뒤 다시 시도해 주세요.')
         if not TEXT_LIBRARY.is_document(note_id) and (preset is None or not note.get('text_path')):
             note = save_text(STORE, note_id, request.directory)
         return SUMMARIES.start(note, request.provider, prompt, request.directory,

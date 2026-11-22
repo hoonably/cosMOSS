@@ -6,6 +6,7 @@ document.addEventListener("keydown", event => {
 const summaryPresetNames = {basic:"기본", class:"수업", meeting:"미팅"};
 const state = {
   summaryModelCatalogs: {}, summaryModelRequests: {}, summaryModelLoading: new Set(), summaryModelSaving: null, summaryProviderLoading: false, summaryCopying: false,
+  summaryCliUpdates: {}, summaryCliUpdateChecking: false, summaryCliUpdating: null,
   appSetup: null, appSetupRequest: 0, appSetupChecking: false, appSetupTimer: null,
   libraryRequest: 0, libraryLoading: false, executionDeviceId: "local",
   textSaveAttempts: new Set(),
@@ -3134,7 +3135,8 @@ function summaryModelControls() {
   const selection = catalog?.selection || {};
   const model = models.find(item => item.id === selection.model);
   const running = state.summaryStates[state.current?.id]?.phase === 'running';
-  const busy = state.summaryProviderLoading || state.summaryModelLoading.has(provider) || Boolean(state.summaryModelSaving) || state.summarySubmitting || running;
+  const updating = state.summaryCliUpdating === provider;
+  const busy = state.summaryProviderLoading || state.summaryModelLoading.has(provider) || Boolean(state.summaryModelSaving) || state.summarySubmitting || running || updating;
   const modelSelect = $('#summary-model'), effortSelect = $('#summary-effort');
   const modelOptions = models.length ? models.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('') : '<option value="">모델 목록 없음</option>';
   if (modelSelect.dataset.options !== modelOptions) { modelSelect.innerHTML = modelOptions; modelSelect.dataset.options = modelOptions; }
@@ -3148,6 +3150,13 @@ function summaryModelControls() {
   status.textContent = state.summaryModelLoading.has(provider) ? '' : catalog?.notice || catalog?.error || (state.summaryModelSaving === provider ? '선택 저장 중…' : '');
   status.classList.toggle('is-warning', Boolean(catalog?.error || catalog?.notice));
   status.classList.toggle('hidden', !status.textContent);
+  const updateButton = $('#update-summary-cli');
+  const update = state.summaryCliUpdates[provider];
+  updateButton.classList.toggle('hidden', !update);
+  updateButton.disabled = busy || state.summaryCliUpdateChecking;
+  updateButton.textContent = updating ? 'CLI 업데이트 중…' : `${provider === 'codex' ? 'Codex' : 'Claude'} CLI 업데이트`;
+  updateButton.title = update ? `${update.current} → ${update.latest}` : '';
+  updateButton.setAttribute('aria-busy', String(updating));
   return {catalog, model, busy};
 }
 async function loadSummaryModels(refresh = false) {
@@ -3183,7 +3192,7 @@ $('#summary-model').addEventListener('change',()=>saveSummaryModelSelection(true
 $('#summary-effort').addEventListener('change',()=>saveSummaryModelSelection(false));
 
 async function loadSummaryProviders(refreshModels = false) {
-  if (state.summaryProviderLoading || state.summaryModelSaving) return;
+  if (state.summaryProviderLoading || state.summaryModelSaving || state.summaryCliUpdating) return;
   state.summaryProviderLoading = true;
   $("#refresh-summary-providers").disabled = true;
   renderSummary();
@@ -3191,7 +3200,33 @@ async function loadSummaryProviders(refreshModels = false) {
   catch (error) { toast(error.message, true); }
   finally { await loadSummaryModels(refreshModels); state.summaryProviderLoading = false; renderSummary(); }
 }
-$("#refresh-summary-providers").addEventListener("click", () => loadSummaryProviders(true));
+$("#refresh-summary-providers").addEventListener("click", () => {
+  const provider = $('#summary-provider').value;
+  void loadSummaryProviders(true);
+  void checkSummaryCliUpdate(provider);
+});
+async function checkSummaryCliUpdate(provider) {
+  state.summaryCliUpdateChecking = true;
+  renderSummary();
+  try { state.summaryCliUpdates[provider] = await api(`/api/summary/cli-update/${provider}`); }
+  catch (_) { state.summaryCliUpdates[provider] = null; }
+  finally { state.summaryCliUpdateChecking = false; renderSummary(); }
+}
+$('#update-summary-cli').addEventListener('click', async () => {
+  const provider = $('#summary-provider').value;
+  state.summaryCliUpdating = provider;
+  renderSummary();
+  try {
+    const catalog = await api(`/api/summary/cli-update/${provider}`, {method:'POST'});
+    state.summaryModelCatalogs[provider] = catalog;
+    state.summaryCliUpdates[provider] = null;
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.summaryCliUpdating = null;
+    renderSummary();
+  }
+});
 $("#summary-provider").addEventListener("change", () => {
   localStorage.setItem("cosmoss.summaryProvider", $("#summary-provider").value);
   loadSummaryModels();
@@ -3291,7 +3326,7 @@ function renderSummary() {
   const running = summary?.phase === "running";
   const preset = state.summaryPreset;
   const modelControls = summaryModelControls();
-  $('#refresh-summary-providers').disabled = state.summaryProviderLoading || Boolean(state.summaryModelSaving) || state.summaryModelLoading.size > 0;
+  $('#refresh-summary-providers').disabled = state.summaryProviderLoading || Boolean(state.summaryModelSaving) || state.summaryModelLoading.size > 0 || state.summaryCliUpdateChecking || state.summaryCliUpdating;
   if (note) $("#delete-note").disabled = running || state.summarySubmitting || Boolean(state.cancellingId || state.restartingId || state.deletingId) || ["queued", "processing"].includes(note.status);
   $("#summary-provider-status").textContent = info ? `${info.name} · ${info.message}` : "CLI 연결을 확인하고 있습니다…";
   $("#summary-provider-status").classList.toggle("ready", Boolean(info?.ready));
@@ -3313,7 +3348,7 @@ function renderSummary() {
   $("#copy-summary-cli-command").disabled = !connecting || !$("#cli-setup-command").textContent;
   $("#check-summary-cli").disabled = state.summaryProviderLoading || Boolean(state.summaryModelSaving) || state.summaryModelLoading.size > 0;
   $("#check-summary-cli").textContent = state.summaryProviderLoading ? "확인 중…" : "연결 확인";
-  $("#summary-provider").disabled = running || state.summarySubmitting || Boolean(state.summaryModelSaving);
+  $("#summary-provider").disabled = running || state.summarySubmitting || Boolean(state.summaryModelSaving) || state.summaryCliUpdating;
   $("#summary-prompt").disabled = running || state.summarySubmitting;
   for (const button of $("#summary-presets").querySelectorAll("button")) {
     if (button.dataset.summaryPreset) button.setAttribute("aria-pressed", String(button.dataset.summaryPreset === preset));

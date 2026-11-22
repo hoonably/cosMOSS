@@ -1,6 +1,7 @@
 """Model/effort UI, refresh and persisted per-provider choices; no AI requests."""
 import asyncio
 from datetime import datetime, timezone
+import json
 import sys
 from urllib.parse import parse_qs, urlsplit
 from playwright.async_api import async_playwright
@@ -10,6 +11,8 @@ from ui_helpers import choose_option
 async def main():
     base, screenshot = sys.argv[1:3]
     choices = {}; removed = False; newer = False; requests = []; refreshes = []
+    cli_updates = {}
+    update_started, finish_update = asyncio.Queue(), asyncio.Queue()
     def entry(identity, name, efforts=None):
         return {'id':identity,'name':name,'efforts':['low','medium','high'] if efforts is None else efforts,'default_effort':'medium'}
     codex = [entry('current','GPT Current'),entry('compact','GPT Compact')]
@@ -43,6 +46,18 @@ async def main():
                 'model_name':body['model'],'effort':body['effort'],'text':'# 검증 요약','corrected_text':'가상 대화',
                 'source_hash':'fixture','completed_at':stamp}}
         await route.fulfill(json=summary)
+    async def update_cli(route):
+        provider = urlsplit(route.request.url).path.rsplit('/', 1)[-1]
+        if route.request.method == 'GET':
+            await route.fulfill(body=json.dumps(cli_updates.get(provider)), content_type='application/json')
+            return
+        await update_started.put(provider)
+        await finish_update.get()
+        cli_updates.pop(provider)
+        models = [entry(f'{provider}-after-update', 'New CLI model'), *(codex if provider=='codex' else claude)]
+        if provider == 'codex':
+            models.insert(1, entry('latest', 'GPT Latest'))
+        await route.fulfill(json={'provider':provider, 'models':models, 'selection':choices[provider]})
     async with async_playwright() as pw:
         browser=await pw.webkit.launch(headless=True)
         page=await browser.new_page(viewport={'width':1440,'height':1000},device_scale_factor=2)
@@ -53,6 +68,7 @@ async def main():
         await page.route('**/api/notes/'+note['id']+'/summary',summarize)
         await page.route('**/api/summary/providers',lambda r:r.fulfill(json=[{'id':p,'name':p.title(),'installed':True,'ready':True,'message':'로그인됨'} for p in ('codex','claude')]))
         await page.route('**/api/summary/models**',catalogs)
+        await page.route('**/api/summary/cli-update/*',update_cli)
         await page.route('**/api/devices',lambda r:r.fulfill(json=[]))
         await page.route('**/api/local-model',lambda r:r.fulfill(json={'phase':'idle'}))
         await page.goto(base)
@@ -94,9 +110,27 @@ async def main():
         assert '사라져' in await page.locator('#summary-model-status').inner_text()
         assert await page.locator('#summary-effort').input_value()=='medium'
         assert refreshes==['codex','codex']
+        update_button = page.locator('#update-summary-cli')
+        await update_button.wait_for(state='hidden')
+        for provider in ('codex', 'claude'):
+            if provider != 'codex':
+                await choose_option(page, '#summary-provider', provider)
+            cli_updates[provider] = {'current':'1.9.0','latest':'1.10.0'}
+            await page.locator('#refresh-summary-providers').click()
+            await update_button.wait_for(state='visible')
+            assert update_started.empty()
+            assert await update_button.get_attribute('title') == '1.9.0 → 1.10.0'
+            await update_button.click()
+            assert await asyncio.wait_for(update_started.get(), 10) == provider
+            assert await update_button.is_disabled()
+            assert await update_button.inner_text() == 'CLI 업데이트 중…'
+            await finish_update.put(None)
+            await update_button.wait_for(state='hidden')
+            assert await page.locator(f'#summary-model option[value={provider}-after-update]').count() == 1
+            assert await page.locator('#summary-model').input_value() == choices[provider]['model']
         assert not errors,errors
         await browser.close()
-    print('PASS WebKit: real names, Medium default, persistence/reload/refresh, separate providers, model capabilities, submitted model/effort, removed-model fallback')
+    print('PASS WebKit: model choices, refresh, summary options, and explicit CLI updates for both providers')
 
 
 asyncio.run(main())

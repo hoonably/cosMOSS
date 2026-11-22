@@ -327,6 +327,11 @@ a removed model or unsupported effort; a failed refresh retains the previous cho
 The selected model and effort are validated and copied into each summary job/result.
 They are passed as process arguments, without rewriting the user's CLI configuration.
 
+Step 3's refresh button also checks the selected CLI's installed version against its
+release channel. An available update displays a separate button. Clicking it runs
+the CLI's updater or upgrades the installed Claude Homebrew cask, verifies the
+installed version, and refreshes that provider's model catalog.
+
 `tests/test_summary_models.py` covers protocol framing, capability parsing, restart
 and refresh persistence, unavailable-model fallback, cancellation cleanup, and API-to-
 CLI option propagation. `tests/summary_models_ui_smoke.py` covers both provider UIs

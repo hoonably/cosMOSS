@@ -1148,5 +1148,7 @@ dialog::backdrop { background: rgba(11,25,17,.62); backdrop-filter: blur(4px); }
 .summary-model-controls .custom-select-trigger { min-width: 0; padding-left: 12px; padding-right: 10px; font-size: 12px; }
 .summary-model-status { margin: -9px 0 18px; color: #8a9b86; font-size: 10px; line-height: 1.65; overflow-wrap: anywhere; }
 .summary-model-status.is-warning { color: #a16a13; }
+.summary-cli-update { display: block; width: max-content; max-width: 100%; min-height: 28px; margin: -6px 0 16px auto; padding: 4px 9px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--accent-dark); font-size: 11px; font-weight: 650; }
+.summary-cli-update:hover:not(:disabled) { background: var(--accent-pale); }
 
 .speaker-choice input[readonly] { cursor: default; }

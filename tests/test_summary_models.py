@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import httpx
 
-from src.summary_models import SummaryModels, discover_models, normalize_models
+from src.summary_models import SummaryModels, cli_update_source, discover_models, normalize_models
 from src.summaries import command
 from src.summaries import Summaries
 
@@ -96,6 +96,52 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         binary.chmod(0o755)
         return str(binary)
 
+    async def test_cli_update_checks_before_running_and_refreshes_each_provider(self):
+        for provider in ('codex', 'claude'):
+            with self.subTest(provider=provider):
+                version = self.root / provider
+                version.write_text('1.9.0')
+                binary = self.binary(f'''
+version = pathlib.Path({str(version)!r})
+args = sys.argv[1:]
+if args == ['--version']:
+ value = version.read_text()
+ print('codex-cli ' + value if {provider!r} == 'codex' else value + ' (Claude Code)')
+elif args == ['update']:
+ version.write_text('1.10.0')
+elif args != ['update', '--help']:
+ raise SystemExit(1)
+''')
+                response = httpx.Response(
+                    200, request=httpx.Request('GET', 'https://example.com'),
+                    json={'tag_name': 'rust-v1.10.0'},
+                ) if provider == 'codex' else httpx.Response(
+                    200, request=httpx.Request('GET', 'https://example.com'), text='1.10.0\n',
+                )
+                models = SummaryModels(self.root / (provider + '-cache'))
+                discover = AsyncMock(return_value=[model('updated')])
+                with patch('src.summary_models.executable', return_value=binary), \
+                     patch('src.summary_models.discover_models', new=discover), \
+                     patch('src.summary_models.httpx.AsyncClient.get', new=AsyncMock(return_value=response)):
+                    self.assertEqual(await models.check_update(provider), {'current': '1.9.0', 'latest': '1.10.0'})
+                    self.assertEqual(version.read_text(), '1.9.0')
+                    result = await models.update_cli(provider)
+                    self.assertEqual(version.read_text(), '1.10.0')
+                    self.assertEqual(result['selection']['model'], 'updated')
+                    discover.assert_awaited_once_with(provider, binary)
+                    self.assertIsNone(await models.check_update(provider))
+
+    def test_claude_updates_use_the_installed_homebrew_cask_or_configured_channel(self):
+        (self.root / 'settings.json').write_text('{"autoUpdatesChannel":"stable"}')
+        with patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': str(self.root)}):
+            endpoint, _, command = cli_update_source('claude', '/usr/bin/claude')
+            self.assertTrue(endpoint.endswith('/stable'))
+            self.assertEqual(command, ('/usr/bin/claude', 'update'))
+        endpoint, key, command = cli_update_source('claude', '/opt/homebrew/Caskroom/claude-code@latest/2.1.9/claude')
+        self.assertTrue(endpoint.endswith('/claude-code@latest.json'))
+        self.assertEqual(key, 'version')
+        self.assertEqual(command, ('/opt/homebrew/bin/brew', 'upgrade', '--cask', 'claude-code@latest'))
+
     async def test_codex_initialization_and_pagination_never_start_a_thread_or_prompt(self):
         capture = self.root/'requests'
         binary = self.binary(f'''for line in sys.stdin:
@@ -161,6 +207,23 @@ for line in sys.stdin:raise RuntimeError('A prompt must not be sent')
 
 
 class ModelAPITests(unittest.IsolatedAsyncioTestCase):
+    async def test_cli_update_rejects_cross_origin_and_duplicate_requests(self):
+        from src import main
+        with tempfile.TemporaryDirectory() as directory:
+            models = SummaryModels(directory)
+            update = AsyncMock(return_value={'models': [model('updated')]})
+            with patch.object(main, 'SUMMARY_MODELS', models), patch.object(models, 'update_cli', update):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url='http://localhost') as client:
+                    endpoint = '/api/summary/cli-update/claude'
+                    self.assertEqual((await client.post(endpoint, headers={'Origin': 'http://localhost:8001'})).status_code, 403)
+                    async with models.update_locks['claude']:
+                        self.assertEqual((await client.post(endpoint)).status_code, 409)
+                    update.assert_not_awaited()
+                    response = await client.post(endpoint, headers={'Origin': 'http://localhost'})
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()['models'][0]['id'], 'updated')
+                    update.assert_awaited_once_with('claude')
+
     async def test_selection_and_summary_snapshot_reach_actual_cli_arguments(self):
         from src import main
         with tempfile.TemporaryDirectory() as directory:

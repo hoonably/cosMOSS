@@ -13,7 +13,91 @@ import tempfile
 import threading
 import time
 
-from src.summaries import executable, cli_environment
+import httpx
+
+from src.summaries import PROVIDERS, executable, cli_environment
+
+
+async def stop_cli_process(process):
+    if process.returncode is not None:
+        return
+    with suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        await asyncio.wait_for(process.wait(), 2)
+    except TimeoutError:
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        await process.wait()
+
+
+async def run_cli_command(binary, *args, timeout=5):
+    with tempfile.TemporaryDirectory(prefix='cosmoss-cli-update-') as directory:
+        process = await asyncio.create_subprocess_exec(
+            binary, *args, cwd=directory, env=cli_environment(binary), start_new_session=True,
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout)
+            if process.returncode != 0:
+                raise ValueError('CLI 명령을 완료하지 못했습니다.')
+            return stdout.decode(errors='replace').strip()
+        finally:
+            await stop_cli_process(process)
+
+
+def parse_cli_version(value):
+    version = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(-[A-Za-z0-9.-]+)?', value)
+    if not version:
+        raise ValueError('CLI 버전을 확인하지 못했습니다.')
+    return (*map(int, version.group(1, 2, 3)), version[4] is None)
+
+
+async def installed_cli_version(provider, binary):
+    output = await run_cli_command(binary, '--version')
+    value = output.removeprefix('codex-cli ') if provider == 'codex' else output.removesuffix(' (Claude Code)')
+    return value, parse_cli_version(value)
+
+
+def cli_update_source(provider, binary):
+    if provider == 'codex':
+        return 'https://releases.openai.com/codex/channels/latest', 'tag_name', (binary, 'update')
+    path = Path(binary).resolve()
+    for parent in path.parents:
+        if parent.name in {'claude-code', 'claude-code@latest'} and parent.parent.name == 'Caskroom':
+            brew = parent.parent.parent / 'bin' / 'brew'
+            return f'https://formulae.brew.sh/api/cask/{parent.name}.json', 'version', (str(brew), 'upgrade', '--cask', parent.name)
+    config = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude').expanduser()
+    try:
+        settings = json.loads((config / 'settings.json').read_text())
+    except (OSError, ValueError):
+        settings = {}
+    channel = 'stable' if isinstance(settings, dict) and settings.get('autoUpdatesChannel') == 'stable' else 'latest'
+    return f'https://downloads.claude.ai/claude-code-releases/{channel}', None, (binary, 'update')
+
+
+async def available_cli_update(provider, binary):
+    if not binary:
+        return None
+    try:
+        current, installed = await installed_cli_version(provider, binary)
+        endpoint, key, command = cli_update_source(provider, binary)
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(endpoint)
+            response.raise_for_status()
+            latest = response.json()[key] if key else response.text.strip()
+        if not isinstance(latest, str):
+            return None
+        if provider == 'codex':
+            latest = latest.removeprefix('rust-v')
+        candidate = parse_cli_version(latest)
+        if candidate[-1] and candidate > installed:
+            if provider == 'codex':
+                await run_cli_command(binary, 'update', '--help')
+            return {'current': current, 'latest': latest}, command
+    except (OSError, ValueError, TimeoutError, httpx.HTTPError, KeyError, TypeError):
+        return None
+    return None
 
 
 def valid_identifier(value):
@@ -107,15 +191,7 @@ async def discover_models(provider, binary):
                             break
                 return normalize_models(provider, rows)
         finally:
-            if process.returncode is None:
-                with suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    await asyncio.wait_for(process.wait(), 2)
-                except TimeoutError:
-                    with suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    await process.wait()
+            await stop_cli_process(process)
 
 
 class SummaryModels:
@@ -124,6 +200,28 @@ class SummaryModels:
         self.cache_path = Path(data) / 'summary-model-catalog.json'
         self.lock = threading.RLock()
         self.locks = {provider: asyncio.Lock() for provider in ('codex', 'claude')}
+        self.update_locks = {provider: asyncio.Lock() for provider in self.locks}
+
+    async def check_update(self, provider):
+        update = await available_cli_update(provider, executable(provider))
+        return update[0] if update else None
+
+    async def update_cli(self, provider):
+        binary = executable(provider)
+        available = await available_cli_update(provider, binary)
+        if not available:
+            raise ValueError('업데이트할 버전을 확인하지 못했습니다. 새로고침 후 다시 시도해 주세요.')
+        update, command = available
+        try:
+            await run_cli_command(*command, timeout=180)
+            _, installed = await installed_cli_version(provider, executable(provider) or binary)
+            if installed < parse_cli_version(update['latest']):
+                raise ValueError('CLI가 최신 버전으로 바뀌지 않았습니다.')
+        except (OSError, ValueError, TimeoutError):
+            name = PROVIDERS[provider]['name']
+            manual = ' '.join((Path(command[0]).name, *command[1:]))
+            raise ValueError(f'{name} CLI를 업데이트하지 못했습니다. 터미널에서 {manual} 명령을 확인해 주세요.') from None
+        return await self.get(provider, refresh=True)
 
     def _read(self, path):
         try:
