@@ -3,7 +3,9 @@ import AppKit
 
 // Finder uses points; the TIFF includes both standard and Retina representations.
 let output = URL(fileURLWithPath: CommandLine.arguments[1])
-let size = NSSize(width: 640, height: 420)
+let guideURL = URL(fileURLWithPath: CommandLine.arguments[2])
+guard let guide = NSImage(contentsOf: guideURL) else { fatalError("Could not load first-open guide") }
+let size = NSSize(width: 640, height: 565)
 let image = NSImage(size: size)
 func color(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> NSColor {
     NSColor(srgbRed: red / 255, green: green / 255, blue: blue / 255, alpha: 1)
@@ -14,7 +16,7 @@ let green = color(31, 194, 123)
 
 for scale in [1, 2] {
     let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
-        pixelsWide: 640 * scale, pixelsHigh: 420 * scale,
+        pixelsWide: Int(size.width) * scale, pixelsHigh: Int(size.height) * scale,
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
         isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     bitmap.size = size
@@ -22,6 +24,10 @@ for scale in [1, 2] {
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
     color(241, 244, 238).setFill()
     NSRect(origin: .zero, size: size).fill()
+    NSGraphicsContext.saveGraphicsState()
+    let headerOffset = NSAffineTransform()
+    headerOffset.translateX(by: 0, yBy: 145)
+    headerOffset.concat()
     let title = NSMutableAttributedString(string: "cosMOSS", attributes: [
         .font: NSFont.systemFont(ofSize: 34, weight: .bold), .foregroundColor: ink,
     ])
@@ -51,17 +57,9 @@ for scale in [1, 2] {
     arrow.lineJoinStyle = .round
     arrow.stroke()
 
-    // Keep first-launch help below the drag targets, at both Finder display scales.
-    let centered = NSMutableParagraphStyle()
-    centered.alignment = .center
-    ("처음 실행할 때 차단되면, 아래 설정에서 허용해 주세요." as NSString).draw(
-        in: NSRect(x: 40, y: 37, width: 560, height: 18),
-        withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: muted,
-                         .paragraphStyle: centered])
-    ("시스템 설정 → 개인정보 보호 및 보안 → 보안 → ‘확인 없이 열기’" as NSString).draw(
-        in: NSRect(x: 40, y: 17, width: 560, height: 18),
-        withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: ink,
-                         .paragraphStyle: centered])
+    NSGraphicsContext.restoreGraphicsState()
+    guide.draw(in: NSRect(x: 32, y: 14, width: 576, height: 182),
+               from: .zero, operation: .sourceOver, fraction: 1)
 
     NSGraphicsContext.restoreGraphicsState()
     image.addRepresentation(bitmap)

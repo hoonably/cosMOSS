@@ -30,7 +30,7 @@ def main() -> None:
         background = temporary / "background.tiff"
         subprocess.run([
             "/usr/bin/xcrun", "swift", str(root / "scripts/build-dmg-background.swift"),
-            str(background),
+            str(background), str(root / "macos/Assets/first-open.png"),
         ], check=True)
         image = temporary / output.name
         dmgbuild.build_dmg(str(image), "cosMOSS", settings={
@@ -40,7 +40,7 @@ def main() -> None:
             "symlinks": {"Applications": "/Applications"},
             "icon": str(app / "Contents/Resources/AppIcon.icns"),
             "background": str(background),
-            "window_rect": ((240, 200), (640, 420)),
+            "window_rect": ((200, 100), (640, 565)),
             "default_view": "icon-view",
             "include_icon_view_settings": True,
             "include_list_view_settings": False,
