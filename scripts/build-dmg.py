@@ -33,7 +33,7 @@ def main() -> None:
             str(background), str(root / "macos/Assets/first-open.png"),
         ], check=True)
         image = temporary / output.name
-        dmgbuild.build_dmg(str(image), "cosMOSS", settings={
+        dmgbuild.build_dmg(str(image), "Install cosMOSS", settings={
             "format": "UDZO",
             "filesystem": "HFS+",
             "files": [str(app)],
